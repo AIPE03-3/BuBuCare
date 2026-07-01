@@ -1,8 +1,11 @@
+import os
 from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
 from jose import jwt, JWTError
 
+load_dotenv()
 
-SECRET_KEY = "請換成一段很長很隨機的字串"# 簽名用的密鑰
+SECRET_KEY = os.environ["SECRET_KEY"]  # 從 .env 讀取，若不存在啟動時就會報錯
 ALGORITHM = "HS256" # 一種簽名演算法
 ACCESS_TOKEN_EXPIRE_DAYS = 1 # Token 有效時間
 
