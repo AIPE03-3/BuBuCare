@@ -5,6 +5,10 @@ build/
 dist/
 wheels/
 *.egg-info
+fulilian.db
 
 # Virtual environments
 .venv
+
+# Environment variables (contains secrets)
+.env

@@ -193,6 +193,10 @@
         <input type="text" id="reg-username" placeholder="輸入帳號">
       </div>
       <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="reg-email" placeholder="輸入 Email">
+      </div>
+      <div class="form-group">
         <label>密碼</label>
         <input type="password" id="reg-password" placeholder="輸入密碼">
       </div>
@@ -269,12 +273,13 @@
 
   async function register() {
     const username = document.getElementById('reg-username').value
+    const email = document.getElementById('reg-email').value
     const password = document.getElementById('reg-password').value
 
     const res = await fetch(`${API}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ username, email, password })
     })
 
     const data = await res.json()

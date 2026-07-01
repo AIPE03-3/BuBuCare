@@ -59,8 +59,8 @@ def setup_database():
 
     # 塞入測試用的初始帳號
     db = TestingSessionLocal()
-    db.add(User(username="alice", hashed_password=hash_password("secret123"), role="staff"))
-    db.add(User(username="boss", hashed_password=hash_password("adminpass"), role="admin"))
+    db.add(User(name="alice", password=hash_password("secret123"), email="alice@test.com", role="staff"))
+    db.add(User(name="boss", password=hash_password("adminpass"), email="boss@test.com", role="admin"))
     db.commit()
     db.close()
 

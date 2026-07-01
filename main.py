@@ -42,6 +42,7 @@ from dependencies import get_current_user, require_admin
 class RegisterRequest(BaseModel):
     username: str
     password: str
+    email: str
 
 
 # 程式啟動時檢查資料庫有沒有 users 表，沒有就自動建立
@@ -70,13 +71,14 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     # Depends(get_db) → 執行這個函式前，先幫我開一個資料庫連線，用完自動關
 
     # 查資料庫有沒有同名帳號
-    existing = db.query(User).filter(User.username == body.username).first()
+    existing = db.query(User).filter(User.name == body.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="帳號已存在")
 
     new_user = User(
-        username=body.username,
-        hashed_password=hash_password(body.password),  # 密碼雜湊後才存，不存明文
+        name=body.username,
+        password=hash_password(body.password),  # 密碼雜湊後才存，不存明文
+        email=body.email,
         role="staff"
     )
     db.add(new_user)
@@ -93,15 +95,15 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     # 這是 OAuth2 標準格式，/docs 測試頁面的登入框就是根據這個顯示的
 
     # 到資料庫查有沒有這個帳號
-    user = db.query(User).filter(User.username == form_data.username).first()
+    user = db.query(User).filter(User.name == form_data.username).first()
 
     # 帳號不存在，或密碼比對失敗 → 回傳 401
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
 
     # 驗證通過 → 產生 JWT token，把帳號名稱和角色包進去
     # 之後每次請求帶著這個 token，伺服器就知道你是誰
-    access_token = create_access_token(data={"sub": user.username, "role": user.role})
+    access_token = create_access_token(data={"sub": user.name, "role": user.role})
 
     # 回傳 token 給前端，前端要把它存起來，之後每次請求放在 Header 裡
     return {"access_token": access_token, "token_type": "bearer"}
