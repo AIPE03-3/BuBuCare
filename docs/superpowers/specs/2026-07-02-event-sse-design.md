@@ -1,0 +1,193 @@
+# 跌倒事件通報 + SSE 推播 + 人工確認 — 設計規格
+
+> 日期：2026-07-02
+> 狀態：已與使用者逐段確認完成
+> 前置討論：`docs/event-sse-discussion-handoff.md`
+
+---
+
+## 1. 目標與範圍
+
+在 fulilian-backend（通報層 FastAPI）新增「跌倒事件」完整流程：
+
+1. 判斷層偵測到跌倒 → `POST /events` 進後端 → 存 PostgreSQL
+2. 後端用 SSE 即時推播給前端中控站（支援多客戶端）
+3. 值班人員確認：真實跌倒（同時指派照護員）或誤報
+4. 真實跌倒 → 照護員處理 → 標記結案
+
+**不在範圍內**：Kafka 實接（只預留介面）、Web Push、模型回訓（ML pipeline 負責）、多租戶過濾邏輯（只預留欄位）、區域（location）獨立表。
+
+---
+
+## 2. 架構與資料流
+
+```
+判斷層（未來是 Kafka consumer）
+    │ POST /events + X-API-Key
+    ▼
+handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
+    │ 1. 存 PostgreSQL（失敗回錯，不廣播）
+    │ 2. 成功 → SSE 廣播 event_created
+    ▼
+前端中控站（多台同時開）
+    │ PATCH /events/{id}/verdict → 存 DB → 廣播 event_updated
+    │ PATCH /events/{id}/resolve → 存 DB → 廣播 event_updated
+```
+
+**設計原則**：
+
+- 事件「入口」（POST / 未來 Kafka consumer）與「處理」（存 DB + 廣播）拆開。Kafka topic `vlm.verdicts` 接上時只是新增入口，`handle_incoming_event()` 零改動，`POST /events` 保留當測試/備援入口
+- 先存 DB 成功才廣播，資料庫是唯一真相
+
+---
+
+## 3. 狀態機（拆兩欄）
+
+| 欄位 | 值 | 意義 |
+|--|--|--|
+| `status` | `pending` → `in_progress` → `resolved` | 事件進度 |
+| `verdict` | `null` / `true_alarm` / `false_alarm` | 人工判定結果，判定時才填 |
+
+合法轉換（後端強制檢查，違反回 409）：
+
+| 目前狀態 | 動作 | 結果 |
+|--|--|--|
+| `pending` | 判定誤報 | `status=resolved, verdict=false_alarm`（直接結案） |
+| `pending` | 判定真跌倒（必帶 staff_id） | `status=in_progress, verdict=true_alarm` |
+| `in_progress` | resolve | `status=resolved` |
+
+未來擴充成完整生命週期（suppressed / cooldown / escalated 等）時，只在 `status` 加值，不改語意。
+
+---
+
+## 4. 資料庫
+
+### 這次新建 4 張表
+
+**companies**：`company_id`(INT PK autoincrement)、`company_name`(VARCHAR)。種一筆預設公司（id=1），本輪所有資料掛它底下。
+
+**devices**：`device_id`(INT PK autoincrement)、`device_name`(VARCHAR not null)、`location`(VARCHAR，描述性標籤，不拆表)、`status`(ENUM: active/inactive/fault)、`stream_url`(VARCHAR)、`company_id`(FK→companies)。
+
+**staff**：`staff_id`(INT PK autoincrement)、`staff_name`(VARCHAR not null)、`company_id`(FK→companies)。
+
+**detect_events**：
+
+| 欄位 | 型別 | 說明 |
+|--|--|--|
+| `event_id` | UUID PK | |
+| `device_id` | INT FK→devices, not null | |
+| `event_type` | VARCHAR(50) | 如 fall |
+| `status` | ENUM: pending/in_progress/resolved, not null, default pending | 進度 |
+| `verdict` | ENUM: true_alarm/false_alarm, nullable | 判定結果 |
+| `clip_path` | VARCHAR(255) not null | 事件影像片段 |
+| `snapshot_path` | VARCHAR(255) | 截圖 |
+| `detected_at` | TIMESTAMP not null | |
+| `staff_id` | INT FK→staff, nullable | 判真跌倒時指派 |
+| `company_id` | INT FK→companies | |
+| `yolo_score` / `yolo_threshold` | FLOAT | 注意：修正草稿的 threshlod 拼字 |
+| `vlm_summary` | TEXT | VLM 情境描述 |
+| `vlm_confidence` | FLOAT | |
+| `recommended_action` | VARCHAR(255) | VLM 建議處置 |
+| `incident_draft_notification` | VARCHAR(255) | VLM 草擬通報 |
+| `severity` | ENUM: low/medium/high | |
+
+### 既有表調整
+
+**user_account**：新增 `company_id`(INT FK→companies, **nullable**)。登入/註冊程式碼不動，現有帳號回填 1。
+
+### 多租戶策略
+
+Schema 欄位齊備、邏輯先單間：本輪 API 不做公司過濾，未來只需在查詢加 `WHERE company_id = ...`，不用搬資料。
+
+---
+
+## 5. API 端點（6 個）
+
+| 端點 | 驗證 | 成功回應 | 錯誤 |
+|--|--|--|--|
+| `POST /events` | X-API-Key header | 201 + 事件 JSON | 401 key 錯/沒帶；400 device_id 不存在；422 格式錯 |
+| `GET /stream?token=` | JWT（query 參數） | SSE 長連線 | 401 token 無效 |
+| `GET /events` | JWT | 200 + 事件陣列（新→舊） | 401 |
+| `GET /staff` | JWT | 200 + 照護員陣列 | 401 |
+| `PATCH /events/{id}/verdict` | JWT | 200 + 更新後事件 | 404；409 已判定過；422 判真跌倒沒帶 staff_id；400 staff_id 不存在 |
+| `PATCH /events/{id}/resolve` | JWT | 200 + 更新後事件 | 404；409 狀態非 in_progress |
+
+### 驗證方式
+
+- **機器（POST /events）**：`.env` 存 `EVENT_API_KEY`，判斷層在 header 帶 `X-API-Key`，比對一致才收
+- **人（其餘端點）**：現有 JWT，staff 與 admin 角色皆可操作
+- **SSE（GET /stream）**：EventSource 無法自訂 header，JWT 改放 query 參數 `?token=`，用現有驗證函式檢查
+
+### 請求格式
+
+`POST /events` body：`device_id`、`event_type`、`clip_path`、`detected_at`（必填）；`snapshot_path`、`yolo_score`、`yolo_threshold`、`vlm_summary`、`vlm_confidence`、`recommended_action`、`incident_draft_notification`、`severity`（選填）。status 一律由後端設為 `pending`，不接受外部指定。
+
+`PATCH /events/{id}/verdict` body：`verdict`（true_alarm/false_alarm 必填）；`staff_id`（verdict=true_alarm 時必填）。
+
+`PATCH /events/{id}/resolve`：無 body。
+
+---
+
+## 6. SSE 設計
+
+### 訊息格式
+
+兩種訊息類型，`data` 都是完整事件 JSON（後端 JOIN 好 `device_name`、`location` 一起送，前端零額外請求）：
+
+```
+event: event_created
+data: {"event_id":"...","device_id":3,"device_name":"交誼廳-01","location":"交誼廳",
+       "event_type":"fall","status":"pending","verdict":null,"severity":"high",
+       "detected_at":"...","snapshot_path":"...","vlm_summary":"...",
+       "recommended_action":"...","staff_id":null, ...}
+
+event: event_updated
+data: {...同結構，狀態變更後的完整事件...}
+```
+
+- `event_created`：新事件入庫後廣播
+- `event_updated`：verdict / resolve 成功後廣播（多台中控站畫面保持同步）
+- `GET /events` 回傳的每筆事件使用**同一個 JSON 結構**（同一個序列化函式，同樣含 device_name / location），前端只需寫一套顯示邏輯
+- **心跳**：每 15 秒送註解行 `: ping`，防止中間網路設備掐斷長連線
+
+### 連線池（方案 A：全域記憶體）
+
+- 每條 SSE 連線配一個 asyncio queue（信箱），連線池是「目前所有 queue」的 list
+- 廣播 = 走訪 list，往每個 queue 投一份訊息副本；投遞端與收件端透過 queue 交接，互不等待
+- 連線斷開（含 F5 重整）→ 該 queue 從 list 移除，不影響其他連線
+- 單機夠用；未來水平擴展時換 Redis Pub/Sub
+
+---
+
+## 7. 錯誤處理三條底線
+
+1. **存 DB 失敗 → 500，不廣播**（先存後播）
+2. **廣播時某條連線掛了 → 踢出連線池，不影響其他連線**
+3. **不合法狀態轉換一律 409**，轉換規則只寫在後端一處
+
+---
+
+## 8. 測試設計
+
+沿用 `tests/conftest.py` 模式（in-memory SQLite，與正式 DB 隔離）。原則：**第 5 節表格承諾的每種行為，各寫一題**。
+
+| 測試檔 | 涵蓋 |
+|--|--|
+| `test_events_post.py` | API key 對/錯/沒帶；正常建立；device_id 不存在 |
+| `test_events_list.py` | 未登入 401；排序（新→舊）；能查到剛建立的事件 |
+| `test_verdict.py` | 判誤報→直接 resolved；判真跌倒必帶 staff_id；重複判定 409；404 |
+| `test_resolve.py` | 正常結案；未判定就 resolve→409；已結案再 resolve→409 |
+| `test_staff.py` | 未登入 401；名單正確 |
+| `test_sse.py` | 廣播函式單元測試：全部 queue 收到訊息；斷線連線被移除且不影響其他 |
+
+SSE 策略：長連線本身不測「等待」，直接對連線池 + 廣播函式做單元測試（純邏輯）；`/stream` 端點只測 token 驗證擋不擋。
+
+---
+
+## 9. 既有決策沿用（來自前置討論）
+
+- 組員確定引入 Kafka（topic: `vlm.verdicts`），本輪用 POST 模擬入口
+- 只做 SSE，Web Push 未來「加上」而非「換掉」
+- 模型回訓不是後端工作，後端只負責把誤報資料存好
+- `users` 草稿表不採用：沿用現有 `user_account`（僅加 nullable `company_id`）
+- `users` = 有登入帳號者；`staff` = 被指派到現場的照護員，兩張表分開
