@@ -64,11 +64,13 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 
 ### 這次新建 4 張表
 
-**companies**：`company_id`(INT PK autoincrement)、`company_name`(VARCHAR)。種一筆預設公司（id=1），本輪所有資料掛它底下。
+> Not null 原則：欄位一律 not null，**只有兩個例外**——`devices.location` 和 `devices.stream_url` 可空（裝置剛建檔時可能還沒定位置、還沒接串流，強制填只會逼人塞假資料）。
 
-**devices**：`device_id`(INT PK autoincrement)、`device_name`(VARCHAR not null)、`location`(VARCHAR，描述性標籤，不拆表)、`status`(ENUM: active/inactive/fault)、`stream_url`(VARCHAR)、`company_id`(FK→companies)。
+**companies**：`company_id`(INT PK autoincrement)、`company_name`(VARCHAR not null)。種一筆預設公司（id=1），本輪所有資料掛它底下。
 
-**staff**：`staff_id`(INT PK autoincrement)、`staff_name`(VARCHAR not null)、`company_id`(FK→companies)。
+**devices**：`device_id`(INT PK autoincrement)、`device_name`(VARCHAR not null)、`location`(VARCHAR **nullable**，描述性標籤，不拆表)、`status`(ENUM: active/inactive/fault, not null, default active)、`stream_url`(VARCHAR **nullable**)、`company_id`(INT FK→companies, not null)。
+
+**staff**：`staff_id`(INT PK autoincrement)、`staff_name`(VARCHAR not null)、`company_id`(INT FK→companies, not null)。
 
 **detect_events**：
 
@@ -84,7 +86,8 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 | `detected_at` | TIMESTAMP not null | |
 | `staff_id` | INT FK→staff, nullable | 判真跌倒時指派 |
 | `company_id` | INT FK→companies | |
-| `yolo_score` / `yolo_threshold` | FLOAT | 注意：修正草稿的 threshlod 拼字 |
+| `yolo_score` | FLOAT | 該事件 YOLO 打的分數（如 0.87） |
+| `yolo_threshold` | FLOAT | **當時**的門檻值（如 0.75）。門檻日後會調整，回訓分析需知道這筆當初用什麼門檻判進來。注意：修正草稿的 threshlod 拼字 |
 | `vlm_summary` | TEXT | VLM 情境描述 |
 | `vlm_confidence` | FLOAT | |
 | `recommended_action` | VARCHAR(255) | VLM 建議處置 |
@@ -93,11 +96,11 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 
 ### 既有表調整
 
-**user_account**：新增 `company_id`(INT FK→companies, **nullable**)。登入/註冊程式碼不動，現有帳號回填 1。
+**user_account**：新增 `company_id`(INT FK→companies, not null, **default 1**)。加欄位時舊帳號自動回填 1（預設公司），新註冊帳號也自動拿 1。程式碼唯一改動是 `models.py` 的 User 類多一行欄位定義；登入、註冊、驗證的邏輯零改動。
 
 ### 多租戶策略
 
-Schema 欄位齊備、邏輯先單間：本輪 API 不做公司過濾，未來只需在查詢加 `WHERE company_id = ...`，不用搬資料。
+Schema 欄位齊備、邏輯先支援單一機構：本輪 API 不做公司過濾（所有資料都掛預設公司 id=1），未來要真正多租戶時只需在查詢加 `WHERE company_id = ...`，不用搬資料。
 
 ---
 
@@ -116,7 +119,7 @@ Schema 欄位齊備、邏輯先單間：本輪 API 不做公司過濾，未來�
 
 - **機器（POST /events）**：`.env` 存 `EVENT_API_KEY`，判斷層在 header 帶 `X-API-Key`，比對一致才收
 - **人（其餘端點）**：現有 JWT，staff 與 admin 角色皆可操作
-- **SSE（GET /stream）**：EventSource 無法自訂 header，JWT 改放 query 參數 `?token=`，用現有驗證函式檢查
+- **SSE（GET /stream）**：瀏覽器建立 SSE 用的內建工具 `EventSource` 先天不允許自訂 header，所以同一張 JWT token 改放在網址參數 `?token=xxx`；後端從網址參數取出後，用與其他端點**同一個驗證函式**檢查（同一張門票，只是改插的位置）
 
 ### 請求格式
 
@@ -188,6 +191,6 @@ SSE 策略：長連線本身不測「等待」，直接對連線池 + 廣播函�
 
 - 組員確定引入 Kafka（topic: `vlm.verdicts`），本輪用 POST 模擬入口
 - 只做 SSE，Web Push 未來「加上」而非「換掉」
-- 模型回訓不是後端工作，後端只負責把誤報資料存好
+- 模型回訓**目前**不是後端的工作，目前後端負責把誤報資料完整存好（含事件 ID、時間、影像路徑），供 ML pipeline 撈取
 - `users` 草稿表不採用：沿用現有 `user_account`（僅加 nullable `company_id`）
 - `users` = 有登入帳號者；`staff` = 被指派到現場的照護員，兩張表分開
