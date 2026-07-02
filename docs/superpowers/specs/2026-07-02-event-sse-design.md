@@ -15,7 +15,7 @@
 3. 值班人員確認：真實跌倒（同時指派照護員）或誤報
 4. 真實跌倒 → 照護員處理 → 標記結案
 
-**不在範圍內**：Kafka 實接（只預留介面）、Web Push、模型回訓（ML pipeline 負責）、多租戶過濾邏輯（只預留欄位）、區域（location）獨立表。
+**不在範圍內**：Kafka 實接（只預留介面）、Web Push、模型回訓（ML pipeline 負責）、多租戶過濾邏輯（只預留欄位）。
 
 ---
 
@@ -62,13 +62,17 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 
 ## 4. 資料庫
 
-### 這次新建 4 張表
+### 這次新建 5 張表
 
-> Not null 原則：欄位一律 not null，**只有兩個例外**——`devices.location` 和 `devices.stream_url` 可空（裝置剛建檔時可能還沒定位置、還沒接串流，強制填只會逼人塞假資料）。
+> Not null 原則：欄位一律 not null，**只有兩個例外**——`devices.location_id` 和 `devices.stream_url` 可空（裝置剛建檔時可能還沒定位置、還沒接串流，強制填只會逼人塞假資料）。
 
 **companies**：`company_id`(INT PK autoincrement)、`company_name`(VARCHAR not null)。種一筆預設公司（id=1），本輪所有資料掛它底下。
 
-**devices**：`device_id`(INT PK autoincrement)、`device_name`(VARCHAR not null)、`location`(VARCHAR **nullable**，描述性標籤，不拆表)、`status`(ENUM: active/inactive/fault, not null, default active)、`stream_url`(VARCHAR **nullable**)、`company_id`(INT FK→companies, not null)。
+**locations**：`location_id`(INT PK autoincrement)、`location_name`(VARCHAR(50) not null，如「交誼廳」「走廊」)、`company_id`(INT FK→companies, not null)。區域獨立成表，**只被 devices 引用，不連 events**——事件的位置透過「事件→裝置→區域」兩層 FK 現查。
+
+**devices**：`device_id`(INT PK autoincrement)、`device_name`(VARCHAR not null)、`location_id`(INT FK→locations, **nullable**)、`status`(ENUM: active/inactive/fault, not null, default active)、`stream_url`(VARCHAR **nullable**)、`company_id`(INT FK→companies, not null)。
+
+> **裝置不改名原則（歷史正確性）**：事件只存 `device_id`，名稱/位置顯示時現查。因此攝影機搬位置或改用途時**不修改舊資料列**——把舊列 `status` 設 `inactive`、另建一列新裝置。舊事件永遠指向當年那列，歷史自然正確，事件表不需要快照欄位。
 
 **staff**：`staff_id`(INT PK autoincrement)、`staff_name`(VARCHAR not null)、`company_id`(INT FK→companies, not null)。
 

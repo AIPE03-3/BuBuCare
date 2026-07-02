@@ -24,7 +24,7 @@
 
 ---
 
-### Task 1: 資料模型（4 張新表 + user_account 加 company_id）
+### Task 1: 資料模型（5 張新表 + user_account 加 company_id）
 
 **Files:**
 - Modify: `models.py`（加 4 個 class + User 加一欄）
@@ -32,8 +32,8 @@
 - Test: `tests/test_models.py`（新建）
 
 **Interfaces:**
-- Produces: `models.Company(company_id, company_name)`、`models.Device(device_id, device_name, location, status, stream_url, company_id)`、`models.Staff(staff_id, staff_name, company_id)`、`models.DetectEvent(event_id: str UUID, device_id, event_type, status, verdict, clip_path, snapshot_path, detected_at, staff_id, company_id, yolo_score, yolo_threshold, vlm_summary, vlm_confidence, recommended_action, incident_draft_notification, severity)`、`User.company_id: int (default 1)`
-- Produces（conftest）: 種子＝公司 id=1「測試安養院」、裝置 id=1「交誼廳-01」（location=交誼廳）、照護員 id=1「小美」/ id=2「阿強」；fixtures `staff_token`、`auth_headers`、`make_event`；環境變數 `EVENT_API_KEY=test-api-key`
+- Produces: `models.Company(company_id, company_name)`、`models.Location(location_id, location_name, company_id)`、`models.Device(device_id, device_name, location_id, status, stream_url, company_id)`（含 `Device.location` relationship，可直接讀 `device.location.location_name`）、`models.Staff(staff_id, staff_name, company_id)`、`models.DetectEvent(event_id: str UUID, device_id, event_type, status, verdict, clip_path, snapshot_path, detected_at, staff_id, company_id, yolo_score, yolo_threshold, vlm_summary, vlm_confidence, recommended_action, incident_draft_notification, severity)`、`User.company_id: int (default 1)`
+- Produces（conftest）: 種子＝公司 id=1「測試安養院」、區域 id=1「交誼廳」、裝置 id=1「交誼廳-01」（location_id=1）、照護員 id=1「小美」/ id=2「阿強」；fixtures `staff_token`、`auth_headers`、`make_event`；環境變數 `EVENT_API_KEY=test-api-key`
 
 - [ ] **Step 1: 寫失敗測試**
 
@@ -42,7 +42,7 @@
 ```python
 # 測資料模型：新表能建立、預設值正確、種子資料有進去
 from datetime import datetime
-from models import Company, Device, Staff, DetectEvent, User
+from models import Company, Location, Device, Staff, DetectEvent, User
 
 
 def test_建立事件_預設狀態是pending(db_session):
@@ -65,7 +65,10 @@ def test_建立事件_預設狀態是pending(db_session):
 
 def test_種子資料存在(db_session):
     assert db_session.query(Company).count() == 1
-    assert db_session.query(Device).filter_by(device_id=1).first().device_name == "交誼廳-01"
+    device = db_session.query(Device).filter_by(device_id=1).first()
+    assert device.device_name == "交誼廳-01"
+    # relationship：透過 device.location_id 自動查 locations 表拿名稱
+    assert device.location.location_name == "交誼廳"
     assert db_session.query(Staff).count() == 2
 
 
@@ -92,7 +95,7 @@ import uuid
 from typing import Optional
 from datetime import datetime
 from sqlalchemy import Integer, String, DateTime, Float, Text, ForeignKey
-from sqlalchemy.orm import mapped_column, Mapped
+from sqlalchemy.orm import mapped_column, Mapped, relationship
 from database import Base
 ```
 
@@ -115,16 +118,27 @@ class Company(Base):  # 安養院（多租戶預留，本輪只有一筆預設�
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
 
+class Location(Base):  # 區域（交誼廳、走廊…）：獨立成表讓名稱統一，只被 devices 引用、不連 events
+    __tablename__ = "locations"
+
+    location_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    location_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False)
+
+
 class Device(Base):  # 攝影機裝置
     __tablename__ = "devices"
 
     device_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # location 和 stream_url 是 spec 裡唯二可空的欄位：裝置剛建檔時可能還沒定位置、還沒接串流
-    location: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # location_id 和 stream_url 是 spec 裡唯二可空的欄位：裝置剛建檔時可能還沒定位置、還沒接串流
+    location_id: Mapped[Optional[int]] = mapped_column(ForeignKey("locations.location_id"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active/inactive/fault
     stream_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False)
+
+    # 關聯屬性：程式可直接寫 device.location.location_name，SQLAlchemy 依 location_id 自動查
+    location: Mapped[Optional["Location"]] = relationship("Location")
 
 
 class Staff(Base):  # 照護員：被指派去現場處理的人（跟 user_account 的登入帳號是兩回事）
@@ -182,7 +196,7 @@ os.environ["EVENT_API_KEY"] = "test-api-key"
 
 from main import app
 from database import Base, get_db
-from models import User, Company, Device, Staff, DetectEvent
+from models import User, Company, Location, Device, Staff, DetectEvent
 from security import hash_password
 ```
 
@@ -194,7 +208,8 @@ from security import hash_password
     db.add(Company(company_id=1, company_name="測試安養院"))
     db.commit()  # 先 commit 公司，後面的 FK 才掛得上
 
-    db.add(Device(device_id=1, device_name="交誼廳-01", location="交誼廳",
+    db.add(Location(location_id=1, location_name="交誼廳", company_id=1))
+    db.add(Device(device_id=1, device_name="交誼廳-01", location_id=1,
                   status="active", company_id=1))
     db.add(Staff(staff_id=1, staff_name="小美", company_id=1))
     db.add(Staff(staff_id=2, staff_name="阿強", company_id=1))
@@ -252,7 +267,7 @@ def make_event(db_session):
 
 ```bash
 git add models.py tests/conftest.py tests/test_models.py
-git commit -m "feat: 新增 companies/devices/staff/detect_events 資料模型，user_account 加 company_id"
+git commit -m "feat: 新增 companies/locations/devices/staff/detect_events 資料模型，user_account 加 company_id"
 ```
 
 ---
@@ -476,7 +491,8 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "event_id": event.event_id,
         "device_id": event.device_id,
         "device_name": device.device_name,
-        "location": device.location,
+        # relationship 自動查 locations 表；裝置還沒定位置時回 None
+        "location": device.location.location_name if device.location else None,
         "event_type": event.event_type,
         "status": event.status,
         "verdict": event.verdict,
@@ -1298,7 +1314,7 @@ import models  # noqa: F401  讓 Base 認得所有表，create_all 才會建
 
 Base.metadata.create_all(bind=engine)  # 建立還不存在的表（已存在的不動）
 
-from models import Company, Device, Staff  # noqa: E402
+from models import Company, Location, Device, Staff  # noqa: E402
 
 db = SessionLocal()
 
@@ -1309,9 +1325,19 @@ if db.query(Company).filter_by(company_id=1).first() is None:
 else:
     print("預設公司已存在，略過")
 
+if db.query(Location).first() is None:
+    db.add(Location(location_name="交誼廳", company_id=1))
+    db.add(Location(location_name="走廊", company_id=1))
+    db.commit()
+    print("已建立區域 2 筆")
+else:
+    print("區域已存在，略過")
+
 if db.query(Device).first() is None:
-    db.add(Device(device_name="交誼廳-01", location="交誼廳", status="active", company_id=1))
-    db.add(Device(device_name="走廊-01", location="走廊", status="active", company_id=1))
+    # 查出剛種的區域編號，裝置掛上對應的 location_id
+    loc_ids = {l.location_name: l.location_id for l in db.query(Location).all()}
+    db.add(Device(device_name="交誼廳-01", location_id=loc_ids.get("交誼廳"), status="active", company_id=1))
+    db.add(Device(device_name="走廊-01", location_id=loc_ids.get("走廊"), status="active", company_id=1))
     db.commit()
     print("已建立示範裝置 2 台")
 else:

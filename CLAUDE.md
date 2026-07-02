@@ -97,7 +97,7 @@ python create_test_user.py
 
 - **資料表**：`user_account`（非 `users`）
 - **欄位**：`id`、`name`、`password`、`email`、`role`、`last_login_time`
-- **規劃中**（spec 已定案）：新增 `companies`、`devices`、`staff`、`detect_events` 四張表；
+- **規劃中**（spec 已定案）：新增 `companies`、`locations`、`devices`、`staff`、`detect_events` 五張表；
   `user_account` 加 `company_id`（not null, default 1）
 - **SSL**：連線時使用 `global-bundle.pem`，sslmode=verify-full
 - **測試時**：`conftest.py` 用記憶體 SQLite，與 PostgreSQL 完全隔離
