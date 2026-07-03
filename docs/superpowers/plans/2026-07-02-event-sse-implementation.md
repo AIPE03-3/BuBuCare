@@ -18,7 +18,7 @@
 - 註解風格跟既有檔案一致：中文白話註解，解釋「為什麼」
 - 先存 DB 成功才廣播；狀態轉換規則只寫在後端，違反回 409
 - `status` 值：`pending` / `in_progress` / `resolved`；`verdict` 值：`null` / `true_alarm` / `false_alarm`
-- spec 裡的 ENUM 欄位一律用 `String` + 應用層驗證（Pydantic `Literal` / 路由守門）實作：SQLite（測試）和 PostgreSQL（正式）行為一致，未來加狀態值不用改資料庫
+- ~~spec 裡的 ENUM 欄位一律用 `String` + 應用層驗證實作~~ **（2026-07-03 執行時變更：使用者決定改用原生 SQLAlchemy `Enum` + `create_constraint=True`——PostgreSQL 建真 ENUM 型別、SQLite 用 CHECK 約束，程式端仍是字串值；Pydantic `Literal` 應用層驗證照舊保留）**
 - POST /events 不接受外部指定 status，一律後端設 `pending`
 - 使用者是邊學邊做：實作時每一步先用白話說明、取得同意再動手（CLAUDE.md 合作規則）
 

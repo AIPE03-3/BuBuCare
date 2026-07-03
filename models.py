@@ -56,9 +56,10 @@ class Device(Base):  # 攝影機裝置
     device_name: Mapped[str] = mapped_column(String(255), nullable=False)
     # location_id 和 stream_url 是 spec 裡唯二可空的欄位：裝置剛建檔時可能還沒定位置、還沒接串流
     location_id: Mapped[Optional[int]] = mapped_column(ForeignKey("locations.location_id"), nullable=True)
-    # Enum：固定選項的欄位。PostgreSQL 建真 ENUM 型別、SQLite 用 CHECK 約束，DB 層直接擋壞值
+    # Enum：固定選項的欄位。PostgreSQL 建真 ENUM 型別，DB 層直接擋壞值
+    # create_constraint=True：讓沒有原生 ENUM 的資料庫（如測試用的 SQLite）補上 CHECK 約束，行為跟正式環境一樣嚴格
     status: Mapped[str] = mapped_column(
-        Enum("active", "inactive", "fault", name="device_status"),
+        Enum("active", "inactive", "fault", name="device_status", create_constraint=True),
         nullable=False, default="active"
     )
     stream_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -89,11 +90,11 @@ class DetectEvent(Base):  # 跌倒事件主表
     # 拆兩欄的狀態機：status 管進度，verdict 管人工判定結果
     # 程式端讀寫都還是普通字串（例如 "pending"），Enum 只是讓資料庫多一層守門
     status: Mapped[str] = mapped_column(
-        Enum("pending", "in_progress", "resolved", name="event_status"),
+        Enum("pending", "in_progress", "resolved", name="event_status", create_constraint=True),
         nullable=False, default="pending"
     )
     verdict: Mapped[Optional[str]] = mapped_column(
-        Enum("true_alarm", "false_alarm", name="event_verdict"), nullable=True
+        Enum("true_alarm", "false_alarm", name="event_verdict", create_constraint=True), nullable=True
     )
 
     clip_path: Mapped[str] = mapped_column(String(255), nullable=False)  # 事件影像片段
@@ -109,5 +110,5 @@ class DetectEvent(Base):  # 跌倒事件主表
     recommended_action: Mapped[Optional[str]] = mapped_column(String(255))
     incident_draft_notification: Mapped[Optional[str]] = mapped_column(String(255))
     severity: Mapped[Optional[str]] = mapped_column(
-        Enum("low", "medium", "high", name="event_severity")
+        Enum("low", "medium", "high", name="event_severity", create_constraint=True)
     )
