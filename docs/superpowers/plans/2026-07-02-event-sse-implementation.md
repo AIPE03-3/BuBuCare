@@ -35,7 +35,7 @@
 - Produces: `models.Company(company_id, company_name)`、`models.Location(location_id, location_name, company_id)`、`models.Device(device_id, device_name, location_id, status, stream_url, company_id)`（含 `Device.location` relationship，可直接讀 `device.location.location_name`）、`models.Staff(staff_id, staff_name, company_id)`、`models.DetectEvent(event_id: str UUID, device_id, event_type, status, verdict, clip_path, snapshot_path, detected_at, staff_id, company_id, yolo_score, yolo_threshold, vlm_summary, vlm_confidence, recommended_action, incident_draft_notification, severity)`、`User.company_id: int (default 1)`
 - Produces（conftest）: 種子＝公司 id=1「測試安養院」、區域 id=1「交誼廳」、裝置 id=1「交誼廳-01」（location_id=1）、照護員 id=1「小美」/ id=2「阿強」；fixtures `staff_token`、`auth_headers`、`make_event`；環境變數 `EVENT_API_KEY=test-api-key`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_models.py`：
 
@@ -77,7 +77,7 @@ def test_既有帳號自動掛預設公司(db_session):
     assert alice.company_id == 1
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_models.py -v
@@ -85,7 +85,7 @@ def test_既有帳號自動掛預設公司(db_session):
 
 預期：FAIL，`ImportError: cannot import name 'Company' from 'models'`
 
-- [ ] **Step 3: 實作 models.py**
+- [x] **Step 3: 實作 models.py**
 
 在 `models.py` 檔頭 import 區改成：
 
@@ -178,7 +178,7 @@ class DetectEvent(Base):  # 跌倒事件主表
     severity: Mapped[Optional[str]] = mapped_column(String(10))     # low/medium/high
 ```
 
-- [ ] **Step 4: 更新 tests/conftest.py**
+- [x] **Step 4: 更新 tests/conftest.py**
 
 檔頭 import 改成（多 import 新 model + os + datetime）：
 
@@ -255,7 +255,7 @@ def make_event(db_session):
     return _make
 ```
 
-- [ ] **Step 5: 跑測試確認通過（含既有 16 個測試不能壞）**
+- [x] **Step 5: 跑測試確認通過（含既有 16 個測試不能壞）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -263,7 +263,7 @@ def make_event(db_session):
 
 預期：全部 PASS（既有 16 個 + 新 3 個）
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add models.py tests/conftest.py tests/test_models.py
@@ -282,7 +282,7 @@ git commit -m "feat: 新增 companies/locations/devices/staff/detect_events 資�
 - Produces: `sse.ConnectionPool`（`register() -> asyncio.Queue`、`unregister(q) -> None`、`broadcast(event_name: str, data: dict) -> None`）、模組層級單例 `sse.pool`、`sse.format_sse(message: dict) -> str`
 - 訊息內部格式：`{"event": "event_created"|"event_updated", "data": {完整事件 dict}}`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_sse.py`：
 
@@ -327,7 +327,7 @@ def test_format_sse_輸出符合SSE格式():
     assert text == 'event: event_created\ndata: {"a": 1}\n\n'
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_sse.py -v
@@ -335,7 +335,7 @@ def test_format_sse_輸出符合SSE格式():
 
 預期：FAIL，`ModuleNotFoundError: No module named 'sse'`
 
-- [ ] **Step 3: 實作 sse.py**
+- [x] **Step 3: 實作 sse.py**
 
 ```python
 # sse.py
@@ -380,7 +380,7 @@ def format_sse(message: dict) -> str:
     return f"event: {message['event']}\ndata: {data}\n\n"
 ```
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_sse.py -v
@@ -388,7 +388,7 @@ def format_sse(message: dict) -> str:
 
 預期：4 個全 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add sse.py tests/test_sse.py
@@ -407,7 +407,7 @@ git commit -m "feat: SSE 連線池（register/unregister/broadcast + SSE 格式�
 - Consumes: Task 1 的 models、Task 2 的 `sse.pool`
 - Produces: `event_service.DeviceNotFoundError(Exception)`、`event_service.serialize_event(event: DetectEvent, device: Device) -> dict`（含 device_name/location 的完整事件 dict，detected_at 轉 ISO 字串）、`event_service.handle_incoming_event(db: Session, data: dict) -> dict`（存 DB → 廣播 event_created → 回傳序列化結果；裝置不存在丟 DeviceNotFoundError，什麼都不發生）
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_event_service.py`：
 
@@ -459,7 +459,7 @@ def test_裝置不存在_不存DB_不廣播(db_session):
     assert q.empty()                                    # 什麼都沒廣播
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_event_service.py -v
@@ -467,7 +467,7 @@ def test_裝置不存在_不存DB_不廣播(db_session):
 
 預期：FAIL，`ModuleNotFoundError: No module named 'event_service'`
 
-- [ ] **Step 3: 實作 event_service.py**
+- [x] **Step 3: 實作 event_service.py**
 
 ```python
 # event_service.py
@@ -529,7 +529,7 @@ def handle_incoming_event(db: Session, data: dict) -> dict:
     return payload
 ```
 
-- [ ] **Step 4: 跑測試確認通過**
+- [x] **Step 4: 跑測試確認通過**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_event_service.py -v
@@ -537,7 +537,7 @@ def handle_incoming_event(db: Session, data: dict) -> dict:
 
 預期：2 個全 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add event_service.py tests/test_event_service.py
@@ -557,7 +557,7 @@ git commit -m "feat: handle_incoming_event 事件處理核心（存 DB → 廣�
 - Consumes: Task 3 的 `handle_incoming_event`、`DeviceNotFoundError`
 - Produces: `event_routes.router`（APIRouter，之後的任務往裡面加端點）、`event_routes.require_api_key`（Header X-API-Key 比對 `os.environ["EVENT_API_KEY"]`）、`POST /events`（201 + 事件 JSON；401 key 錯；400 裝置不存在；422 缺必填欄位）
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_events_post.py`：
 
@@ -604,7 +604,7 @@ def test_缺必填欄位_422(client):
     assert res.status_code == 422
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_events_post.py -v
@@ -612,7 +612,7 @@ def test_缺必填欄位_422(client):
 
 預期：FAIL（404，因為 /events 路由還不存在）
 
-- [ ] **Step 3: 實作 event_routes.py**
+- [x] **Step 3: 實作 event_routes.py**
 
 ```python
 # event_routes.py
@@ -668,7 +668,7 @@ async def create_event(body: EventCreateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 ```
 
-- [ ] **Step 4: main.py 掛上 router**
+- [x] **Step 4: main.py 掛上 router**
 
 在 `main.py` 的 import 區加：
 
@@ -683,7 +683,7 @@ from event_routes import router as event_router
 app.include_router(event_router)
 ```
 
-- [ ] **Step 5: 跑測試確認通過（全套）**
+- [x] **Step 5: 跑測試確認通過（全套）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -691,7 +691,7 @@ app.include_router(event_router)
 
 預期：全部 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add event_routes.py main.py tests/test_events_post.py
@@ -710,7 +710,7 @@ git commit -m "feat: POST /events 端點 + X-API-Key 機器驗證"
 - Consumes: `dependencies.get_current_user`（既有 JWT 驗證）、Task 3 的 `serialize_event`、conftest 的 `auth_headers`/`make_event`
 - Produces: `GET /events`（登入即可，回傳事件陣列、detected_at 新→舊、每筆同 serialize_event 結構）、`GET /staff`（登入即可，回傳 `[{"staff_id": int, "staff_name": str}]`）
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_events_list.py`：
 
@@ -760,7 +760,7 @@ def test_回傳照護員名單(client, auth_headers):
     assert names == ["小美", "阿強"]  # conftest 種子資料
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_events_list.py tests/test_staff.py -v
@@ -768,7 +768,7 @@ def test_回傳照護員名單(client, auth_headers):
 
 預期：FAIL（404，路由不存在）
 
-- [ ] **Step 3: 實作兩個端點**
+- [x] **Step 3: 實作兩個端點**
 
 `event_routes.py` 的 import 區補：
 
@@ -813,7 +813,7 @@ def list_staff(
     ]
 ```
 
-- [ ] **Step 4: 跑測試確認通過（全套）**
+- [x] **Step 4: 跑測試確認通過（全套）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -821,7 +821,7 @@ def list_staff(
 
 預期：全部 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add event_routes.py tests/test_events_list.py tests/test_staff.py
@@ -840,7 +840,7 @@ git commit -m "feat: GET /events 事件列表 + GET /staff 照護員名單"
 - Consumes: Task 1-5 全部；conftest 的 `make_event`（可指定 status/verdict 造出任意狀態的事件）
 - Produces: `PATCH /events/{event_id}/verdict`，body `{"verdict": "true_alarm"|"false_alarm", "staff_id": int|null}`。狀態轉換：pending+誤報→resolved；pending+真跌倒（必帶 staff_id）→in_progress。錯誤：404 不存在、409 非 pending、422 真跌倒沒帶 staff_id、400 staff_id 不存在。成功後廣播 `event_updated`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_verdict.py`：
 
@@ -943,7 +943,7 @@ def test_判定成功會廣播event_updated(client, auth_headers, make_event):
     assert msg["data"]["status"] == "resolved"
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_verdict.py -v
@@ -951,7 +951,7 @@ def test_判定成功會廣播event_updated(client, auth_headers, make_event):
 
 預期：FAIL（405 或 404，路由不存在）
 
-- [ ] **Step 3: 實作 verdict 端點**
+- [x] **Step 3: 實作 verdict 端點**
 
 `event_routes.py` 的 import 區補（sse 的 pool）：
 
@@ -1011,7 +1011,7 @@ async def verdict_event(
     return payload
 ```
 
-- [ ] **Step 4: 跑測試確認通過（全套）**
+- [x] **Step 4: 跑測試確認通過（全套）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -1019,7 +1019,7 @@ async def verdict_event(
 
 預期：全部 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add event_routes.py tests/test_verdict.py
@@ -1038,7 +1038,7 @@ git commit -m "feat: PATCH /events/{id}/verdict 人工判定（含狀態轉換�
 - Consumes: Task 6 為止的全部
 - Produces: `PATCH /events/{event_id}/resolve`（無 body）。只有 `in_progress` 能結案 → `resolved`；404 不存在、409 狀態不對。成功後廣播 `event_updated`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 建立 `tests/test_resolve.py`：
 
@@ -1096,7 +1096,7 @@ def test_結案成功會廣播event_updated(client, auth_headers, make_event):
     assert msg["data"]["status"] == "resolved"
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_resolve.py -v
@@ -1104,7 +1104,7 @@ def test_結案成功會廣播event_updated(client, auth_headers, make_event):
 
 預期：FAIL（405 或 404，路由不存在）
 
-- [ ] **Step 3: 實作 resolve 端點**
+- [x] **Step 3: 實作 resolve 端點**
 
 `event_routes.py` 檔案末尾加：
 
@@ -1136,7 +1136,7 @@ async def resolve_event(
     return payload
 ```
 
-- [ ] **Step 4: 跑測試確認通過（全套）**
+- [x] **Step 4: 跑測試確認通過（全套）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -1144,7 +1144,7 @@ async def resolve_event(
 
 預期：全部 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add event_routes.py tests/test_resolve.py
@@ -1163,7 +1163,7 @@ git commit -m "feat: PATCH /events/{id}/resolve 結案端點"
 - Consumes: `auth.decode_access_token`（既有）、Task 2 的 `pool`/`format_sse`
 - Produces: `event_routes.get_user_from_query_token(token: str|None Query) -> dict`（401 無效/沒帶）、`GET /stream?token=`（text/event-stream 長連線，15 秒心跳 `: ping`，斷線自動 unregister）
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 在 `tests/test_sse.py` 末尾加：
 
@@ -1198,7 +1198,7 @@ def test_query_token_無效token丟401():
     assert exc.value.status_code == 401
 ```
 
-- [ ] **Step 2: 跑測試確認失敗**
+- [x] **Step 2: 跑測試確認失敗**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/test_sse.py -v
@@ -1206,7 +1206,7 @@ def test_query_token_無效token丟401():
 
 預期：FAIL，`ImportError: cannot import name 'get_user_from_query_token'`
 
-- [ ] **Step 3: 實作 /stream 端點**
+- [x] **Step 3: 實作 /stream 端點**
 
 `event_routes.py` 的 import 區補：
 
@@ -1258,7 +1258,7 @@ async def stream(current_user: dict = Depends(get_user_from_query_token)):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 ```
 
-- [ ] **Step 4: 跑測試確認通過（全套）**
+- [x] **Step 4: 跑測試確認通過（全套）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -1266,7 +1266,7 @@ async def stream(current_user: dict = Depends(get_user_from_query_token)):
 
 預期：全部 PASS
 
-- [ ] **Step 5: 手動煙霧測試（真的開一條 SSE 連線看看）**
+- [x] **Step 5: 手動煙霧測試（真的開一條 SSE 連線看看）**
 
 啟動服務：
 
@@ -1283,7 +1283,7 @@ curl.exe -N "http://127.0.0.1:8000/stream?token=$($login.access_token)"
 
 預期：連線保持開啟，約每 15 秒出現一行 `: ping`。確認後 Ctrl+C 結束。
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add event_routes.py tests/test_sse.py
@@ -1303,7 +1303,7 @@ git commit -m "feat: GET /stream SSE 長連線（query token 驗證 + 15 秒心�
 - Consumes: `database.SessionLocal`/`engine`/`Base`、Task 1 的 models
 - Produces: 對正式 PostgreSQL 的一次性初始化能力（建表 + 種子 + user_account 加欄位）。腳本可重複執行不報錯（已有資料自動略過，跟 create_test_user.py 同風格）
 
-- [ ] **Step 1: 寫 create_seed_data.py**
+- [x] **Step 1: 寫 create_seed_data.py**
 
 ```python
 # create_seed_data.py
@@ -1355,7 +1355,7 @@ db.close()
 print("種子資料完成")
 ```
 
-- [ ] **Step 2: 寫 migrate_add_company_id.py**
+- [x] **Step 2: 寫 migrate_add_company_id.py**
 
 ```python
 # migrate_add_company_id.py
@@ -1374,7 +1374,7 @@ with engine.begin() as conn:
 print("user_account.company_id 遷移完成（已存在則略過）")
 ```
 
-- [ ] **Step 3: 更新 .env.example**
+- [x] **Step 3: 更新 .env.example**
 
 在 `.env.example` 末尾加：
 
@@ -1385,7 +1385,7 @@ EVENT_API_KEY=change-me-to-a-long-random-string
 
 同時提醒使用者在自己的 `.env` 加上真實的 `EVENT_API_KEY`（產生方式：`python -c "import secrets; print(secrets.token_urlsafe(32))"`）。
 
-- [ ] **Step 4: 對正式 PostgreSQL 執行（需使用者在場確認）**
+- [x] **Step 4: 對正式 PostgreSQL 執行（需使用者在場確認）**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" create_seed_data.py
@@ -1394,7 +1394,7 @@ EVENT_API_KEY=change-me-to-a-long-random-string
 
 預期輸出：各步驟的「已建立…」訊息；第二次執行全部顯示「略過」。
 
-- [ ] **Step 5: 跑全套測試確認沒壞**
+- [x] **Step 5: 跑全套測試確認沒壞**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -1402,7 +1402,7 @@ EVENT_API_KEY=change-me-to-a-long-random-string
 
 預期：全部 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add create_seed_data.py migrate_add_company_id.py .env.example
@@ -1417,7 +1417,7 @@ git commit -m "feat: 種子資料腳本 + user_account 遷移腳本 + EVENT_API_
 - Modify: `CLAUDE.md`（API 表加 6 個端點改成「已實作」、檔案結構加新檔案）
 - Modify: `docs/event-sse-discussion-handoff.md`（頂部加「已完成實作」註記）
 
-- [ ] **Step 1: 更新 CLAUDE.md**
+- [x] **Step 1: 更新 CLAUDE.md**
 
 「API 路由」表格加 6 列（並刪掉「已完成設計、尚未實作」那段話）：
 
@@ -1442,7 +1442,7 @@ git commit -m "feat: 種子資料腳本 + user_account 遷移腳本 + EVENT_API_
 
 「資料庫」段落的「規劃中」改成「已建立」，並在專案概述把「**進行中**」段落改成已完成。
 
-- [ ] **Step 2: 在 handoff 文件頂部加註記**
+- [x] **Step 2: 在 handoff 文件頂部加註記**
 
 `docs/event-sse-discussion-handoff.md` 第 3 行（引言區）加：
 
@@ -1451,7 +1451,7 @@ git commit -m "feat: 種子資料腳本 + user_account 遷移腳本 + EVENT_API_
 > 最終設計以 `docs/superpowers/specs/2026-07-02-event-sse-design.md` 為準。
 ```
 
-- [ ] **Step 3: 最終全套測試**
+- [x] **Step 3: 最終全套測試**
 
 ```powershell
 & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
@@ -1459,7 +1459,7 @@ git commit -m "feat: 種子資料腳本 + user_account 遷移腳本 + EVENT_API_
 
 預期：全部 PASS（既有 16 + 新增約 30 個）
 
-- [ ] **Step 4: 手動端到端驗收（模擬完整流程）**
+- [x] **Step 4: 手動端到端驗收（模擬完整流程）**
 
 啟動服務後，依序：
 
@@ -1486,7 +1486,7 @@ Invoke-RestMethod -Method Patch -Uri "http://127.0.0.1:8000/events/$($created.ev
 預期：步驟 2 回 201、步驟 4 回 status=in_progress、步驟 5 回 status=resolved。
 （若同時開著 Task 8 的 `curl.exe -N` 連線，每一步都會看到即時推播。）
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add CLAUDE.md docs/event-sse-discussion-handoff.md

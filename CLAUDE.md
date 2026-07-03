@@ -14,11 +14,10 @@
 fulilian 是一套「YOLO 初篩 → VLM 精判 → 人工確認 → 閉環回訓」的安養院跌倒偵測系統。
 本專案（fulilian-backend）是**通報層的 FastAPI 後端**，負責接收事件、推送通知、人工確認流程。
 
-目前已實作：JWT 身分驗證、帳號管理（register / login / me / delete）、admin / staff 角色分權。
-使用 passlib + bcrypt 做密碼雜湊，PostgreSQL（AWS RDS）儲存帳號資料。
-
-**進行中**：跌倒事件通報 + SSE 推播 + 人工確認流程。設計已定案、尚未實作，
-正式規格見 `docs/superpowers/specs/2026-07-02-event-sse-design.md`（實作前必讀）。
+目前已實作：JWT 身分驗證、帳號管理（register / login / me / delete）、admin / staff 角色分權、
+跌倒事件通報 + SSE 推播 + 人工確認流程（判定/結案）。
+使用 passlib + bcrypt 做密碼雜湊，PostgreSQL（AWS RDS）儲存資料。
+事件功能的設計規格見 `docs/superpowers/specs/2026-07-02-event-sse-design.md`。
 
 ---
 
@@ -62,8 +61,12 @@ python create_test_user.py
 | `security.py`         | 密碼雜湊（hash）與比對（verify）                   |
 | `dependencies.py`     | 依賴注入：驗證 token、檢查 admin 角色              |
 | `database.py`         | SQLAlchemy 連線設定（讀 .env，連 PostgreSQL）      |
-| `models.py`           | User 資料表定義（對應 `user_account` 表）          |
+| `models.py`           | 資料表定義（User + Company/Location/Device/Staff/DetectEvent） |
+| `sse.py`              | SSE 連線池（register/unregister/broadcast）        |
+| `event_service.py`    | 事件處理核心：handle_incoming_event（存 DB → 廣播）|
+| `event_routes.py`     | 事件相關 6 個端點（APIRouter）                     |
 | `create_test_user.py` | 建立初始帳號的腳本（admin + staff01）              |
+| `create_seed_data.py` | 正式 DB 初始化：建新表 + user_account 加 company_id + 種子資料（可重複執行） |
 | `index.html`          | 純 HTML/JS 前端測試介面                            |
 | `.env`                | DB 連線資訊 + SECRET_KEY（不進 git）               |
 | `.env.example`        | 環境變數範本（進 git，不含真實值）                 |
@@ -73,6 +76,15 @@ python create_test_user.py
 | `tests/test_register.py` | POST /register 測試（4 個）                     |
 | `tests/test_me.py`    | GET /me 測試（3 個）                               |
 | `tests/test_admin.py` | DELETE /users/{id} 測試（4 個）                    |
+| `tests/test_models.py` | 資料模型測試（3 個）                              |
+| `tests/test_sse.py`   | SSE 連線池 + /stream 驗證測試（8 個）              |
+| `tests/test_event_service.py` | handle_incoming_event 測試（2 個）         |
+| `tests/test_events_post.py` | POST /events 測試（5 個）                    |
+| `tests/test_events_list.py` | GET /events 測試（3 個）                     |
+| `tests/test_staff.py` | GET /staff 測試（2 個）                            |
+| `tests/test_verdict.py` | PATCH verdict 測試（8 個）                       |
+| `tests/test_resolve.py` | PATCH resolve 測試（6 個）                       |
+| `docs/future-work.md` | 未來強化清單（上正式環境前必讀）                   |
 | `fulilian_schema.md.md` | 資料庫 schema 草稿（5 張表，spec 已修訂部分欄位） |
 | `docs/superpowers/specs/` | 正式設計規格（spec），實作以這裡為準            |
 | `docs/event-sse-discussion-handoff.md` | 事件 + SSE 功能的討論過程紀錄       |
@@ -87,18 +99,21 @@ python create_test_user.py
 | POST   | `/login`      | 公開     | 登入，回傳 JWT token                  |
 | GET    | `/me`         | 需登入   | 查看自己的帳號和角色                  |
 | DELETE | `/users/{id}` | 需 admin | 刪除指定 ID 的使用者                  |
-
-事件相關 6 個端點（POST /events、GET /stream、GET /events、GET /staff、PATCH verdict/resolve）
-已完成設計、尚未實作，規格見 spec。
+| POST   | `/events`     | X-API-Key | 判斷層送入新事件（status=pending），存 DB 後 SSE 廣播 |
+| GET    | `/stream`     | 需登入（token 放 query 參數） | SSE 長連線，推播 event_created / event_updated |
+| GET    | `/events`     | 需登入   | 事件列表（新→舊，含裝置名稱/位置）    |
+| GET    | `/staff`      | 需登入   | 照護員名單（指派下拉選單用）          |
+| PATCH  | `/events/{id}/verdict` | 需登入 | 判定：誤報→直接結案；真跌倒（必帶 staff_id）→處理中 |
+| PATCH  | `/events/{id}/resolve` | 需登入 | 結案（僅限處理中的事件）              |
 
 ---
 
 ## 資料庫
 
-- **資料表**：`user_account`（非 `users`）
-- **欄位**：`id`、`name`、`password`、`email`、`role`、`last_login_time`
-- **規劃中**（spec 已定案）：新增 `companies`、`locations`、`devices`、`staff`、`detect_events` 五張表；
-  `user_account` 加 `company_id`（not null, default 1）
+- **資料表**：`user_account`（非 `users`）+ `companies`、`locations`、`devices`、`staff`、`detect_events`（已建立）
+- **user_account 欄位**：`id`、`name`、`password`、`email`、`role`、`last_login_time`、`company_id`（not null, default 1）
+- **ENUM 欄位**：status/verdict/severity 用原生 SQLAlchemy `Enum` + `create_constraint=True`
+  （PostgreSQL 真 ENUM、SQLite 測試環境 CHECK 約束；程式端讀寫仍是字串）
 - **SSL**：連線時使用 `global-bundle.pem`，sslmode=verify-full
 - **測試時**：`conftest.py` 用記憶體 SQLite，與 PostgreSQL 完全隔離
 
