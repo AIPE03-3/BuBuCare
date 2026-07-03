@@ -15,6 +15,7 @@ from models import User
 from security import verify_password, hash_password
 from auth import create_access_token
 from dependencies import get_current_user, require_admin
+from event_routes import router as event_router
 
 
 # ── 定義「POST /register 收到的 JSON 格式」────────────────
@@ -41,6 +42,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 事件相關路由（POST /events、SSE、判定/結案）都在 event_routes.py
+app.include_router(event_router)
 
 
 # ════════════════════════════════════════════════════════
