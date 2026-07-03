@@ -85,7 +85,6 @@ python create_test_user.py
 | `tests/test_verdict.py` | PATCH verdict 測試（8 個）                       |
 | `tests/test_resolve.py` | PATCH resolve 測試（6 個）                       |
 | `docs/future-work.md` | 未來強化清單（上正式環境前必讀）                   |
-| `fulilian_schema.md.md` | 資料庫 schema 草稿（5 張表，spec 已修訂部分欄位） |
 | `docs/superpowers/specs/` | 正式設計規格（spec），實作以這裡為準            |
 | `docs/event-sse-discussion-handoff.md` | 事件 + SSE 功能的討論過程紀錄       |
 

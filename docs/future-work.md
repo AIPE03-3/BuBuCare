@@ -22,3 +22,10 @@
 
 - **現況**：`allow_origins=["*"]`，只適合開發測試（CLAUDE.md 已註記）。
 - **做法**：改成列出前端的確切網址。
+
+## 程式品質
+
+### 4. 加 ruff linting（2026-06-29 舊計畫的未完成項）
+
+- **現況**：專案沒有 linter，程式風格靠人工維持。
+- **做法**：`uv add --dev ruff`，在 pyproject.toml 設定規則，跑 `ruff check .` 修完既有警告。
