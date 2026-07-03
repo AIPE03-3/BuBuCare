@@ -1,18 +1,21 @@
 # event_routes.py
 # 事件相關的所有路由。用 APIRouter 分檔，main.py 保持乾淨
+import asyncio
 import os
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from auth import decode_access_token
 from database import get_db
 from dependencies import get_current_user
 from event_service import handle_incoming_event, serialize_event, DeviceNotFoundError
 from models import DetectEvent, Device, Staff
-from sse import pool
+from sse import pool, format_sse
 
 router = APIRouter()
 
@@ -160,3 +163,38 @@ async def resolve_event(
     payload = serialize_event(event, device)
     pool.broadcast("event_updated", payload)
     return payload
+
+
+# ── SSE 專用驗證：EventSource 不能自訂 header，token 改放網址參數 ──
+# 同一張 JWT，只是改插的位置；驗證邏輯用同一個 decode_access_token
+def get_user_from_query_token(token: Optional[str] = Query(None)):
+    if token is None:
+        raise HTTPException(status_code=401, detail="缺少 token")
+    payload = decode_access_token(token)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="token 無效或過期")
+    return payload
+
+
+# ════════════════════════════════════════════════════════
+# GET /stream（登入即可，token 放 query）：SSE 長連線
+# ════════════════════════════════════════════════════════
+@router.get("/stream")
+async def stream(current_user: dict = Depends(get_user_from_query_token)):
+    q = pool.register()  # 進來就掛一個信箱到連線池
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    # 守在自己的信箱旁等訊息，最多等 15 秒
+                    message = await asyncio.wait_for(q.get(), timeout=15)
+                    yield format_sse(message)
+                except asyncio.TimeoutError:
+                    # 15 秒沒事件 → 送心跳，防止中間網路設備掐斷「太久沒動靜」的連線
+                    yield ": ping\n\n"
+        finally:
+            # 瀏覽器關掉/斷線/F5 → generator 被取消 → 把信箱移出連線池
+            pool.unregister(q)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

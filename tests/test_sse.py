@@ -36,3 +36,33 @@ def test_重複移除不報錯():
 def test_format_sse_輸出符合SSE格式():
     text = format_sse({"event": "event_created", "data": {"a": 1}})
     assert text == 'event: event_created\ndata: {"a": 1}\n\n'
+
+
+# ── /stream 端點的驗證測試 ──
+# 長連線本身難在測試裡「等」，所以只考驗證擋不擋；
+# 廣播邏輯上面已經直接考過連線池了
+from event_routes import get_user_from_query_token
+import pytest
+from fastapi import HTTPException
+
+
+def test_stream_沒帶token_401(client):
+    res = client.get("/stream")
+    assert res.status_code == 401
+
+
+def test_stream_token亂寫_401(client):
+    res = client.get("/stream", params={"token": "not-a-real-token"})
+    assert res.status_code == 401
+
+
+def test_query_token_合法token驗證通過(staff_token):
+    # 直接測依賴函式：合法 token 解得出使用者資料
+    payload = get_user_from_query_token(token=staff_token)
+    assert payload["sub"] == "alice"
+
+
+def test_query_token_無效token丟401():
+    with pytest.raises(HTTPException) as exc:
+        get_user_from_query_token(token="bad-token")
+    assert exc.value.status_code == 401

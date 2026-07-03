@@ -111,3 +111,4 @@ python create_test_user.py
 - **PowerShell 工具**：每次呼叫都是全新 session，不繼承已啟動的 venv，需用完整路徑：`& "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe"`
 - **SECRET_KEY**：已移到 `.env`，`auth.py` 用 `os.environ["SECRET_KEY"]` 讀取，不再 hardcode
 - **CORS**：目前 `allow_origins=["*"]`，僅適合開發測試
+- **未來強化清單**：`docs/future-work.md`——上正式環境前要做的事（refresh token、nginx 日誌遮蔽、CORS 收緊）
