@@ -9,7 +9,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db
-from event_service import handle_incoming_event, DeviceNotFoundError
+from dependencies import get_current_user
+from event_service import handle_incoming_event, serialize_event, DeviceNotFoundError
+from models import DetectEvent, Device, Staff
 
 router = APIRouter()
 
@@ -49,3 +51,35 @@ async def create_event(body: EventCreateRequest, db: Session = Depends(get_db)):
         return handle_incoming_event(db, body.model_dump())
     except DeviceNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ════════════════════════════════════════════════════════
+# GET /events（登入即可）：事件列表，新到舊
+# ════════════════════════════════════════════════════════
+@router.get("/events")
+def list_events(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # JOIN 裝置表，一次查好裝置名稱/位置，跟 SSE 廣播用同一個序列化函式
+    rows = (
+        db.query(DetectEvent, Device)
+        .join(Device, DetectEvent.device_id == Device.device_id)
+        .order_by(DetectEvent.detected_at.desc())
+        .all()
+    )
+    return [serialize_event(event, device) for event, device in rows]
+
+
+# ════════════════════════════════════════════════════════
+# GET /staff（登入即可）：照護員名單（指派下拉選單用）
+# ════════════════════════════════════════════════════════
+@router.get("/staff")
+def list_staff(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return [
+        {"staff_id": s.staff_id, "staff_name": s.staff_name}
+        for s in db.query(Staff).order_by(Staff.staff_id).all()
+    ]
