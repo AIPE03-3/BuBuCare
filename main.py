@@ -1,33 +1,14 @@
-# ═══════════════════════════════════════════════════════
-# FastAPI 是一個 Python 的 Web 框架。
-# 你寫一個函式，FastAPI 幫你把它變成一個「可以被網路呼叫的 API」。
-#
-# 概念：
-#   你的函式              →  FastAPI 幫你包裝  →  變成一個 HTTP 路由
-#   def login(...)        →  @app.post("/login")  →  POST http://你的網址/login
-#
-# JWT 跟 FastAPI 的關係：
-#   FastAPI 本身不知道誰登入、誰沒登入。
-#   JWT 是「通行證」系統，負責證明身分。
-#   兩者分工：
-#     FastAPI  → 負責接收請求、處理邏輯、回傳結果
-#     JWT      → 負責「這個請求是不是合法的已登入使用者」
-# ═══════════════════════════════════════════════════════
-
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-# FastAPI   → 建立 app 本體
-# Depends   → 依賴注入，讓 FastAPI 在執行路由前先跑某個函式
-# HTTPException → 回傳 HTTP 錯誤給前端（例如 401、404）
-# CORSMiddleware → 允許瀏覽器從其他網址呼叫這個 API（開發測試用）
+from fastapi import FastAPI, Depends, HTTPException 
+# 建立 app 本體, 依賴注入, 回傳 HTTP 錯誤給前端（例如 401、404）
+from fastapi.middleware.cors import CORSMiddleware 
+# 允許瀏覽器從其他網址呼叫這個 API（開發測試用）
 
 from fastapi.security import OAuth2PasswordRequestForm
 # 這是 FastAPI 內建的登入表單格式
 # 前端送來的 username + password 會被自動解析成這個物件
 
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
-# BaseModel → 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
+from pydantic import BaseModel # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
 
 from database import Base, engine, get_db
 from models import User
@@ -38,7 +19,7 @@ from dependencies import get_current_user, require_admin
 
 # ── 定義「POST /register 收到的 JSON 格式」────────────────
 # 前端送來 {"username": "alice", "password": "1234"}
-# FastAPI 會自動比對這個格式，格式不對會直接回 422 錯誤
+# FastAPI 會自動比對這個格式
 class RegisterRequest(BaseModel):
     username: str
     password: str
@@ -91,8 +72,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 # ════════════════════════════════════════════════════════
 @app.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # OAuth2PasswordRequestForm → FastAPI 自動從 form body 抓 username、password
-    # 這是 OAuth2 標準格式，/docs 測試頁面的登入框就是根據這個顯示的
+    # OAuth2...Form → FastAPI 自動從 form body 抓 username、password
 
     # 到資料庫查有沒有這個帳號
     user = db.query(User).filter(User.name == form_data.username).first()
