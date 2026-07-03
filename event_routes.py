@@ -133,3 +133,30 @@ async def verdict_event(
     payload = serialize_event(event, device)
     pool.broadcast("event_updated", payload)
     return payload
+
+
+# ════════════════════════════════════════════════════════
+# PATCH /events/{event_id}/resolve（登入即可）：結案
+# ════════════════════════════════════════════════════════
+@router.patch("/events/{event_id}/resolve")
+async def resolve_event(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = db.query(DetectEvent).filter(DetectEvent.event_id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="事件不存在")
+
+    # 只有「處理中」能結案：pending 還沒判定、resolved 已經結過了
+    if event.status != "in_progress":
+        raise HTTPException(status_code=409, detail="只有處理中的事件可以結案")
+
+    event.status = "resolved"
+    db.commit()
+    db.refresh(event)
+
+    device = db.query(Device).filter(Device.device_id == event.device_id).first()
+    payload = serialize_event(event, device)
+    pool.broadcast("event_updated", payload)
+    return payload
