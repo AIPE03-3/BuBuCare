@@ -12,6 +12,7 @@ from database import get_db
 from dependencies import get_current_user
 from event_service import handle_incoming_event, serialize_event, DeviceNotFoundError
 from models import DetectEvent, Device, Staff
+from sse import pool
 
 router = APIRouter()
 
@@ -83,3 +84,52 @@ def list_staff(
         {"staff_id": s.staff_id, "staff_name": s.staff_name}
         for s in db.query(Staff).order_by(Staff.staff_id).all()
     ]
+
+
+# ── PATCH /events/{id}/verdict 收到的 JSON 格式 ──
+class VerdictRequest(BaseModel):
+    verdict: Literal["true_alarm", "false_alarm"]
+    staff_id: Optional[int] = None  # 只有判真跌倒時必填
+
+
+# ════════════════════════════════════════════════════════
+# PATCH /events/{event_id}/verdict（登入即可）：人工判定
+# ════════════════════════════════════════════════════════
+@router.patch("/events/{event_id}/verdict")
+async def verdict_event(
+    event_id: str,
+    body: VerdictRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = db.query(DetectEvent).filter(DetectEvent.event_id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="事件不存在")
+
+    # 狀態轉換守門：只有 pending 能被判定（409 = 請求沒錯，但跟目前狀態衝突）
+    if event.status != "pending":
+        raise HTTPException(status_code=409, detail="事件已被判定過")
+
+    if body.verdict == "true_alarm":
+        # 真跌倒：必須同時指派照護員
+        if body.staff_id is None:
+            raise HTTPException(status_code=422, detail="判定真跌倒必須指派照護員（staff_id）")
+        staff = db.query(Staff).filter(Staff.staff_id == body.staff_id).first()
+        if staff is None:
+            raise HTTPException(status_code=400, detail=f"照護員 {body.staff_id} 不存在")
+        event.status = "in_progress"
+        event.verdict = "true_alarm"
+        event.staff_id = body.staff_id
+    else:
+        # 誤報：不用派人，直接結案（staff_id 留空）
+        event.status = "resolved"
+        event.verdict = "false_alarm"
+
+    db.commit()
+    db.refresh(event)
+
+    # 先存後播：commit 成功才廣播，讓所有中控站畫面同步
+    device = db.query(Device).filter(Device.device_id == event.device_id).first()
+    payload = serialize_event(event, device)
+    pool.broadcast("event_updated", payload)
+    return payload
