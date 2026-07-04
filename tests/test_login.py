@@ -3,6 +3,7 @@
 # 共用設定（資料庫、測試帳號）都在 conftest.py，pytest 會自動載入
 
 from auth import decode_access_token
+from models import User
 
 
 def test_login_correct_credentials_returns_token(client):
@@ -42,3 +43,15 @@ def test_login_admin_token_contains_admin_role(client):
     payload = decode_access_token(token)
     assert payload["sub"] == "boss"
     assert payload["role"] == "admin"
+
+
+def test_login_updates_last_login_time(client, db_session):
+    # 登入前 alice 沒有登入紀錄；登入成功後 last_login_time 應該被填上
+    before = db_session.query(User).filter(User.name == "alice").first()
+    assert before.last_login_time is None
+
+    client.post("/login", data={"username": "alice", "password": "secret123"})
+
+    db_session.expire_all()  # 清掉 session 快取，強制重新從 DB 讀最新值
+    after = db_session.query(User).filter(User.name == "alice").first()
+    assert after.last_login_time is not None

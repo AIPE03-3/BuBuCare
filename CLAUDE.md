@@ -2,10 +2,11 @@
 
 ## 與使用者的合作規則（每次對話都必須遵守）
 
-1. **每一步動手前先說明**：要改哪個檔案、改什麼、為什麼，用白話說明，不用術語
-2. **等使用者看懂並同意後才執行**，不要自己連續執行多步
-3. **如果使用者說看不懂**，換更具體的方式解釋，不要跳過
-4. 使用者是邊學邊做，他需要理解每一步在做什麼
+1. **動手前先說明、同意後才做**：每一步先用白話講清楚要改哪個檔案、改什麼、為什麼，等使用者看懂並同意才執行，不要自己連續執行多步
+2. **解釋概念的方式**：先用生活比喻 → 再看實際程式碼 → 最後才帶術語名稱；使用者說看不懂就換更具體的方式重講，不要跳過（過去太快進術語，使用者常要追問第二次才懂）
+3. 使用者是邊學邊做，他需要理解每一步在做什麼
+4. **git commit 不要自己直接執行**：可以在適當時機「提醒」使用者要不要 commit，但實際 commit 由使用者決定（已有 `.claude/` hook 會攔截確認）
+5. **每輪功能告一段落時，主動列出本輪產生 / 改動的檔案**，並標「建議保留」或「可刪除」，讓使用者決定，不要等他來問
 
 ---
 
@@ -24,17 +25,18 @@ fulilian 是一套「YOLO 初篩 → VLM 精判 → 人工確認 → 閉環回�
 ## 環境
 
 - 套件管理：**uv**
-- 虛擬環境：`.venv`，啟動後前綴顯示 `(login_test)`（舊名稱，正常現象）
+- 虛擬環境：`.venv`，啟動後前綴顯示 `(fulilian-backend)`
 - Python：3.12
 - 資料庫連線資訊存在 `.env`（已加入 `.gitignore`，不會被 git 追蹤）
 
 ### 啟動服務
 
-`uv run` 在這台機器有 trampoline 路徑問題，改用：
-
 ```bash
-python -m uvicorn main:app --reload
+uv run uvicorn main:app --reload
+# 或 python -m uvicorn main:app --reload
 ```
+
+> 註：`.venv` 於 2026-07-04 砍掉重建，已修好舊資料夾改名造成的 uv run trampoline bug，`uv run` 恢復正常。
 
 ### 第一次建立初始帳號（對 PostgreSQL 執行）
 
@@ -47,7 +49,9 @@ python create_test_user.py
 ### 執行測試
 
 ```bash
-& "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
+uv run pytest tests/ -v
+# PowerShell 工具（全新 session、venv 沒啟動）改用完整路徑：
+# & "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest tests/ -v
 ```
 
 ---
@@ -121,7 +125,7 @@ python create_test_user.py
 ## 注意事項
 
 - **bcrypt 版本**：鎖定 `4.0.1`（pyproject.toml），不能升級，升到 5.x 會導致 passlib 初始化爆炸
-- **uv run 問題**：這台機器的 `uv run` 有 trampoline 路徑 bug，一律改用 `python -m` 或完整路徑執行
+- **uv run**：2026-07-04 砍掉 `.venv` 重建後已修好（原本是舊資料夾名 login_test 改名成 fulilian-backend，殘留的 trampoline .exe 指向舊路徑）。現在 `uv run` 正常，PowerShell 工具因每次是全新 session 仍建議用完整路徑
 - **PowerShell 工具**：每次呼叫都是全新 session，不繼承已啟動的 venv，需用完整路徑：`& "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe"`
 - **SECRET_KEY**：已移到 `.env`，`auth.py` 用 `os.environ["SECRET_KEY"]` 讀取，不再 hardcode
 - **CORS**：目前 `allow_origins=["*"]`，僅適合開發測試

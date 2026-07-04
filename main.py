@@ -10,6 +10,9 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
 
+import os
+from datetime import datetime, timezone
+
 from database import Base, engine, get_db
 from models import User
 from security import verify_password, hash_password
@@ -27,8 +30,11 @@ class RegisterRequest(BaseModel):
     email: str
 
 
-# 程式啟動時檢查資料庫有沒有 users 表，沒有就自動建立
-Base.metadata.create_all(bind=engine)
+# 程式啟動時建立所有還不存在的資料表（表名見 models.py，例如 user_account）
+# CI／測試環境設 SKIP_DB_INIT=1 時跳過：避免 import 當下就去連正式資料庫
+# （雲端測試機連不到 AWS RDS，這行會卡住或報錯）
+if os.getenv("SKIP_DB_INIT") != "1":
+    Base.metadata.create_all(bind=engine)
 
 # ── 建立 FastAPI app 本體 ─────────────────────────────────
 # 這個 app 物件就是整個服務的核心
@@ -84,6 +90,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     # 帳號不存在，或密碼比對失敗 → 回傳 401
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
+
+    # 登入成功 → 記下這次登入時間（UTC），存回資料庫
+    user.last_login_time = datetime.now(timezone.utc)
+    db.commit()
 
     # 驗證通過 → 產生 JWT token，把帳號名稱和角色包進去
     # 之後每次請求帶著這個 token，伺服器就知道你是誰
