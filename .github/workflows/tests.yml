@@ -12,6 +12,13 @@ jobs:
       # 雲端沒有你本機的 .env，這裡補上測試需要的環境變數：
       SECRET_KEY: ci-dummy-secret-key-not-for-production-32chars  # 測試只需要「有值」，不驗證內容
       SKIP_DB_INIT: "1"  # 跳過 main.py 的建表（雲端連不到 AWS RDS）；測試自己用記憶體 SQLite
+      # 下面 5 個是「假」的 DB 資料：只為了讓 database.py 組出格式合法的連線字串
+      # （SKIP_DB_INIT=1 已擋掉真正連線，這組假資料永遠不會被拿去連 DB）
+      DB_USER: ci
+      DB_PASSWORD: ci
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: ci
 
     steps:
       - uses: actions/checkout@v4          # 把你的程式碼抓到雲端電腦上
