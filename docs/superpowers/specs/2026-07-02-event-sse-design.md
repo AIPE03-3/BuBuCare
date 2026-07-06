@@ -64,15 +64,17 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 
 ### 這次新建 5 張表
 
-> Not null 原則：欄位一律 not null，**只有兩個例外**——`devices.location_id` 和 `devices.stream_url` 可空（裝置剛建檔時可能還沒定位置、還沒接串流，強制填只會逼人塞假資料）。
+> Not null 原則：欄位一律 not null，可空的例外有——`devices.location_id` 和 `devices.stream_url`（裝置剛建檔時可能還沒定位置、還沒接串流，強制填只會逼人塞假資料）、`locations.floor`（中庭、戶外等沒有明確樓層的地點可留白）、`detect_events.location_id`（來源 `device.location_id` 本身可空，抄過來也可能是空）。
 
 **companies**：`company_id`(INT PK autoincrement)、`company_name`(VARCHAR not null)。種一筆預設公司（id=1），本輪所有資料掛它底下。
 
-**locations**：`location_id`(INT PK autoincrement)、`location_name`(VARCHAR(50) not null，如「交誼廳」「走廊」)、`company_id`(INT FK→companies, not null)。區域獨立成表，**只被 devices 引用，不連 events**——事件的位置透過「事件→裝置→區域」兩層 FK 現查。
+**locations**：`location_id`(INT PK autoincrement)、`location_name`(VARCHAR(50) not null，如「交誼廳」「走廊」)、`floor`(VARCHAR(10) **nullable**，純字串樓層標籤如「B1」「1F」「夾層」「RF」)、`company_id`(INT FK→companies, not null)。區域獨立成表讓地點名稱統一。
+
+> **2026-07-07 設計更新**：原設計「區域不連 events、位置靠兩層 FK 現查」已改為**事件建立時凍結位置**（見下方 detect_events.location_id）。現在 events 透過自身凍住的 `location_id` 連到 locations。
 
 **devices**：`device_id`(INT PK autoincrement)、`device_name`(VARCHAR not null)、`location_id`(INT FK→locations, **nullable**)、`status`(ENUM: active/inactive/fault, not null, default active)、`stream_url`(VARCHAR **nullable**)、`company_id`(INT FK→companies, not null)。
 
-> **裝置不改名原則（歷史正確性）**：事件只存 `device_id`，名稱/位置顯示時現查。因此攝影機搬位置或改用途時**不修改舊資料列**——把舊列 `status` 設 `inactive`、另建一列新裝置。舊事件永遠指向當年那列，歷史自然正確，事件表不需要快照欄位。
+> **歷史正確性（2026-07-07 更新）**：位置改用**快照**保護——事件建立時把 `device.location_id` 凍進 `detect_events.location_id`，之後裝置搬到別的區域，舊事件顯示的仍是發生當下的位置。`device_name` 仍是顯示時經裝置現查（未快照），因此**裝置改名/改用途**時仍建議沿用原則：不改舊列，把舊列 `status` 設 `inactive`、另建一列新裝置，讓舊事件的裝置名稱維持歷史正確。
 
 **staff**：`staff_id`(INT PK autoincrement)、`staff_name`(VARCHAR not null)、`company_id`(INT FK→companies, not null)。
 
@@ -82,6 +84,7 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 |--|--|--|
 | `event_id` | UUID PK | |
 | `device_id` | INT FK→devices, not null | |
+| `location_id` | INT FK→locations, nullable | 事件發生當下所在區域，寫入時從裝置 `location_id` 凍一份，之後不改（歷史正確）|
 | `event_type` | VARCHAR(50) | 如 fall |
 | `status` | ENUM: pending/in_progress/resolved, not null, default pending | 進度 |
 | `verdict` | ENUM: true_alarm/false_alarm, nullable | 判定結果 |
@@ -98,6 +101,9 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 ### 既有表調整
 
 **user_account**：新增 `company_id`(INT FK→companies, not null, **default 1**)。加欄位時舊帳號自動回填 1（預設公司），新註冊帳號也自動拿 1。程式碼唯一改動是 `models.py` 的 User 類多一行欄位定義；登入、註冊、驗證的邏輯零改動。
+
+**locations**（2026-07-07）：新增 `floor`(VARCHAR(10), nullable)。
+**detect_events**（2026-07-07）：新增 `location_id`(INT FK→locations, nullable)。
 
 ### 多租戶策略
 
@@ -136,7 +142,7 @@ Schema 欄位齊備、邏輯先支援單一機構：本輪 API 不做公司過�
 
 ### 訊息格式
 
-兩種訊息類型，`data` 都是完整事件 JSON（後端 JOIN 好 `device_name`、`location` 一起送，前端零額外請求）：
+兩種訊息類型，`data` 都是完整事件 JSON（後端把 `device_name`（裝置現查）、`location`（事件凍結的位置）一起送，前端零額外請求）：
 
 ```
 event: event_created

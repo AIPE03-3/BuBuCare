@@ -19,8 +19,8 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "event_id": event.event_id,
         "device_id": event.device_id,
         "device_name": device.device_name,
-        # relationship 自動查 locations 表；裝置還沒定位置時回 None
-        "location": device.location.location_name if device.location else None,
+        # 讀事件凍住的位置（event.location），不看裝置現況；事件沒凍到位置時回 None
+        "location": event.location.location_name if event.location else None,
         "event_type": event.event_type,
         "status": event.status,
         "verdict": event.verdict,
@@ -42,8 +42,8 @@ def handle_incoming_event(db: Session, data: dict) -> dict:
     if device is None:
         raise DeviceNotFoundError(f"裝置 {data['device_id']} 不存在")
 
-    # 2. 先存 DB（status 一律後端設 pending，company_id 跟著裝置走）
-    event = DetectEvent(**data, company_id=device.company_id)
+    # 2. 先存 DB（status 一律後端設 pending，company_id / location_id 都跟著裝置當下狀態凍一份）
+    event = DetectEvent(**data, company_id=device.company_id, location_id=device.location_id)
     db.add(event)
     db.commit()
     db.refresh(event)

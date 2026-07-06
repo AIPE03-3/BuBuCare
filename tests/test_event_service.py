@@ -2,8 +2,8 @@
 from datetime import datetime
 import pytest
 
-from event_service import handle_incoming_event, DeviceNotFoundError
-from models import DetectEvent
+from event_service import handle_incoming_event, DeviceNotFoundError, serialize_event
+from models import DetectEvent, Device, Location
 from sse import pool
 
 VALID_DATA = {
@@ -43,3 +43,20 @@ def test_裝置不存在_不存DB_不廣播(db_session):
 
     assert db_session.query(DetectEvent).count() == 0  # 什麼都沒存
     assert q.empty()                                    # 什麼都沒廣播
+
+
+def test_事件位置凍結_裝置事後搬走也不變(db_session):
+    # 事件發生時，裝置 1 在 location 1（交誼廳）→ 位置被凍進事件
+    payload = handle_incoming_event(db_session, dict(VALID_DATA))
+    assert payload["location"] == "交誼廳"
+
+    # 事後把裝置 1 搬到新區域「走廊」（location 2）
+    db_session.add(Location(location_id=2, location_name="走廊", company_id=1))
+    device = db_session.query(Device).filter(Device.device_id == 1).first()
+    device.location_id = 2
+    db_session.commit()
+
+    # 重新取出那筆舊事件並序列化：即使傳入的是「已搬到走廊」的裝置，
+    # 位置仍是發生當下凍住的「交誼廳」，證明顯示讀的是事件凍值、不是裝置現況
+    event = db_session.query(DetectEvent).first()
+    assert serialize_event(event, device)["location"] == "交誼廳"

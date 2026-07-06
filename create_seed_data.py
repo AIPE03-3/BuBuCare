@@ -1,5 +1,4 @@
-# create_seed_data.py
-# 把正式 PostgreSQL 升級到最新狀態：建新表 + user_account 加欄位 + 種初始資料
+# 建立假資料入db 用來測試環境
 # 可重複執行：已有的自動略過，不會報錯（跟 create_test_user.py 同風格）
 from sqlalchemy import text
 from database import SessionLocal, Base, engine
@@ -18,8 +17,21 @@ with engine.begin() as conn:
     ))
 print("user_account.company_id 欄位完成（已存在則略過）")
 
+# locations / detect_events 補新增的欄位（可為空值） IF NOT EXISTS → 第二次執行直接略過
+with engine.begin() as conn:
+    conn.execute(text(
+        "ALTER TABLE locations "
+        "ADD COLUMN IF NOT EXISTS floor VARCHAR(10)"
+    ))
+    conn.execute(text(
+        "ALTER TABLE detect_events "
+        "ADD COLUMN IF NOT EXISTS location_id INT REFERENCES locations(location_id)"
+    ))
+print("locations.floor / detect_events.location_id 欄位完成（已存在則略過）")
+
 from models import Company, Location, Device, Staff  # noqa: E402
 
+# 建立一個「資料庫工作階段（Session）」，之後就可以透過 db 操作資料庫。
 db = SessionLocal()
 
 if db.query(Company).filter_by(company_id=1).first() is None:

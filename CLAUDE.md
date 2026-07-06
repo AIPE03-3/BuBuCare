@@ -58,56 +58,45 @@ uv run pytest tests/ -v
 
 ## 檔案結構
 
-| 檔案                    | 功能                                               |
-| ----------------------- | -------------------------------------------------- |
-| `main.py`             | FastAPI 路由主體（register / login / me / delete） |
-| `auth.py`             | JWT 產生與驗證                                     |
-| `security.py`         | 密碼雜湊（hash）與比對（verify）                   |
-| `dependencies.py`     | 依賴注入：驗證 token、檢查 admin 角色              |
-| `database.py`         | SQLAlchemy 連線設定（讀 .env，連 PostgreSQL）      |
-| `models.py`           | 資料表定義（User + Company/Location/Device/Staff/DetectEvent） |
-| `sse.py`              | SSE 連線池（register/unregister/broadcast）        |
-| `event_service.py`    | 事件處理核心：handle_incoming_event（存 DB → 廣播）|
-| `event_routes.py`     | 事件相關 6 個端點（APIRouter）                     |
-| `create_test_user.py` | 建立初始帳號的腳本（admin + staff01）              |
-| `create_seed_data.py` | 正式 DB 初始化：建新表 + user_account 加 company_id + 種子資料（可重複執行） |
-| `index.html`          | 純 HTML/JS 前端測試介面                            |
-| `.env`                | DB 連線資訊 + SECRET_KEY（不進 git）               |
-| `.env.example`        | 環境變數範本（進 git，不含真實值）                 |
-| `global-bundle.pem`   | AWS RDS SSL 憑證                                   |
-| `tests/conftest.py`   | 測試共用 fixtures（in-memory SQLite）              |
-| `tests/test_login.py` | POST /login 測試（5 個）                           |
-| `tests/test_register.py` | POST /register 測試（4 個）                     |
-| `tests/test_me.py`    | GET /me 測試（3 個）                               |
-| `tests/test_admin.py` | DELETE /users/{id} 測試（4 個）                    |
-| `tests/test_models.py` | 資料模型測試（3 個）                              |
-| `tests/test_sse.py`   | SSE 連線池 + /stream 驗證測試（8 個）              |
-| `tests/test_event_service.py` | handle_incoming_event 測試（2 個）         |
-| `tests/test_events_post.py` | POST /events 測試（5 個）                    |
-| `tests/test_events_list.py` | GET /events 測試（3 個）                     |
-| `tests/test_staff.py` | GET /staff 測試（2 個）                            |
-| `tests/test_verdict.py` | PATCH verdict 測試（8 個）                       |
-| `tests/test_resolve.py` | PATCH resolve 測試（6 個）                       |
-| `docs/future-work.md` | 未來強化清單（上正式環境前必讀）                   |
-| `docs/superpowers/specs/` | 正式設計規格（spec），實作以這裡為準            |
-| `docs/event-sse-discussion-handoff.md` | 事件 + SSE 功能的討論過程紀錄       |
+| 檔案                                     | 功能                                                                         |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `main.py`                              | FastAPI 路由主體（register / login / me / delete）                           |
+| `auth.py`                              | JWT 產生與驗證                                                               |
+| `security.py`                          | 密碼雜湊（hash）與比對（verify）                                             |
+| `dependencies.py`                      | 依賴注入：驗證 token、檢查 admin 角色                                        |
+| `database.py`                          | SQLAlchemy 連線設定（讀 .env，連 PostgreSQL）                                |
+| `models.py`                            | 資料表定義（User + Company/Location/Device/Staff/DetectEvent）               |
+| `sse.py`                               | SSE 連線池（register/unregister/broadcast）                                  |
+| `event_service.py`                     | 事件處理核心：handle_incoming_event（存 DB → 廣播）                         |
+| `event_routes.py`                      | 事件相關 6 個端點（APIRouter）                                               |
+| `create_test_user.py`                  | 建立初始帳號的腳本（admin + staff01）                                        |
+| `create_seed_data.py`                  | 正式 DB 初始化：建新表 + user_account 加 company_id + 種子資料（可重複執行） |
+| `index.html`                           | 純 HTML/JS 前端測試介面                                                      |
+| `.env`                                 | DB 連線資訊 + SECRET_KEY（不進 git）                                         |
+| `.env.example`                         | 環境變數範本（進 git，不含真實值）                                           |
+| `global-bundle.pem`                    | AWS RDS SSL 憑證                                                             |
+| `tests/conftest.py`                    | 測試共用 fixtures（in-memory SQLite）                                        |
+| `tests/test_*.py`                      | 各端點 / 模型 / SSE 的測試（依檔名對應功能）                                 |
+| `docs/future-work.md`                  | 未來強化清單（上正式環境前必讀）                                             |
+| `docs/superpowers/specs/`              | 正式設計規格（spec），實作以這裡為準                                         |
+| `docs/event-sse-discussion-handoff.md` | 事件 + SSE 功能的討論過程紀錄                                                |
 
 ---
 
 ## API 路由
 
-| 方法   | 路徑            | 權限     | 說明                                  |
-| ------ | --------------- | -------- | ------------------------------------- |
-| POST   | `/register`   | 公開     | 註冊新帳號，需要 username/email/password，預設 role=staff |
-| POST   | `/login`      | 公開     | 登入，回傳 JWT token                  |
-| GET    | `/me`         | 需登入   | 查看自己的帳號和角色                  |
-| DELETE | `/users/{id}` | 需 admin | 刪除指定 ID 的使用者                  |
-| POST   | `/events`     | X-API-Key | 判斷層送入新事件（status=pending），存 DB 後 SSE 廣播 |
-| GET    | `/stream`     | 需登入（token 放 query 參數） | SSE 長連線，推播 event_created / event_updated |
-| GET    | `/events`     | 需登入   | 事件列表（新→舊，含裝置名稱/位置）    |
-| GET    | `/staff`      | 需登入   | 照護員名單（指派下拉選單用）          |
-| PATCH  | `/events/{id}/verdict` | 需登入 | 判定：誤報→直接結案；真跌倒（必帶 staff_id）→處理中 |
-| PATCH  | `/events/{id}/resolve` | 需登入 | 結案（僅限處理中的事件）              |
+| 方法   | 路徑                     | 權限                          | 說明                                                      |
+| ------ | ------------------------ | ----------------------------- | --------------------------------------------------------- |
+| POST   | `/register`            | 公開                          | 註冊新帳號，需要 username/email/password，預設 role=staff |
+| POST   | `/login`               | 公開                          | 登入，回傳 JWT token                                      |
+| GET    | `/me`                  | 需登入                        | 查看自己的帳號和角色                                      |
+| DELETE | `/users/{id}`          | 需 admin                      | 刪除指定 ID 的使用者                                      |
+| POST   | `/events`              | X-API-Key                     | 判斷層送入新事件（status=pending），存 DB 後 SSE 廣播     |
+| GET    | `/stream`              | 需登入（token 放 query 參數） | SSE 長連線，推播 event_created / event_updated            |
+| GET    | `/events`              | 需登入                        | 事件列表（新→舊，含裝置名稱/位置）                       |
+| GET    | `/staff`               | 需登入                        | 照護員名單（指派下拉選單用）                              |
+| PATCH  | `/events/{id}/verdict` | 需登入                        | 判定：誤報→直接結案；真跌倒（必帶 staff_id）→處理中     |
+| PATCH  | `/events/{id}/resolve` | 需登入                        | 結案（僅限處理中的事件）                                  |
 
 ---
 
@@ -115,6 +104,7 @@ uv run pytest tests/ -v
 
 - **資料表**：`user_account`（非 `users`）+ `companies`、`locations`、`devices`、`staff`、`detect_events`（已建立）
 - **user_account 欄位**：`id`、`name`、`password`、`email`、`role`、`last_login_time`、`company_id`（not null, default 1）
+- **位置凍結**：`locations` 新增 `floor`（nullable）；`detect_events` 新增 `location_id`（FK→locations, nullable）
 - **ENUM 欄位**：status/verdict/severity 用原生 SQLAlchemy `Enum` + `create_constraint=True`
   （PostgreSQL 真 ENUM、SQLite 測試環境 CHECK 約束；程式端讀寫仍是字串）
 - **SSL**：連線時使用 `global-bundle.pem`，sslmode=verify-full
@@ -125,8 +115,7 @@ uv run pytest tests/ -v
 ## 注意事項
 
 - **bcrypt 版本**：鎖定 `4.0.1`（pyproject.toml），不能升級，升到 5.x 會導致 passlib 初始化爆炸
-- **uv run**：2026-07-04 砍掉 `.venv` 重建後已修好（原本是舊資料夾名 login_test 改名成 fulilian-backend，殘留的 trampoline .exe 指向舊路徑）。現在 `uv run` 正常，PowerShell 工具因每次是全新 session 仍建議用完整路徑
-- **PowerShell 工具**：每次呼叫都是全新 session，不繼承已啟動的 venv，需用完整路徑：`& "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe"`
+- **PowerShell 工具**：每次呼叫都是全新 session，不繼承已啟動的 venv，需用完整路徑（見「執行測試」）
 - **SECRET_KEY**：已移到 `.env`，`auth.py` 用 `os.environ["SECRET_KEY"]` 讀取，不再 hardcode
 - **CORS**：目前 `allow_origins=["*"]`，僅適合開發測試
 - **未來強化清單**：`docs/future-work.md`——上正式環境前要做的事（refresh token、nginx 日誌遮蔽、CORS 收緊）

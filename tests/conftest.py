@@ -102,6 +102,7 @@ def make_event(db_session):
     def _make(**kwargs):
         defaults = dict(
             device_id=1,
+            location_id=1,  # 比照真實路徑：事件建立時從裝置凍一份位置（裝置 1 在 location 1）
             event_type="fall",
             clip_path="s3://clips/test.mp4",
             detected_at=datetime(2026, 7, 2, 14, 30),

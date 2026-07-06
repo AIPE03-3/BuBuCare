@@ -46,6 +46,7 @@ class Location(Base):  # 區域（交誼廳、走廊…）：獨立成表讓名�
 
     location_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     location_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    floor: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False)
 
 
@@ -85,6 +86,8 @@ class DetectEvent(Base):  # 跌倒事件主表
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.device_id"), nullable=False)
+    # 事件發生當下所在區域，寫入時從裝置抄一份凍住，之後裝置搬走也不動（保護歷史紀錄）
+    location_id: Mapped[Optional[int]] = mapped_column(ForeignKey("locations.location_id"), nullable=True)
     event_type: Mapped[Optional[str]] = mapped_column(String(50))  # 例如 fall
 
     # 拆兩欄的狀態機：status 管進度，verdict 管人工判定結果
@@ -109,3 +112,6 @@ class DetectEvent(Base):  # 跌倒事件主表
     severity: Mapped[Optional[str]] = mapped_column(
         Enum("low", "medium", "high", name="event_severity", create_constraint=True)
     )
+
+    # 顯示事件位置走這個關聯（凍住的 location_id），不要繞去 device.location（那是裝置現況）
+    location: Mapped[Optional["Location"]] = relationship("Location")
