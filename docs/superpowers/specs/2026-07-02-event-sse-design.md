@@ -93,9 +93,6 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 | `yolo_score` | FLOAT | 該事件 YOLO 打的分數（如 0.87） |
 | `yolo_threshold` | FLOAT | **當時**的門檻值（如 0.75）。門檻日後會調整，回訓分析需知道這筆當初用什麼門檻判進來。注意：修正草稿的 threshlod 拼字 |
 | `vlm_summary` | TEXT | VLM 情境描述 |
-| `vlm_confidence` | FLOAT | |
-| `recommended_action` | VARCHAR(255) | VLM 建議處置 |
-| `incident_draft_notification` | VARCHAR(255) | VLM 草擬通報 |
 | `severity` | ENUM: low/medium/high | |
 
 ### 既有表調整
@@ -127,7 +124,7 @@ Schema 欄位齊備、邏輯先支援單一機構：本輪 API 不做公司過�
 
 ### 請求格式
 
-`POST /events` body：`device_id`、`event_type`、`clip_path`、`detected_at`（必填）；`snapshot_path`、`yolo_score`、`yolo_threshold`、`vlm_summary`、`vlm_confidence`、`recommended_action`、`incident_draft_notification`、`severity`（選填）。status 一律由後端設為 `pending`，不接受外部指定。
+`POST /events` body：`device_id`、`event_type`、`clip_path`、`detected_at`（必填）；`snapshot_path`、`yolo_score`、`yolo_threshold`、`vlm_summary`、`severity`（選填）。status 一律由後端設為 `pending`，不接受外部指定。
 
 `PATCH /events/{id}/verdict` body：`verdict`（true_alarm/false_alarm 必填）；`staff_id`（verdict=true_alarm 時必填）。
 
@@ -146,7 +143,7 @@ event: event_created
 data: {"event_id":"...","device_id":3,"device_name":"交誼廳-01","location":"交誼廳",
        "event_type":"fall","status":"pending","verdict":null,"severity":"high",
        "detected_at":"...","snapshot_path":"...","vlm_summary":"...",
-       "recommended_action":"...","staff_id":null, ...}
+       "staff_id":null, ...}
 
 event: event_updated
 data: {...同結構，狀態變更後的完整事件...}

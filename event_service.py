@@ -32,9 +32,6 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "yolo_score": event.yolo_score,
         "yolo_threshold": event.yolo_threshold,
         "vlm_summary": event.vlm_summary,
-        "vlm_confidence": event.vlm_confidence,
-        "recommended_action": event.recommended_action,
-        "incident_draft_notification": event.incident_draft_notification,
         "severity": event.severity,
     }
 

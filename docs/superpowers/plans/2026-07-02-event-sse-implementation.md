@@ -32,7 +32,7 @@
 - Test: `tests/test_models.py`（新建）
 
 **Interfaces:**
-- Produces: `models.Company(company_id, company_name)`、`models.Location(location_id, location_name, company_id)`、`models.Device(device_id, device_name, location_id, status, stream_url, company_id)`（含 `Device.location` relationship，可直接讀 `device.location.location_name`）、`models.Staff(staff_id, staff_name, company_id)`、`models.DetectEvent(event_id: str UUID, device_id, event_type, status, verdict, clip_path, snapshot_path, detected_at, staff_id, company_id, yolo_score, yolo_threshold, vlm_summary, vlm_confidence, recommended_action, incident_draft_notification, severity)`、`User.company_id: int (default 1)`
+- Produces: `models.Company(company_id, company_name)`、`models.Location(location_id, location_name, company_id)`、`models.Device(device_id, device_name, location_id, status, stream_url, company_id)`（含 `Device.location` relationship，可直接讀 `device.location.location_name`）、`models.Staff(staff_id, staff_name, company_id)`、`models.DetectEvent(event_id: str UUID, device_id, event_type, status, verdict, clip_path, snapshot_path, detected_at, staff_id, company_id, yolo_score, yolo_threshold, vlm_summary, severity)`、`User.company_id: int (default 1)`
 - Produces（conftest）: 種子＝公司 id=1「測試安養院」、區域 id=1「交誼廳」、裝置 id=1「交誼廳-01」（location_id=1）、照護員 id=1「小美」/ id=2「阿強」；fixtures `staff_token`、`auth_headers`、`make_event`；環境變數 `EVENT_API_KEY=test-api-key`
 
 - [x] **Step 1: 寫失敗測試**
@@ -172,9 +172,6 @@ class DetectEvent(Base):  # 跌倒事件主表
     yolo_score: Mapped[Optional[float]] = mapped_column(Float)      # 該事件 YOLO 打的分數
     yolo_threshold: Mapped[Optional[float]] = mapped_column(Float)  # 當時的門檻值（門檻日後會調，回訓分析要知道）
     vlm_summary: Mapped[Optional[str]] = mapped_column(Text)        # VLM 情境描述
-    vlm_confidence: Mapped[Optional[float]] = mapped_column(Float)
-    recommended_action: Mapped[Optional[str]] = mapped_column(String(255))
-    incident_draft_notification: Mapped[Optional[str]] = mapped_column(String(255))
     severity: Mapped[Optional[str]] = mapped_column(String(10))     # low/medium/high
 ```
 
@@ -504,9 +501,6 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "yolo_score": event.yolo_score,
         "yolo_threshold": event.yolo_threshold,
         "vlm_summary": event.vlm_summary,
-        "vlm_confidence": event.vlm_confidence,
-        "recommended_action": event.recommended_action,
-        "incident_draft_notification": event.incident_draft_notification,
         "severity": event.severity,
     }
 
@@ -649,9 +643,6 @@ class EventCreateRequest(BaseModel):
     yolo_score: Optional[float] = None
     yolo_threshold: Optional[float] = None
     vlm_summary: Optional[str] = None
-    vlm_confidence: Optional[float] = None
-    recommended_action: Optional[str] = None
-    incident_draft_notification: Optional[str] = None
     severity: Optional[Literal["low", "medium", "high"]] = None
 
 

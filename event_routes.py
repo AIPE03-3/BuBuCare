@@ -38,9 +38,6 @@ class EventCreateRequest(BaseModel):
     yolo_score: Optional[float] = None
     yolo_threshold: Optional[float] = None
     vlm_summary: Optional[str] = None
-    vlm_confidence: Optional[float] = None
-    recommended_action: Optional[str] = None
-    incident_draft_notification: Optional[str] = None
     severity: Optional[Literal["low", "medium", "high"]] = None
 
 

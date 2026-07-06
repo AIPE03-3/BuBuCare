@@ -106,9 +106,6 @@ class DetectEvent(Base):  # 跌倒事件主表
     yolo_score: Mapped[Optional[float]] = mapped_column(Float)      # 該事件 YOLO 打的分數
     yolo_threshold: Mapped[Optional[float]] = mapped_column(Float)  # 當時的門檻值（門檻日後會調，回訓分析要知道）
     vlm_summary: Mapped[Optional[str]] = mapped_column(Text)        # VLM 情境描述
-    vlm_confidence: Mapped[Optional[float]] = mapped_column(Float)
-    recommended_action: Mapped[Optional[str]] = mapped_column(String(255))
-    incident_draft_notification: Mapped[Optional[str]] = mapped_column(String(255))
     severity: Mapped[Optional[str]] = mapped_column(
         Enum("low", "medium", "high", name="event_severity", create_constraint=True)
     )
