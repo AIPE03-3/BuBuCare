@@ -24,3 +24,7 @@ __pycache__/
 # 忽略作業系統暫存雜訊
 .DS_Store
 Thumbs.db
+
+# 個人 Claude Code 工具檔（hook / skill / 專案說明），只留本地、不進版控
+.claude/
+CLAUDE.md
