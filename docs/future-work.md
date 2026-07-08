@@ -23,6 +23,15 @@
 - **現況**：`allow_origins=["*"]`，只適合開發測試（CLAUDE.md 已註記）。
 - **做法**：改成列出前端的確切網址。
 
+## 架構 / 擴展
+
+### 5. 多 worker 時，重推計時器與 SSE 連線池要改 Redis（衝流量開多 worker 前必做）
+
+- **現況**：`sse.py` 的連線池、`event_service.py` 的 `watch_delivery` 重推計時器都存在單一程序的記憶體。
+- **問題**：多 worker（`uvicorn --workers N`）時，事件與前端連線可能落在不同程序，計時器手上沒有另一程序的連線，重推送不到、送達狀態也各記各的。
+- **做法**：連線池與跨程序訊息改用 Redis Pub/Sub 共享；計時器改用有共享狀態的排程（如 Redis-backed 或 APScheduler + Redis jobstore）。
+- **為什麼現在不做**：作品集階段單一程序（`uvicorn --reload`）不受影響。
+
 ## 程式品質
 
 ### 4. 加 ruff linting（2026-06-29 舊計畫的未完成項）

@@ -46,3 +46,52 @@ def test_rebroadcast_事件不存在_不廣播(db_session):
         assert q.empty()
     finally:
         pool.unregister(q)
+
+
+def test_watch_delivery_未ack_重推到上限(make_event, session_factory):
+    import asyncio
+    from event_service import watch_delivery
+    from sse import pool
+    event = make_event()  # pending、notified_at None
+    q = pool.register()
+    try:
+        asyncio.run(watch_delivery(
+            event.event_id, session_factory=session_factory, interval=0, max_attempts=3
+        ))
+        count = 0
+        while not q.empty():
+            assert q.get_nowait()["event"] == "event_created"
+            count += 1
+        assert count == 3
+    finally:
+        pool.unregister(q)
+
+
+def test_watch_delivery_已ack_不重推(make_event, session_factory):
+    import asyncio
+    from event_service import watch_delivery
+    from sse import pool
+    event = make_event(notified_at=datetime(2026, 7, 2, 14, 31))
+    q = pool.register()
+    try:
+        asyncio.run(watch_delivery(
+            event.event_id, session_factory=session_factory, interval=0, max_attempts=3
+        ))
+        assert q.empty()
+    finally:
+        pool.unregister(q)
+
+
+def test_watch_delivery_已被處理_不重推(make_event, session_factory):
+    import asyncio
+    from event_service import watch_delivery
+    from sse import pool
+    event = make_event(status="in_progress", verdict="true_alarm", staff_id=1)
+    q = pool.register()
+    try:
+        asyncio.run(watch_delivery(
+            event.event_id, session_factory=session_factory, interval=0, max_attempts=3
+        ))
+        assert q.empty()
+    finally:
+        pool.unregister(q)

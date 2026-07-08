@@ -1,8 +1,11 @@
 # event_service.py
 # 事件「處理」核心：存 DB + 廣播。跟「入口」（POST /events、未來的 Kafka consumer）拆開，
 # Kafka 接上時直接呼叫 handle_incoming_event()，這裡零改動
+import asyncio
+
 from sqlalchemy.orm import Session
 
+from database import SessionLocal
 from models import DetectEvent, Device
 from sse import pool
 
@@ -61,6 +64,26 @@ def rebroadcast_event(db: Session, event_id: str) -> None:
         return
     device = db.query(Device).filter(Device.device_id == event.device_id).first()
     pool.broadcast("event_created", serialize_event(event, device))
+
+
+async def watch_delivery(
+    event_id: str,
+    *,
+    session_factory=SessionLocal,
+    interval: float = 10.0,
+    max_attempts: int = 3,
+) -> None:
+    # 事件建立後盯送達：每 interval 秒檢查一次，未送達就重推一次，最多 max_attempts 次
+    # session_factory 可注入：正式用 SessionLocal，測試傳測試 DB 的工廠
+    for _ in range(max_attempts):
+        await asyncio.sleep(interval)
+        db = session_factory()  # 背景任務不在請求裡，要開自己的 session
+        try:
+            if is_delivered(db, event_id):
+                return
+            rebroadcast_event(db, event_id)
+        finally:
+            db.close()
 
 
 def handle_incoming_event(db: Session, data: dict) -> dict:

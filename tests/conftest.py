@@ -115,3 +115,10 @@ def make_event(db_session):
         db_session.refresh(event)
         return event
     return _make
+
+
+@pytest.fixture
+def session_factory():
+    # 背景任務測試用：回傳測試記憶體 DB 的 session 工廠
+    # （watch_delivery 會用它開自己的 session，不能連到正式 DB）
+    return TestingSessionLocal

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from auth import decode_access_token
 from database import get_db
 from dependencies import get_current_user
-from event_service import handle_incoming_event, serialize_event, DeviceNotFoundError
+from event_service import handle_incoming_event, serialize_event, watch_delivery, DeviceNotFoundError
 from models import DetectEvent, Device, Staff
 from sse import pool, format_sse
 
@@ -49,9 +49,13 @@ class EventCreateRequest(BaseModel):
 async def create_event(body: EventCreateRequest, db: Session = Depends(get_db)):
     try:
         # model_dump() 把 Pydantic 物件轉成 dict，交給共用處理函式
-        return handle_incoming_event(db, body.model_dump())
+        payload = handle_incoming_event(db, body.model_dump())
     except DeviceNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # 廣播後啟動背景任務盯送達。放這裡而非 handle_incoming_event 內：
+    # 路由是 async、有 event loop；handle_incoming_event 是同步、被測試直接呼叫時沒 loop
+    asyncio.create_task(watch_delivery(payload["event_id"]))
+    return payload
 
 
 # ════════════════════════════════════════════════════════
