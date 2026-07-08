@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>登入系統測試</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 40px;
+      width: 380px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+
+    h2 { margin-bottom: 24px; color: #1a1a1a; }
+
+    .tabs {
+      display: flex;
+      margin-bottom: 28px;
+      border-bottom: 2px solid #e0e0e0;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 10px;
+      text-align: center;
+      cursor: pointer;
+      color: #888;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+
+    .tab.active {
+      color: #4f46e5;
+      border-bottom: 2px solid #4f46e5;
+      margin-bottom: -2px;
+    }
+
+    .form-group { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+      color: #555;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus { border-color: #4f46e5; }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      background: #4f46e5;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: background 0.2s;
+    }
+
+    button:hover { background: #4338ca; }
+
+    button.danger {
+      background: #ef4444;
+      margin-top: 12px;
+    }
+
+    button.danger:hover { background: #dc2626; }
+
+    button.secondary {
+      background: white;
+      color: #4f46e5;
+      border: 2px solid #4f46e5;
+      margin-top: 12px;
+    }
+
+    button.secondary:hover { background: #f5f3ff; }
+
+    .message {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      display: none;
+    }
+
+    .message.success { background: #d1fae5; color: #065f46; display: block; }
+    .message.error   { background: #fee2e2; color: #991b1b; display: block; }
+
+    .dashboard { display: none; }
+
+    .user-info {
+      background: #f5f3ff;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .user-info p { margin-bottom: 8px; color: #444; font-size: 15px; }
+    .user-info span { font-weight: 700; color: #4f46e5; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .badge.admin { background: #fef3c7; color: #92400e; }
+    .badge.staff { background: #dbeafe; color: #1e40af; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #e5e7eb;
+      margin: 20px 0;
+    }
+
+    .delete-section label { margin-bottom: 8px; display: block; color: #555; font-size: 14px; }
+
+    .delete-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .delete-row input { flex: 1; }
+
+    .delete-row button {
+      width: auto;
+      padding: 10px 16px;
+      margin-top: 0;
+      background: #ef4444;
+    }
+
+    .delete-row button:hover { background: #dc2626; }
+
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+
+  <!-- 登入 / 註冊 區塊 -->
+  <div id="auth-section">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('login')">登入</div>
+      <div class="tab" onclick="switchTab('register')">註冊</div>
+    </div>
+
+    <!-- 登入表單 -->
+    <div id="login-form">
+      <div class="form-group">
+        <label>帳號</label>
+        <input type="text" id="login-username" placeholder="輸入帳號">
+      </div>
+      <div class="form-group">
+        <label>密碼</label>
+        <input type="password" id="login-password" placeholder="輸入密碼">
+      </div>
+      <button onclick="login()">登入</button>
+      <div id="login-msg" class="message"></div>
+    </div>
+
+    <!-- 註冊表單 -->
+    <div id="register-form" class="hidden">
+      <div class="form-group">
+        <label>帳號</label>
+        <input type="text" id="reg-username" placeholder="輸入帳號">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="reg-email" placeholder="輸入 Email">
+      </div>
+      <div class="form-group">
+        <label>密碼</label>
+        <input type="password" id="reg-password" placeholder="輸入密碼">
+      </div>
+      <button onclick="register()">建立帳號</button>
+      <div id="reg-msg" class="message"></div>
+    </div>
+  </div>
+
+  <!-- 登入後的畫面 -->
+  <div id="dashboard" class="dashboard">
+    <h2>歡迎回來 👋</h2>
+    <div class="user-info">
+      <p>帳號：<span id="d-username"></span></p>
+      <p>角色：<span id="d-role"></span></p>
+    </div>
+
+    <!-- 只有 admin 才能看到刪除區塊 -->
+    <div id="admin-section" class="hidden">
+      <hr class="divider">
+      <div class="delete-section">
+        <label>刪除使用者（輸入 ID）</label>
+        <div class="delete-row">
+          <input type="number" id="delete-id" placeholder="使用者 ID">
+          <button onclick="deleteUser()">刪除</button>
+        </div>
+      </div>
+      <div id="delete-msg" class="message"></div>
+    </div>
+
+    <hr class="divider">
+    <button class="secondary" onclick="logout()">登出</button>
+  </div>
+
+</div>
+
+<script>
+  const API = 'http://127.0.0.1:8000'
+  let token = null
+
+  function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach((t, i) => {
+      t.classList.toggle('active', (tab === 'login' && i === 0) || (tab === 'register' && i === 1))
+    })
+    document.getElementById('login-form').classList.toggle('hidden', tab !== 'login')
+    document.getElementById('register-form').classList.toggle('hidden', tab !== 'register')
+  }
+
+  function showMsg(id, text, type) {
+    const el = document.getElementById(id)
+    el.textContent = text
+    el.className = `message ${type}`
+  }
+
+  async function login() {
+    const username = document.getElementById('login-username').value
+    const password = document.getElementById('login-password').value
+
+    const res = await fetch(`${API}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      showMsg('login-msg', data.detail || '登入失敗', 'error')
+      return
+    }
+
+    token = data.access_token
+    await loadDashboard()
+  }
+
+  async function register() {
+    const username = document.getElementById('reg-username').value
+    const email = document.getElementById('reg-email').value
+    const password = document.getElementById('reg-password').value
+
+    const res = await fetch(`${API}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      showMsg('reg-msg', data.detail || '註冊失敗', 'error')
+      return
+    }
+
+    showMsg('reg-msg', '註冊成功！請切換到登入頁面登入', 'success')
+  }
+
+  async function loadDashboard() {
+    const res = await fetch(`${API}/me`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+
+    const user = await res.json()
+
+    document.getElementById('d-username').textContent = user.username
+    document.getElementById('d-role').innerHTML =
+      `<span class="badge ${user.role}">${user.role}</span>`
+
+    if (user.role === 'admin') {
+      document.getElementById('admin-section').classList.remove('hidden')
+    }
+
+    document.getElementById('auth-section').style.display = 'none'
+    document.getElementById('dashboard').style.display = 'block'
+  }
+
+  async function deleteUser() {
+    const id = document.getElementById('delete-id').value
+    if (!id) return
+
+    const res = await fetch(`${API}/users/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+
+    const data = await res.json()
+    showMsg('delete-msg', data.detail || data.message, res.ok ? 'success' : 'error')
+  }
+
+  function logout() {
+    token = null
+    document.getElementById('auth-section').style.display = 'block'
+    document.getElementById('dashboard').style.display = 'none'
+    document.getElementById('admin-section').classList.add('hidden')
+    document.getElementById('login-username').value = ''
+    document.getElementById('login-password').value = ''
+  }
+</script>
+
+</body>
+</html>

@@ -1,3 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+fulilian.db
+
+# Virtual environments
+.venv
+
+# Environment variables (contains secrets)
+.env
+
 # 忽略所有官方與時序的模型權重檔（防止大檔案弄爆 GitHub）
 *.pt
 *.pth
