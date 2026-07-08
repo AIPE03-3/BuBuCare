@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 class ChairSlipDetector:
     def __init__(self, camera_id):
@@ -17,7 +18,7 @@ class ChairSlipDetector:
             for box in results_env[0].boxes:
                 cls_id = int(box.cls[0].item())
                 lbl_name = results_env[0].names[cls_id]
-                if lbl_name in ["chair", "couch"]:
+                if lbl_name in ["chair", "couch", "wheelchair"]: # 順便把 wheelchair 類別補進來
                     chair_box = box.xyxy.cpu().numpy()[0]  # [x1, y1, x2, y2]
                     break
 
@@ -36,18 +37,29 @@ class ChairSlipDetector:
             if hip_y > chair_seat_line and shoulder_y > chair_y1 and hip_y != 0:
                 if not self.slip_triggered:
                     self.slip_triggered = True
+                    
+                    # 🧠 解析出數字 ID（例如 Room_301_Bed -> 301）
+                    try:
+                        numeric_id = int(''.join(filter(str.isdigit, self.camera_id)))
+                    except ValueError:
+                        numeric_id = 1
+
                     slip_payload = {
                         "alert_id": f"SLP_{self.camera_id}_{int(time.time())}",
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                        "room_no": self.camera_id,
-                        "alert_type": "Chair_Slip_Alert",
+                        "device_id": numeric_id,                    # ✅ 對齊後端要求的 integer ID
+                        "event_type": "chair_slip",                 # ✅ 明確定義事件型態為座椅滑落
+                        "detected_at": datetime.now().isoformat(),  # ✅ 改用標準 ISO 時間字串
+                        "camera_id": self.camera_id,                # ✅ 由 room_no 修正為統一的 camera_id
+                        "yolo_score": 0.88,                         # ✅ 給予預設信心度
                         "vlm_summary": f"【長照預警系統：座椅意外滑落】感測到 [{self.camera_id}] 長輩疑似從輪椅或座椅滑落、癱坐在地上！可能因無力或失神導致，請護理人員立刻前往協助。",
+                        "severity": "high",                         # ✅ 對齊後端嚴重度
                         "status": "UNREAD"
                     }
+                    
                     if producer is not None:
                         producer.send('processed-reports', value=slip_payload)
                         producer.flush()
-                        print(f"⚠️ [模組 I] [{self.camera_id}] 偵測到長輩從座椅滑落意外！")
+                        print(f"⚠️ [模組 I] [{self.camera_id}] 偵測到長輩從座椅滑落意外！（格式已對齊）")
                 return True
         else:
             self.slip_triggered = False
