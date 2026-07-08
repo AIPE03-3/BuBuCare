@@ -26,11 +26,19 @@ print("🚀 [護理長大腦上線] 監聽中... 已解鎖多路不覆寫相片�
 for message in consumer:
     event_data = message.value
     
-    alert_type = event_data.get("alert_type", "Pending_VLM_Review")
-    cam_id = event_data.get("room_no", "Unknown_Room") 
-    env_clues = event_data.get("env_clues", "No specific objects")
-    confidence = event_data.get("confidence", "0.0%")
-    alert_id = event_data.get("alert_id", f"ALT_{int(time.time())}")
+    # =========================================================================
+    # 🎯 核心修改：精準對齊邊緣端 (inference_test.py) 丟過來的欄位名稱
+    # =========================================================================
+    alert_type = event_data.get("event_type", "Pending_VLM_Review") # 對齊 event_type
+    cam_id = event_data.get("camera_id", "Unknown_Room")           # 物理對齊！camera_id -> cam_id
+    env_clues = event_data.get("event_type", "No specific objects") # 將事件型態作為環境線索
+    
+    # 將邊緣端發出的 float 分數 (如 0.75) 轉換為 Prompt 內使用的百分比字串 (如 75.0%)
+    yolo_score = event_data.get("yolo_score", 0.0)
+    confidence = f"{yolo_score * 100:.1f}%" if yolo_score > 0 else "0.0%"
+    
+    # 自動生成一個帶有房間與時間戳的唯一告警 ID
+    alert_id = f"ALT_{cam_id}_{time.strftime('%Y%m%d_%H%M%S')}"
     
     # 🎯 讀取 YOLO 這次端點傳過來的專屬不重複相片名稱
     image_filename = event_data.get("image_filename")
@@ -69,7 +77,7 @@ for message in consumer:
         )
         resolved_alert_type = "Sanity_Check_Resolved"
     else:
-        print(f"\n[🔔 疑似跌倒] 房間：{cam_id}。讀取專屬證據照片：{image_filename}")
+        print(f"\n[🔔 疑似跌倒/滑落二審] 房間：{cam_id}。讀取專屬證據照片：{image_filename}")
         prompt_text = (
             "You must reply ONLY in Traditional Chinese (繁體中文).\n"
             "You are an AI head nurse in a security care center. Look at this security snapshot carefully.\n"

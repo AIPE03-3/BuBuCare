@@ -394,8 +394,8 @@ if __name__ == "__main__":
     # 💡 業界測試多路併發：可直接在此擴充相機與不同的測試影片
     camera_channels = {
         "Room_301_Bed": "test_demo/test1.mp4",        
-        "Room_302_Bed": "test_demo/test1.mp4",        
-        "Room_303_Bed": "test_demo/test1.mp4",        
+        "Room_302_Bed": "test_demo/test2.mp4",        
+        "Room_303_Bed": "test_demo/test3.mp4",        
     }
     print(f"🎬 全連鎖安養中心多鏡頭多模態智能管線全面啟動（多路不重複留存模式啟用）...")
     
