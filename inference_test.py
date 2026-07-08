@@ -169,7 +169,7 @@ def camera_worker(camera_id, video_source):
         is_physically_lying = False  
         is_occluded_fall = False     
         is_leaving_bed = False       
-        is_wandering = False  
+        is_whitespace = False  
         is_agitated = False
         is_chair_slipped = False  
         
@@ -204,7 +204,7 @@ def camera_worker(camera_id, video_source):
                         # 跌倒防線 A
                         try:
                             shoulder_x = (kp[5][0] + kp[6][0]) / 2.0; shoulder_y = (kp[5][1] + kp[6][1]) / 2.0
-                            hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + kp[12][1]) / 2.0
+                            hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + hip_y) / 2.0
                             if not (shoulder_x == 0 or hip_x == 0):
                                 body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
                                 if body_angle < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
@@ -291,43 +291,65 @@ def camera_worker(camera_id, video_source):
                 status_text = "Normal"; color = (0, 255, 0)
 
         # =========================================================================
-        # ⚡ 跌倒雙軌分流發送與基準時間戳標記
+        # ⚡ ⚡ ⚡ 核心修改：精準對齊後端 EventCreateRequest Pydantic 規格 ⚡ ⚡ ⚡
         # =========================================================================
         if (should_trigger_fall or is_chair_slipped) and not vlm_triggered:
-            env_clues_str = ", ".join(detected_objects) if detected_objects else "No specific objects"
-            edge_detect_time = time.time() 
+            # 🧠 1. 解析並對齊 device_id 為 int
+            try:
+                # 從 "Room_301_Bed" 提取出數字 301，若失敗則預設為 1
+                numeric_id = int(''.join(filter(str.isdigit, camera_id)))
+            except ValueError:
+                numeric_id = 1
+                
+            # 🧠 2. 對齊事件型態字串
+            event_label = "chair_slip" if is_chair_slipped else "fall"
             
-            alert_payload = {
-                "alert_id": f"ALT_{camera_id}_{int(edge_detect_time * 1000)}",
-                "label": "chair_slip" if is_chair_slipped else "fall", 
-                "edge_detect_time": edge_detect_time,                 
-                "vlm_process_done_time": None,                        
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(edge_detect_time)),
-                "room_no": camera_id,        
-                "env_clues": env_clues_str,
-                "confidence": f"{act_confidence*100:.1f}%" if act_confidence > 0 else "70.0%"
-            }
-            if fusion_reason:
-                alert_payload["fusion_clue"] = fusion_reason
+            # 🧠 3. 基礎 YOLO 推理數據規格化
+            final_score = float(act_confidence) if act_confidence > 0 else 0.70
+            yolo_thresh = 0.45 if event_label == "fall" else 0.35
 
             if producer is not None:
+                # 🟢 分流 A：快速道路 (Critical_Fast_Track)
                 if (act_confidence > 0.90 or is_chair_slipped) and not is_occluded_fall:
                     vlm_triggered = True
-                    alert_payload["alert_type"] = "Critical_Fast_Track"
-                    alert_payload["vlm_summary"] = "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。"
-                    alert_payload["status"] = "UNREAD"
-                    producer.send('processed-reports', value=alert_payload)
+                    
+                    # 💥 完全遵照 EventCreateRequest 欄位包裝
+                    fast_track_payload = {
+                        "device_id": numeric_id,
+                        "event_type": event_label,
+                        "clip_path": f"test_demo/test1.mp4",  # 提供當前拉流影片路徑
+                        "detected_at": datetime.now().isoformat(),  # 轉為符合後端解析的 ISO 時間字串
+                        "snapshot_path": None,
+                        "yolo_score": final_score,
+                        "yolo_threshold": yolo_thresh,
+                        "vlm_summary": "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。",
+                        "severity": "high"
+                    }
+                    
+                    producer.send('processed-reports', value=fast_track_payload)
                     producer.flush()
                     vlm_report = "Fast-track Sent"
+                    
+                # 🔵 分流 B：慢速道路 (Pending_VLM_Review)
                 else:
                     vlm_triggered = True
-                    alert_payload["alert_type"] = "Pending_VLM_Review"
                     snapshot_name = f"snapshot_{camera_id}.jpg"
                     cv2.imwrite(snapshot_name, frame)
-                    with open(snapshot_name, "rb") as img_file:
-                        img_base64 = base64.b64encode(img_file.read()).decode('utf-8')
-                    alert_payload["image_base64"] = img_base64
-                    producer.send('nursing-home-alerts', value=alert_payload)
+                    
+                    # 💥 完全遵照 EventCreateRequest 欄位包裝
+                    vlm_queue_payload = {
+                        "device_id": numeric_id,
+                        "event_type": event_label,
+                        "clip_path": f"test_demo/test1.mp4",
+                        "detected_at": datetime.now().isoformat(),
+                        "snapshot_path": os.path.abspath(snapshot_name),  # 傳入本機截圖的絕對路徑
+                        "yolo_score": final_score,
+                        "yolo_threshold": yolo_thresh,
+                        "vlm_summary": "【AI 信心度不足】已觸發大模型二審，正在分析影像特徵並生成詳細報告...",
+                        "severity": "medium"
+                    }
+                    
+                    producer.send('nursing-home-alerts', value=vlm_queue_payload)
                     producer.flush()
                     vlm_report = "VLM Queued..."
 
