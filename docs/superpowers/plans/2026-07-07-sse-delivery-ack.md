@@ -173,13 +173,13 @@ git commit -m "feat: is_delivered 送達判斷純函式"
 
 **Files:**
 
-- Modify: `event_routes.py`（在 `POST /events` 之後新增路由；`datetime`、`serialize_event`、`Device` 皆已 import）
+- Modify: `event_routes.py`（在 `POST /events` 之後新增路由；`datetime` 已 import）
 - Test: `tests/test_ack.py`（新檔）
 
 **Interfaces:**
 
-- Consumes: `serialize_event`（回傳含 `notified_at`）
-- Produces: `POST /events/{event_id}/ack`（需登入）→ 200 + serialized event；事件不存在 → 404
+- Produces: `POST /events/{event_id}/ack`（需登入）→ 200 + `{"status": "ok"}`；事件不存在 → 404
+- 送達狀態只記在後端 DB（notified_at）給重推計時器用；ack 回最小確認，不回事件內容
 
 - [ ] **Step 1: Write the failing test**
 
@@ -203,7 +203,7 @@ def test_ack成功蓋章並回200(client, auth_headers, make_event, db_session):
     assert event.notified_at is None
     res = client.post(f"/events/{event.event_id}/ack", headers=auth_headers)
     assert res.status_code == 200
-    assert res.json()["notified_at"] is not None
+    assert res.json()["status"] == "ok"
     db_session.expire_all()
     updated = db_session.query(DetectEvent).filter_by(event_id=event.event_id).first()
     assert updated.notified_at is not None
@@ -248,13 +248,13 @@ def ack_event(
         raise HTTPException(status_code=404, detail="事件不存在")
 
     # 只蓋第一次：已有值就不動，保留最早的送達時間（重推可能觸發多次 ack）
+    # 送達狀態記在後端 DB，給重推計時器判斷用（整套推送→ack→重推是 at-least-once 保證送達）
+    # 前端打完 ack 不需要處理回應，回個小確認即可
     if event.notified_at is None:
         event.notified_at = datetime.now()
         db.commit()
-        db.refresh(event)
 
-    device = db.query(Device).filter(Device.device_id == event.device_id).first()
-    return serialize_event(event, device)
+    return {"status": "ok"}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
