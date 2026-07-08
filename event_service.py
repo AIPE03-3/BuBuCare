@@ -38,6 +38,21 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
     }
 
 
+def is_delivered(db: Session, event_id: str) -> bool:
+    # 重推的停止判斷。三種情況都算「不用再推」：
+    #   1. notified_at 有值 → 前端已回報收到
+    #   2. status 離開 pending → 有人已在處理，等於也送達了
+    #   3. 事件不存在 → 已被刪或查無，沒東西可推
+    event = db.query(DetectEvent).filter(DetectEvent.event_id == event_id).first()
+    if event is None:
+        return True
+    if event.notified_at is not None:
+        return True
+    if event.status != "pending":
+        return True
+    return False
+
+
 def handle_incoming_event(db: Session, data: dict) -> dict:
     # 1. 先確認裝置存在（不存在就什麼都不做）
     device = db.query(Device).filter(Device.device_id == data["device_id"]).first()
