@@ -103,6 +103,8 @@ class DetectEvent(Base):  # 跌倒事件主表
     clip_path: Mapped[str] = mapped_column(String(255), nullable=False)  # 事件影像片段
     snapshot_path: Mapped[Optional[str]] = mapped_column(String(255))    # 截圖
     detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # 前端第一次回報收到（ack）的時間；NULL = 尚未收到，重推機制據此判斷要不要補推
+    notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     staff_id: Mapped[Optional[int]] = mapped_column(ForeignKey("staff.staff_id"), nullable=True)  # 判真跌倒時指派
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False, default=1)
 

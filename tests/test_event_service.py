@@ -60,3 +60,11 @@ def test_事件位置凍結_裝置事後搬走也不變(db_session):
     # 位置仍是發生當下凍住的「交誼廳」，證明顯示讀的是事件凍值、不是裝置現況
     event = db_session.query(DetectEvent).first()
     assert serialize_event(event, device)["location"] == "交誼廳"
+
+
+def test_serialize包含notified_at預設None(db_session, make_event):
+    event = make_event()
+    device = db_session.query(Device).filter(Device.device_id == 1).first()
+    data = serialize_event(event, device)
+    assert "notified_at" in data
+    assert data["notified_at"] is None

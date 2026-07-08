@@ -27,6 +27,8 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "clip_path": event.clip_path,
         "snapshot_path": event.snapshot_path,
         "detected_at": event.detected_at.isoformat(),
+        # 讓前端/除錯看得到送達狀態：None = 還沒被 ack
+        "notified_at": event.notified_at.isoformat() if event.notified_at else None,
         "staff_id": event.staff_id,
         "company_id": event.company_id,
         "yolo_score": event.yolo_score,
