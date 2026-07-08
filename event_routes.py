@@ -55,6 +55,29 @@ async def create_event(body: EventCreateRequest, db: Session = Depends(get_db)):
 
 
 # ════════════════════════════════════════════════════════
+# POST /events/{event_id}/ack（登入即可）：前端收到 SSE 後自動回報收到
+# ════════════════════════════════════════════════════════
+@router.post("/events/{event_id}/ack")
+def ack_event(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = db.query(DetectEvent).filter(DetectEvent.event_id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="事件不存在")
+
+    # 只蓋第一次：已有值就不動，保留最早的送達時間（重推可能觸發多次 ack）
+    # 送達狀態記在後端 DB，給重推計時器判斷用（整套推送→ack→重推是 at-least-once 保證送達）
+    # 前端打完 ack 不需要處理回應，回個小確認即可
+    if event.notified_at is None:
+        event.notified_at = datetime.now()
+        db.commit()
+
+    return {"status": "ok"}
+
+
+# ════════════════════════════════════════════════════════
 # GET /events（登入即可）：事件列表，新到舊
 # ════════════════════════════════════════════════════════
 @router.get("/events")
