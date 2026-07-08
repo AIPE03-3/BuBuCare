@@ -291,12 +291,11 @@ def camera_worker(camera_id, video_source):
                 status_text = "Normal"; color = (0, 255, 0)
 
         # =========================================================================
-        # ⚡ ⚡ ⚡ 核心修改：精準對齊後端 EventCreateRequest Pydantic 規格 ⚡ ⚡ ⚡
+        # ⚡ ⚡ ⚡ 業界商用規格修改：動態不重複相片命名與傳遞 ⚡ ⚡ ⚡
         # =========================================================================
         if (should_trigger_fall or is_chair_slipped) and not vlm_triggered:
             # 🧠 1. 解析並對齊 device_id 為 int
             try:
-                # 從 "Room_301_Bed" 提取出數字 301，若失敗則預設為 1
                 numeric_id = int(''.join(filter(str.isdigit, camera_id)))
             except ValueError:
                 numeric_id = 1
@@ -308,18 +307,23 @@ def camera_worker(camera_id, video_source):
             final_score = float(act_confidence) if act_confidence > 0 else 0.70
             yolo_thresh = 0.45 if event_label == "fall" else 0.35
 
+            # 🧠 4. 【生產品級核心】動態不重複檔名機制 (帶精確時間戳)
+            current_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+            snapshot_name = f"snapshot_{camera_id}_{current_time_str}.jpg"  # 不重複檔名
+            cv2.imwrite(snapshot_name, frame)  # 實體不重複存檔留存
+
             if producer is not None:
                 # 🟢 分流 A：快速道路 (Critical_Fast_Track)
                 if (act_confidence > 0.90 or is_chair_slipped) and not is_occluded_fall:
                     vlm_triggered = True
                     
-                    # 💥 完全遵照 EventCreateRequest 欄位包裝
                     fast_track_payload = {
                         "device_id": numeric_id,
                         "event_type": event_label,
-                        "clip_path": f"test_demo/test1.mp4",  # 提供當前拉流影片路徑
+                        "clip_path": str(video_source),            # 帶入當前影片源路徑
                         "detected_at": datetime.now().isoformat(),  # 轉為符合後端解析的 ISO 時間字串
-                        "snapshot_path": None,
+                        "snapshot_path": os.path.abspath(snapshot_name), # 提供不重複相片的絕對路徑
+                        "image_filename": snapshot_name,           # 傳遞不重複檔名供中央 VLM 精準讀取
                         "yolo_score": final_score,
                         "yolo_threshold": yolo_thresh,
                         "vlm_summary": "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。",
@@ -333,16 +337,14 @@ def camera_worker(camera_id, video_source):
                 # 🔵 分流 B：慢速道路 (Pending_VLM_Review)
                 else:
                     vlm_triggered = True
-                    snapshot_name = f"snapshot_{camera_id}.jpg"
-                    cv2.imwrite(snapshot_name, frame)
                     
-                    # 💥 完全遵照 EventCreateRequest 欄位包裝
                     vlm_queue_payload = {
                         "device_id": numeric_id,
                         "event_type": event_label,
-                        "clip_path": f"test_demo/test1.mp4",
+                        "clip_path": str(video_source),
                         "detected_at": datetime.now().isoformat(),
-                        "snapshot_path": os.path.abspath(snapshot_name),  # 傳入本機截圖的絕對路徑
+                        "snapshot_path": os.path.abspath(snapshot_name), # 提供不重複相片的絕對路徑
+                        "image_filename": snapshot_name,           # 傳遞不重複檔名供中央 VLM 精準讀取
                         "yolo_score": final_score,
                         "yolo_threshold": yolo_thresh,
                         "vlm_summary": "【AI 信心度不足】已觸發大模型二審，正在分析影像特徵並生成詳細報告...",
@@ -389,10 +391,13 @@ def camera_worker(camera_id, video_source):
 # 🏢 主執行緒專職 GUI 與排列控制
 # =========================================================================
 if __name__ == "__main__":
+    # 💡 業界測試多路併發：可直接在此擴充相機與不同的測試影片
     camera_channels = {
         "Room_301_Bed": "test_demo/test1.mp4",        
+        "Room_302_Bed": "test_demo/test1.mp4",        
+        "Room_303_Bed": "test_demo/test1.mp4",        
     }
-    print(f"🎬 全連鎖安養中心多鏡頭多模態智能管線全面啟動（YOLO-Seg模式啟用）...")
+    print(f"🎬 全連鎖安養中心多鏡頭多模態智能管線全面啟動（多路不重複留存模式啟用）...")
     
     threads = []
     for cam_id, stream_src in camera_channels.items():
