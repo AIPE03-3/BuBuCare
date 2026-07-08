@@ -53,6 +53,16 @@ def is_delivered(db: Session, event_id: str) -> bool:
     return False
 
 
+def rebroadcast_event(db: Session, event_id: str) -> None:
+    # 重推：重查事件與裝置，沿用 event_created 事件名再廣播一次
+    # （前端以 event_id 去重，收到同一筆只會更新該列、不會重複顯示）
+    event = db.query(DetectEvent).filter(DetectEvent.event_id == event_id).first()
+    if event is None:
+        return
+    device = db.query(Device).filter(Device.device_id == event.device_id).first()
+    pool.broadcast("event_created", serialize_event(event, device))
+
+
 def handle_incoming_event(db: Session, data: dict) -> dict:
     # 1. 先確認裝置存在（不存在就什麼都不做）
     device = db.query(Device).filter(Device.device_id == data["device_id"]).first()

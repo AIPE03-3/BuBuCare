@@ -21,3 +21,28 @@ def test_is_delivered_pending且未notified為未送達(db_session, make_event):
 
 def test_is_delivered_事件不存在視為已送達不重推(db_session):
     assert is_delivered(db_session, "no-such-id") is True
+
+
+def test_rebroadcast_廣播同一筆event_created(db_session, make_event):
+    from event_service import rebroadcast_event
+    from sse import pool
+    event = make_event()
+    q = pool.register()
+    try:
+        rebroadcast_event(db_session, event.event_id)
+        msg = q.get_nowait()
+        assert msg["event"] == "event_created"
+        assert msg["data"]["event_id"] == event.event_id
+    finally:
+        pool.unregister(q)
+
+
+def test_rebroadcast_事件不存在_不廣播(db_session):
+    from event_service import rebroadcast_event
+    from sse import pool
+    q = pool.register()
+    try:
+        rebroadcast_event(db_session, "no-such-id")
+        assert q.empty()
+    finally:
+        pool.unregister(q)
