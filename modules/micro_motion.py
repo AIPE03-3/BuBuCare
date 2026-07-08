@@ -1,5 +1,6 @@
 import numpy as np
 import time
+from datetime import datetime
 
 class MicroMotionDetector:
     def __init__(self, camera_id):
@@ -34,18 +35,29 @@ class MicroMotionDetector:
                 if total_deviation > 0.045:
                     if not self.agitation_triggered:
                         self.agitation_triggered = True
+                        
+                        # 🧠 解析出數字 ID（例如 Room_301_Bed -> 301）
+                        try:
+                            numeric_id = int(''.join(filter(str.isdigit, self.camera_id)))
+                        except ValueError:
+                            numeric_id = 1
+
                         agitation_payload = {
                             "alert_id": f"AGT_{self.camera_id}_{int(time.time())}",
-                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
-                            "room_no": self.camera_id,
-                            "alert_type": "Patient_Agitation_Alert",
+                            "device_id": numeric_id,                    # ✅ 對齊後端要求的 integer ID
+                            "event_type": "agitation",                  # ✅ 明確定義事件型態為夜間躁動
+                            "detected_at": datetime.now().isoformat(),  # ✅ 改用標準 ISO 時間字串
+                            "camera_id": self.camera_id,                # ✅ 由 room_no 修正為統一的 camera_id
+                            "yolo_score": float(total_deviation * 10),  # ✅ 將標準差稍微放大作為信心度參考
                             "vlm_summary": f"【長照預警系統：夜間身體躁動】感測到 [{self.camera_id}] 床上長輩體位出現異常高頻掙扎或躁動，疑似身體不適，請前往關懷。",
+                            "severity": "medium",                       # ✅ 對齊後端嚴重度
                             "status": "UNREAD"
                         }
+                        
                         if producer is not None:
                             producer.send('processed-reports', value=agitation_payload)
                             producer.flush()
-                            print(f"🚨 [模組 F] [{self.camera_id}] 偵測到夜間異常躁動掙扎！")
+                            print(f"🚨 [模組 F] [{self.camera_id}] 偵測到夜間異常躁動掙扎！（格式已對齊）")
                     return True
                 else:
                     self.agitation_triggered = False
