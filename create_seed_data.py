@@ -1,4 +1,5 @@
-# 建立假資料入db 用來測試環境
+# 專門用來對正式 DB 做「補欄位 + 種子資料」的腳本
+# 目前會建立假資料入db 用來測試環境
 # 可重複執行：已有的自動略過，不會報錯（跟 create_test_user.py 同風格）
 from sqlalchemy import text
 from database import SessionLocal, Base, engine
@@ -27,7 +28,11 @@ with engine.begin() as conn:
         "ALTER TABLE detect_events "
         "ADD COLUMN IF NOT EXISTS location_id INT REFERENCES locations(location_id)"
     ))
-print("locations.floor / detect_events.location_id 欄位完成（已存在則略過）")
+    conn.execute(text(
+        "ALTER TABLE detect_events "
+        "ADD COLUMN IF NOT EXISTS notified_at TIMESTAMP"
+    ))
+print("locations.floor / detect_events.location_id / detect_events.notified_at 欄位完成（已存在則略過）")
 
 from models import Company, Location, Device, Staff  # noqa: E402
 
