@@ -1,5 +1,6 @@
-# kafka_consumer.py
+# backend/kafka_consumer.py
 # Kafka consumer：消費 processed-reports，每則轉打 POST /events。
+# 啟動：python -m backend.kafka_consumer
 # 純邏輯（classify_response / handle_raw_message）與碰外部（post_event / build_consumer / run）分層。
 
 import json

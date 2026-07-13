@@ -1,4 +1,4 @@
-# event_routes.py
+# backend/events/router.py
 # 事件相關的所有路由。用 APIRouter 分檔，main.py 保持乾淨
 import asyncio
 import os
@@ -10,12 +10,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import decode_access_token
-from database import get_db
-from dependencies import get_current_user
-from event_service import handle_incoming_event, serialize_event, watch_delivery, DeviceNotFoundError
-from models import DetectEvent, Device, Staff
-from sse import pool, format_sse
+from backend.core.auth import decode_access_token
+from backend.core.database import get_db
+from backend.core.dependencies import get_current_user
+from backend.core.models import DetectEvent, Device, Staff
+from backend.events.service import handle_incoming_event, serialize_event, watch_delivery, DeviceNotFoundError
+from backend.events.sse import pool, format_sse
 
 router = APIRouter()
 

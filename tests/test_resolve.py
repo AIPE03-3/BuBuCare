@@ -1,5 +1,5 @@
 # 測 PATCH /events/{id}/resolve：照護員處理完，值班人員標記結案
-from sse import pool
+from backend.events.sse import pool
 
 
 def test_未登入_401(client, make_event):

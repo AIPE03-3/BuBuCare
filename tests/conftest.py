@@ -12,10 +12,10 @@ from sqlalchemy.pool import StaticPool
 # 測試用的機器驗證 key，要在 import main 之前設好（event 端點會從環境變數讀）
 os.environ["EVENT_API_KEY"] = "test-api-key"
 
-from main import app
-from database import Base, get_db
-from models import User, Company, Location, Device, Staff, DetectEvent
-from security import hash_password
+from backend.main import app
+from backend.core.database import Base, get_db
+from backend.core.models import User, Company, Location, Device, Staff, DetectEvent
+from backend.core.security import hash_password
 
 # 建立一個「只存在記憶體」的測試資料庫，不會動到真正的 fulilian.db
 # StaticPool：讓所有連線共用同一個 connection，這樣 CREATE TABLE 和 INSERT 才看得到彼此
