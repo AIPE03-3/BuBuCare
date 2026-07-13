@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> ✅ **2026-07-11 全部完成**：Task 1-3 已實作，含 Step 6 端到端煙霧測試（真 Kafka + 真 web + 假 producer）手動驗證通過。以下為歷史執行計畫，checkbox 保留原樣不再逐一勾選。
+
 **Goal:** 新增 `kafka_consumer.py`，消費 Kafka topic `processed-reports`，每則訊息轉打 `POST /events`，達成 Kafka → DB → SSE 接通。
 
 **Architecture:** 方案 B——consumer 是獨立行程，不直接碰 DB/SSE，而是把訊息 POST 給現成的 `POST /events`，由 FastAPI 行程完成寫 DB + SSE 廣播（避免跨行程 broadcast 到空 pool）。程式切成純邏輯（`classify_response`、`handle_raw_message`）與碰外部世界（`post_event`、`build_consumer`、`run`）兩層，純邏輯用依賴注入（`post_fn`）達成免真 Kafka/server 可測。
@@ -28,7 +30,7 @@
 
 **匯入策略**：`from kafka import KafkaConsumer` 放在 `build_consumer()` 內部（lazy import），`import httpx` 只在 Task 3 才加入。這樣 Task 1/2 的測試不需先裝 kafka-python-ng 也能跑。
 
-**Docker 前置**：只有 Task 3 的 Step 6（端到端煙霧測試）需要真的 Kafka broker（本機用 Docker 起）。若尚未安裝 Docker，Task 1–2 與 Task 3 的 Step 1–5 皆可照常完成——自動化測試不需 Docker/Kafka；Step 6 延後到裝好 Docker 再做。
+**Docker 前置**：只有 Task 3 的 Step 6（端到端煙霧測試）需要真的 Kafka broker（本機用 Docker 起）。自動化測試（Task 1–2、Task 3 Step 1–5）不需 Docker/Kafka。（已於 2026-07-11 裝好 Docker Desktop 並完成 Step 6；本機用 `docker-compose.override.yml` 把映像檔版本改成 7.6.1 繞開舊版相容性問題。）
 
 ---
 
