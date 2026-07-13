@@ -1,30 +1,15 @@
-import os
-from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
 
-load_dotenv()  # 讀取 .env 檔，讓 os.getenv() 可以抓到裡面的值
-
-# 憑證跟這支程式放在一起（backend/global-bundle.pem）。用檔案自身位置去算絕對路徑，
-# 這樣不管從哪個資料夾下指令啟動都找得到，不會被「當下工作目錄」影響
-SSL_ROOT_CERT = str(Path(__file__).resolve().parent.parent / "global-bundle.pem")
-
-# 從 .env 把五個變數組合成一個連線字串
-# 格式是 SQLAlchemy 規定的：驅動程式://帳號:密碼@主機:埠號/資料庫名稱
-# psycopg2 是 Python 連 PostgreSQL 的驅動程式
-DATABASE_URL = (
-    f"postgresql+psycopg2://"
-    f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-)
+from backend.core.config import DATABASE_URL, SSL_ROOT_CERT
 
 # engine 實際負責跟資料庫溝通的引擎
+# psycopg2 是 Python 連 PostgreSQL 的驅動程式（連線字串在 config.py 組好）
 engine = create_engine(
     DATABASE_URL,
     connect_args={
-        "sslmode": "verify-full",       # 要求驗證伺服器的 SSL 憑證，防止連到假的資料庫
+        "sslmode": "verify-full",     # 要求驗證伺服器的 SSL 憑證，防止連到假的資料庫
         "sslrootcert": SSL_ROOT_CERT  # AWS RDS 的根憑證檔案，用來確認對方是真的 AWS
     }
 )

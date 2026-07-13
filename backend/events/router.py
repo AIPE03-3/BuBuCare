@@ -1,7 +1,6 @@
 # backend/events/router.py
 # 事件相關的所有路由。用 APIRouter 分檔，main.py 保持乾淨
 import asyncio
-import os
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -11,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.core.auth import decode_access_token
+from backend.core.config import EVENT_API_KEY
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user
 from backend.core.models import DetectEvent, Device, Staff
@@ -22,8 +22,7 @@ router = APIRouter()
 
 # ── 機器驗證：判斷層帶 X-API-Key，跟 .env 的 EVENT_API_KEY 比對 ──
 def require_api_key(x_api_key: Optional[str] = Header(None)):
-    expected = os.environ.get("EVENT_API_KEY")
-    if not expected or x_api_key != expected:
+    if not EVENT_API_KEY or x_api_key != EVENT_API_KEY:
         raise HTTPException(status_code=401, detail="API key 無效或未提供")
 
 
