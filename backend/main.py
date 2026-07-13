@@ -13,12 +13,12 @@ from pydantic import BaseModel # 定義「前端送來的 JSON 長什麼樣子�
 import os
 from datetime import datetime, timezone
 
-from database import Base, engine, get_db
-from models import User
-from security import verify_password, hash_password
-from auth import create_access_token
-from dependencies import get_current_user, require_admin
-from event_routes import router as event_router
+from backend.core.database import Base, engine, get_db
+from backend.core.models import User
+from backend.core.security import verify_password, hash_password
+from backend.core.auth import create_access_token
+from backend.core.dependencies import get_current_user, require_admin
+from backend.events.router import router as event_router
 
 
 # ── 定義「POST /register 收到的 JSON 格式」────────────────

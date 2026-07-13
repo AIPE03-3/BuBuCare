@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime
 from sqlalchemy import Integer, String, DateTime, Float, Text, ForeignKey, Enum
 from sqlalchemy.orm import mapped_column, Mapped, relationship  # 新版 SQLAlchemy 的欄位寫法，可以標記型別
-from database import Base
+from backend.core.database import Base
 
 class User(Base):  # 對應資料庫裡的 user_account 表
     __tablename__ = "user_account"

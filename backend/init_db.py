@@ -4,13 +4,13 @@
 新環境（組員的機器、驗收主機、未來部署）第一次跑這支就能讓事件流程動起來。
 
 用法：
-    python init_db.py
+    python -m backend.init_db
 """
 from sqlalchemy import text
 
-from database import SessionLocal, Base, engine
-from models import Company, Location, Device, Staff, User
-from security import hash_password
+from backend.core.database import SessionLocal, Base, engine
+from backend.core.models import Company, Location, Device, Staff, User
+from backend.core.security import hash_password
 
 
 def create_tables():

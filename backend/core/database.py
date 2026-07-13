@@ -1,10 +1,15 @@
 import os
+from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 
 load_dotenv()  # 讀取 .env 檔，讓 os.getenv() 可以抓到裡面的值
+
+# 憑證跟這支程式放在一起（backend/global-bundle.pem）。用檔案自身位置去算絕對路徑，
+# 這樣不管從哪個資料夾下指令啟動都找得到，不會被「當下工作目錄」影響
+SSL_ROOT_CERT = str(Path(__file__).resolve().parent.parent / "global-bundle.pem")
 
 # 從 .env 把五個變數組合成一個連線字串
 # 格式是 SQLAlchemy 規定的：驅動程式://帳號:密碼@主機:埠號/資料庫名稱
@@ -20,7 +25,7 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={
         "sslmode": "verify-full",       # 要求驗證伺服器的 SSL 憑證，防止連到假的資料庫
-        "sslrootcert": "global-bundle.pem"  # AWS RDS 的根憑證檔案，用來確認對方是真的 AWS
+        "sslrootcert": SSL_ROOT_CERT  # AWS RDS 的根憑證檔案，用來確認對方是真的 AWS
     }
 )
 

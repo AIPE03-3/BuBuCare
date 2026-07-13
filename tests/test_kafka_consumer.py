@@ -1,4 +1,4 @@
-from kafka_consumer import classify_response
+from backend.kafka_consumer import classify_response
 
 
 def test_201回ok():
@@ -19,8 +19,8 @@ def test_500回retry():
 
 import json
 
-from kafka_consumer import handle_raw_message
-from models import DetectEvent
+from backend.kafka_consumer import handle_raw_message
+from backend.core.models import DetectEvent
 
 
 class _FakeResp:

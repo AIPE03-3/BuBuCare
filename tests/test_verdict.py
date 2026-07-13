@@ -1,6 +1,6 @@
 # 測 PATCH /events/{id}/verdict：值班人員判定真跌倒/誤報
 # 狀態轉換規則（spec 第 3 節）只寫在後端，這裡逐條驗證
-from sse import pool
+from backend.events.sse import pool
 
 
 def test_未登入_401(client, make_event):

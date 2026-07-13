@@ -1,6 +1,6 @@
 # 測資料模型：新表能建立、預設值正確、種子資料有進去
 from datetime import datetime
-from models import Company, Location, Device, Staff, DetectEvent, User
+from backend.core.models import Company, Location, Device, Staff, DetectEvent, User
 
 
 def test_建立事件_預設狀態是pending(db_session):
