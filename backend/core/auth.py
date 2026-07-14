@@ -1,13 +1,9 @@
-import os
 from datetime import datetime, timedelta, timezone
-from dotenv import load_dotenv
 from jose import jwt, JWTError
 
-load_dotenv()
-
-SECRET_KEY = os.environ["SECRET_KEY"]  # 從 .env 讀取，若不存在啟動時就會報錯
-ALGORITHM = "HS256" # 一種簽名演算法
-ACCESS_TOKEN_EXPIRE_DAYS = 1 # Token 有效時間
+from backend.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_DAYS
+# SECRET_KEY：簽名用的密鑰（從 .env 來）
+# ALGORITHM：簽名演算法　ACCESS_TOKEN_EXPIRE_DAYS：token 有效天數
 
 # ---------------------------------------------
 # 把資料包進 token 裡，簽名產出一串 token 字串

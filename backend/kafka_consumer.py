@@ -1,25 +1,24 @@
-# kafka_consumer.py
+# backend/kafka_consumer.py
 # Kafka consumer：消費 processed-reports，每則轉打 POST /events。
+# 啟動：python -m backend.kafka_consumer
 # 純邏輯（classify_response / handle_raw_message）與碰外部（post_event / build_consumer / run）分層。
 
 import json
 import logging
-import os
 import time
 
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
+from backend.core.config import (
+    EVENT_API_KEY,
+    EVENTS_URL,
+    KAFKA_BOOTSTRAP_SERVERS,
+    KAFKA_GROUP_ID,
+    KAFKA_TOPIC,
+    RETRY_SLEEP_SECONDS,
+)
 
 logger = logging.getLogger("kafka_consumer")
-
-KAFKA_BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-EVENTS_URL = os.environ.get("EVENTS_URL", "http://localhost:8000/events")
-EVENT_API_KEY = os.environ.get("EVENT_API_KEY", "")
-TOPIC = "processed-reports"
-GROUP_ID = "fulilian-backend"
-RETRY_SLEEP_SECONDS = 5
 
 
 def classify_response(status_code: int) -> str:
@@ -62,9 +61,9 @@ def build_consumer():
     from kafka import KafkaConsumer
 
     return KafkaConsumer(
-        TOPIC,
+        KAFKA_TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS.split(","),
-        group_id=GROUP_ID,
+        group_id=KAFKA_GROUP_ID,
         enable_auto_commit=False,   # 處理成功才手動 commit（at-least-once）
         auto_offset_reset="latest",  # 首次啟動只收「從現在開始」的新警報
         # 不設 value_deserializer：拿原始 bytes 交給 handle_raw_message 自己解析，
@@ -74,7 +73,7 @@ def build_consumer():
 
 def run():
     consumer = build_consumer()
-    logger.info("consumer 啟動，監聽 topic=%s bootstrap=%s", TOPIC, KAFKA_BOOTSTRAP_SERVERS)
+    logger.info("consumer 啟動，監聽 topic=%s bootstrap=%s", KAFKA_TOPIC, KAFKA_BOOTSTRAP_SERVERS)
     try:
         for message in consumer:
             # 對「同一則」重試直到 ok/poison，期間不 commit（server 恢復前不掉件）

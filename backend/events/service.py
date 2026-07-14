@@ -1,13 +1,13 @@
-# event_service.py
+# backend/events/service.py
 # 事件「處理」核心：存 DB + 廣播。跟「入口」（POST /events、未來的 Kafka consumer）拆開，
 # Kafka 接上時直接呼叫 handle_incoming_event()，這裡零改動
 import asyncio
 
 from sqlalchemy.orm import Session
 
-from database import SessionLocal
-from models import DetectEvent, Device
-from sse import pool
+from backend.core.database import SessionLocal
+from backend.core.models import DetectEvent, Device
+from backend.events.sse import pool
 
 
 class DeviceNotFoundError(Exception):

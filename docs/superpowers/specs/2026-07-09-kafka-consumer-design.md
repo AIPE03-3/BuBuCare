@@ -31,6 +31,49 @@ albert 的 AI（producer，他負責）
         → handle_incoming_event → 寫 DB → SSE 廣播 → 前端
 ```
 
+### 入口整體圖：HTTP 直送與 Kafka 匯流同一入口
+
+`POST /events` 是唯一入口——判斷層直接打 HTTP（方式 A）或走 Kafka（方式 B），
+最後都匯進同一條處理路徑；入口層只管把資料送進來，處理層（`handle_incoming_event`）不在乎資料從哪來。
+
+```
+┌─────────────┐
+│  判斷層      │  YOLO + VLM 判斷完，產生一筆事件
+│ (偵測系統)   │
+└──────┬──────┘
+       │ 送出事件資料（device_id, event_type, clip_path...）
+       │
+       ├──────────────────────────┐
+   【方式 A：HTTP 直送】     【方式 B：Kafka】
+       │                          │
+       │                          ▼
+       │                ┌──────────────────────┐
+       │                │ Kafka consumer        │
+       │                │ 讀 topic → 轉打 HTTP   │
+       │                └───────────┬──────────┘
+       │                            │ POST /events（帶 X-API-Key）
+       └────────────┬───────────────┘
+                    ▼
+        ┌──────────────────────┐
+        │ POST /events         │ ← 唯一入口（HTTP 直送 & Kafka 都走這）
+        │ - 驗 API Key          │
+        │ - Pydantic 驗欄位     │
+        └──────────┬───────────┘
+                   ▼
+      ┌───────────────────────────┐
+      │  handle_incoming_event()   │ ← event_service.py
+      │  （處理核心）              │
+      │  1. 查裝置在不在            │
+      │  2. 存 DB（凍 company/loc） │
+      │  3. SSE 廣播               │
+      └───────────┬───────────────┘
+                  ▼
+        ┌──────────────────┐
+        │  中控站前端       │  ← 看到跌倒通知跳出來
+        │  (SSE 連線)       │
+        └──────────────────┘
+```
+
 ## 訊息契約
 
 以「真正 producer 送的欄位」為準（`inference_test.py` 快速道路 / `vlm_worker.py` 二審），
@@ -44,12 +87,12 @@ albert 的 AI（producer，他負責）
 
 依 FastAPI 回應分三類，分辨「一時失敗」與「毒訊息」：
 
-| 情況 | 判定 | 動作 |
-| --- | --- | --- |
-| 201 建立成功 | `ok` | commit（前進） |
-| 400 / 422（裝置不存在、驗證失敗） | `poison` | log 記錄 + commit（跳過，避免堵住 partition） |
-| 訊息非合法 JSON | `poison` | log + commit |
-| 5xx / 連不到 / timeout | `retry` | 不 commit，睡幾秒重打同一則（server 恢復前不掉件） |
+| 情況                              | 判定       | 動作                                               |
+| --------------------------------- | ---------- | -------------------------------------------------- |
+| 201 建立成功                      | `ok`     | commit（前進）                                     |
+| 400 / 422（裝置不存在、驗證失敗） | `poison` | log 記錄 + commit（跳過，避免堵住 partition）      |
+| 訊息非合法 JSON                   | `poison` | log + commit                                       |
+| 5xx / 連不到 / timeout            | `retry`  | 不 commit，睡幾秒重打同一則（server 恢復前不掉件） |
 
 - `enable_auto_commit=False`，處理成功才手動 commit，達成 at-least-once。
 - 毒訊息本次僅 log（留一個處理毒訊息的掛勾函式，之後可升級為 dead-letter queue，主結構不動）。
@@ -57,22 +100,22 @@ albert 的 AI（producer，他負責）
 
 ## 函式結構
 
-| 函式 | 職責 | 碰外部 |
-| --- | --- | --- |
-| `classify_response(status_code)` | 回應碼 → `"ok"`/`"poison"`/`"retry"` | 否（純邏輯） |
-| `handle_raw_message(raw, post_fn)` | 解析一則 → 呼叫注入的 `post_fn` → 回傳決定 | 否（靠注入） |
-| `build_consumer()` | 建立 KafkaConsumer | 是 |
-| `run()` | 主迴圈：收訊息、依決定 commit/重試、Ctrl+C 收工 | 是 |
+| 函式                                 | 職責                                            | 碰外部       |
+| ------------------------------------ | ----------------------------------------------- | ------------ |
+| `classify_response(status_code)`   | 回應碼 →`"ok"`/`"poison"`/`"retry"`      | 否（純邏輯） |
+| `handle_raw_message(raw, post_fn)` | 解析一則 → 呼叫注入的`post_fn` → 回傳決定   | 否（靠注入） |
+| `build_consumer()`                 | 建立 KafkaConsumer                              | 是           |
+| `run()`                            | 主迴圈：收訊息、依決定 commit/重試、Ctrl+C 收工 | 是           |
 
 `post_fn` 依賴注入：正式跑傳「真的打 /events」的函式，測試傳假的，免真 Kafka/server 即可測邏輯。
 
 ## 設定（.env / .env.example）
 
-| 變數 | 預設 | 用途 |
-| --- | --- | --- |
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Kafka broker 位址 |
-| `EVENTS_URL` | `http://localhost:8000/events` | 要打的自家端點 |
-| `EVENT_API_KEY` | （已存在） | 打 /events 的鑰匙 |
+| 變數                        | 預設                             | 用途              |
+| --------------------------- | -------------------------------- | ----------------- |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092`               | Kafka broker 位址 |
+| `EVENTS_URL`              | `http://localhost:8000/events` | 要打的自家端點    |
+| `EVENT_API_KEY`           | （已存在）                       | 打 /events 的鑰匙 |
 
 ## 測試（TDD）
 
