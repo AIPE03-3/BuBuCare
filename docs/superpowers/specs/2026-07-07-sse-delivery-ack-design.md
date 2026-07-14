@@ -48,7 +48,7 @@
 
 ## 5. 重推計時器（asyncio 背景任務）
 
-背景任務 `watch_delivery` 定義在 [event_service.py](../../../event_service.py)；由 [event_routes.py](../../../event_routes.py) 的 `create_event` 在 `handle_incoming_event` 廣播後啟動（`asyncio.create_task`）。放路由層而非 `handle_incoming_event` 內：後者是同步函式、被測試直接呼叫時無 event loop，於內部 `create_task` 會爆 `RuntimeError`。間隔 **10 秒**、最多 **3 次**（+10 / +20 / +30 秒）。
+背景任務 `watch_delivery` 定義在 [service.py](../../../backend/events/service.py)；由 [router.py](../../../backend/events/router.py) 的 `create_event` 在 `handle_incoming_event` 廣播後啟動（`asyncio.create_task`）。放路由層而非 `handle_incoming_event` 內：後者是同步函式、被測試直接呼叫時無 event loop，於內部 `create_task` 會爆 `RuntimeError`。間隔 **10 秒**、最多 **3 次**（+10 / +20 / +30 秒）。
 
 ```
 最多重複 3 次：

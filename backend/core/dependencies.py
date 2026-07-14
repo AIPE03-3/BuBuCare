@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer # FastAPI 內建的工具，負責從 HTTP 請求的 Header 裡自動抓出 token
-from auth import decode_access_token
+from backend.core.auth import decode_access_token
 
 
 # 告訴 FastAPI「token 要從 /login 這個路由拿」，同時讓 /docs 測試頁面自動顯示登入框

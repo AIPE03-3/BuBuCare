@@ -25,7 +25,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# 告訴 pytest 去 tests/ 資料夾找測試，跑 uv run pytest 或 python -m pytest 都會自動找到
-testpaths = ["tests"]
-# 讓測試可以 import 根目錄的 main.py、auth.py 等主程式檔案
+# 只收集 backend/tests/ 的測試：ai/ 底下的測試需要 torch/ultralytics（CI 沒裝），
+# 收進來會 import 失敗把 CI 弄紅。AI 端的測試由 albert 自己跑。
+testpaths = ["backend/tests"]
+# 讓測試可以用 from backend.xxx import ... 的絕對路徑 import 主程式
 pythonpath = ["."]

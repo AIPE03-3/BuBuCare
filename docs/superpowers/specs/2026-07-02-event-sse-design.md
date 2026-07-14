@@ -2,7 +2,7 @@
 
 > 日期：2026-07-02
 > 狀態：已與使用者逐段確認完成
-> 前置討論：`docs/event-sse-discussion-handoff.md`
+> 前置討論的決策結論已併入本文件第 9 節（原 `docs/event-sse-discussion-handoff.md` 已刪除）
 
 ---
 
@@ -36,7 +36,8 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 
 **設計原則**：
 
-- 事件「入口」（POST / 未來 Kafka consumer）與「處理」（存 DB + 廣播）拆開。Kafka topic `vlm.verdicts` 接上時只是新增入口，`handle_incoming_event()` 零改動，`POST /events` 保留當測試/備援入口
+- 事件「入口」（POST / 未來 Kafka consumer）與「處理」（存 DB + 廣播）拆開。Kafka 接上時只是新增入口，`handle_incoming_event()` 零改動，`POST /events` 保留當測試/備援入口
+  > **2026-07-11 更新**：Kafka 已實接，實際 topic 是 `processed-reports`（非當初預想的 `vlm.verdicts`），且 consumer 是獨立行程「轉打 POST /events」而非直呼函式。實際接法見 `docs/superpowers/specs/2026-07-09-kafka-consumer-design.md`。
 - 先存 DB 成功才廣播，資料庫是唯一真相
 
 ---
@@ -196,8 +197,8 @@ SSE 策略：長連線本身不測「等待」，直接對連線池 + 廣播函�
 
 ## 9. 既有決策沿用（來自前置討論）
 
-- 組員確定引入 Kafka（topic: `vlm.verdicts`），本輪用 POST 模擬入口
-- 只做 SSE，Web Push 未來「加上」而非「換掉」
+- 組員確定引入 Kafka，本輪用 POST 模擬入口（後於 2026-07-11 實接，topic 定為 `processed-reports`，見 kafka-consumer spec）
+- 只做 SSE，Web Push 未來「加上」而非「換掉」——護理站電腦本來就一直開著，SSE 管畫面即時更新，Web Push 管網頁沒開時的系統通知，兩者不衝突
 - 模型回訓**目前**不是後端的工作，目前後端負責把誤報資料完整存好（含事件 ID、時間、影像路徑），供 ML pipeline 撈取
 - `users` 草稿表不採用：沿用現有 `user_account`（僅加 nullable `company_id`）
 - `users` = 有登入帳號者；`staff` = 被指派到現場的照護員，兩張表分開

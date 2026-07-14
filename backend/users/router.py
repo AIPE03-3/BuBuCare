@@ -1,24 +1,22 @@
-from fastapi import FastAPI, Depends, HTTPException 
-# 建立 app 本體, 依賴注入, 回傳 HTTP 錯誤給前端（例如 401、404）
-from fastapi.middleware.cors import CORSMiddleware 
-# 允許瀏覽器從其他網址呼叫這個 API（開發測試用）
+# backend/users/router.py
+# 帳號相關的所有路由（註冊/登入/查自己/刪帳號）。用 APIRouter 分檔，main.py 只負責組裝 app。
 
-from fastapi.security import OAuth2PasswordRequestForm
-# 這是 FastAPI 內建的登入表單格式
-# 前端送來的 username + password 會被自動解析成這個物件
-
-from sqlalchemy.orm import Session
-from pydantic import BaseModel # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
-
-import os
 from datetime import datetime, timezone
 
-from database import Base, engine, get_db
-from models import User
-from security import verify_password, hash_password
-from auth import create_access_token
-from dependencies import get_current_user, require_admin
-from event_routes import router as event_router
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
+# OAuth2PasswordRequestForm 是 FastAPI 內建的登入表單格式
+# 前端送來的 username + password 會被自動解析成這個物件
+from pydantic import BaseModel  # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
+from sqlalchemy.orm import Session
+
+from backend.core.auth import create_access_token
+from backend.core.database import get_db
+from backend.core.dependencies import get_current_user, require_admin
+from backend.core.models import User
+from backend.core.security import verify_password, hash_password
+
+router = APIRouter()
 
 
 # ── 定義「POST /register 收到的 JSON 格式」────────────────
@@ -30,33 +28,10 @@ class RegisterRequest(BaseModel):
     email: str
 
 
-# 程式啟動時建立所有還不存在的資料表（表名見 models.py，例如 user_account）
-# CI／測試環境設 SKIP_DB_INIT=1 時跳過：避免 import 當下就去連正式資料庫
-# （雲端測試機連不到 AWS RDS，這行會卡住或報錯）
-if os.getenv("SKIP_DB_INIT") != "1":
-    Base.metadata.create_all(bind=engine)
-
-# ── 建立 FastAPI app 本體 ─────────────────────────────────
-# 這個 app 物件就是整個服務的核心
-# 所有路由都掛在它身上（@app.post、@app.get...）
-app = FastAPI()
-
-# 告訴瀏覽器：「哪些網站可以存取我的 API。」
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 事件相關路由（POST /events、SSE、判定/結案）都在 event_routes.py
-app.include_router(event_router)
-
-
 # ════════════════════════════════════════════════════════
 # 路由一：POST /register（公開，不需要登入）
 # ════════════════════════════════════════════════════════
-@app.post("/register")
+@router.post("/register")
 def register(body: RegisterRequest, db: Session = Depends(get_db)):
     # body        → FastAPI 自動把前端送來的 JSON 解析成 RegisterRequest 物件
     # Depends(get_db) → 執行這個函式前，先幫我開一個資料庫連線，用完自動關
@@ -80,7 +55,7 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
 # ════════════════════════════════════════════════════════
 # 路由二：POST /login（公開，不需要登入）
 # ════════════════════════════════════════════════════════
-@app.post("/login")
+@router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     # OAuth2...Form → FastAPI 自動從 form body 抓 username、password
 
@@ -106,7 +81,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 # ════════════════════════════════════════════════════════
 # 路由三：GET /me（需要登入）
 # ════════════════════════════════════════════════════════
-@app.get("/me")
+@router.get("/me")
 def read_me(current_user: dict = Depends(get_current_user)):
     # Depends(get_current_user) → 執行這個路由前，先去 dependencies.py 驗證 token
     #   token 合法 → current_user 是解出來的資料，例如 {"sub": "alice", "role": "staff"}
@@ -120,7 +95,7 @@ def read_me(current_user: dict = Depends(get_current_user)):
 # ════════════════════════════════════════════════════════
 # 路由四：DELETE /users/{user_id}（需要登入 + 需要 admin 角色）
 # ════════════════════════════════════════════════════════
-@app.delete("/users/{user_id}")
+@router.delete("/users/{user_id}")
 def delete_user(user_id: int, current_user: dict = Depends(require_admin), db: Session = Depends(get_db)):
     # {user_id} → URL 路徑參數，FastAPI 自動抓出來並確認是整數
     # Depends(require_admin) → 先驗證 token，再確認 role == "admin"，兩關都過才進來

@@ -2,7 +2,7 @@
 # 測試 POST /register 路由的所有情況
 # 共用設定（資料庫、測試帳號）都在 conftest.py，pytest 會自動載入
 
-from auth import decode_access_token
+from backend.core.auth import decode_access_token
 
 
 def test_register_new_user_returns_success_message(client):
