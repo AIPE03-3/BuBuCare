@@ -20,6 +20,10 @@ fulilian.db
 # 忽略 Python 執行時自動產生的暫存快取（避免污染程式碼庫）
 *.pyc
 
+# 執行時產生的 log（ClearML agent、訓練紀錄等機器產物，不進版控）
+*.log
+.clearml-logs-final/
+
 # 忽略作業系統暫存雜訊
 .DS_Store
 Thumbs.db
