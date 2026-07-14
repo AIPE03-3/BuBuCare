@@ -1,8 +1,12 @@
 # GitHub Actions：每次 push 或開 PR，雲端自動跑一遍 pytest
 # 綠燈＝backend/tests/ 下所有測試全過；紅燈＝有測試壞了，會標在 commit / PR 上
-name: tests
+name: backend-tests
 
-on: [push, pull_request]
+on:
+  push:
+    paths: ["backend/**", "pyproject.toml", ".github/workflows/backend-tests.yml"]
+  pull_request:
+    paths: ["backend/**", "pyproject.toml", ".github/workflows/backend-tests.yml"]
 
 jobs:
   test:
