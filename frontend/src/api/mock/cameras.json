@@ -1,0 +1,14 @@
+[
+  { "id": 3,  "name": "鏡頭3",  "zone": "走廊A",   "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 5,  "name": "鏡頭5",  "zone": "活動室",  "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 11, "name": "鏡頭11", "zone": "浴室B",   "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 17, "name": "鏡頭17", "zone": "302號房", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 7,  "name": "鏡頭7",  "zone": "302廁所入口", "floor": null, "stream_url": null, "stream_source": null, "status": "offline" },
+  { "id": 15, "name": "鏡頭15", "zone": "東側走廊B",   "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 19, "name": "鏡頭19", "zone": "西側走廊A",   "floor": null, "stream_url": null, "stream_source": null, "status": "disabled" },
+  { "id": 21, "name": "鏡頭21", "zone": "花園走道",     "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 8,  "name": "鏡頭8",  "zone": "餐廳",        "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 12, "name": "鏡頭12", "zone": "北側3F樓梯間", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+  { "id": 9,  "name": "鏡頭9",  "zone": "交誼廳",       "floor": null, "stream_url": null, "stream_source": null, "status": "offline" },
+  { "id": 23, "name": "鏡頭23", "zone": "302號房",      "floor": null, "stream_url": null, "stream_source": null, "status": "disabled" }
+]
