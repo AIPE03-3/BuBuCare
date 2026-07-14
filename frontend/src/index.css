@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Noto Sans TC', system-ui, sans-serif;
+}

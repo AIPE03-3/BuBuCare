@@ -1,0 +1,21 @@
+:root {
+  /* 語意色：狀態標籤、警示、趨勢色點專用，禁止挪作裝飾 */
+  --danger:  #C62828;  --danger-bg:  #FADCDC;  /* 危險／已升級／發送失敗 */
+  --warning: #D97706;  --warning-bg: #FCEBD3;  /* 警示／待處理／逾時 */
+  --success: #1B7F4D;  --success-bg: #D7EDDD;  /* 良好／已接手／已結案 */
+  --offline: #6B7280;                           /* 離線／誤報：灰字空心外框 */
+  --info:    #2F4A7A;                           /* 新事件提示條 */
+  --overlay: rgba(30, 30, 30, 0.5);             /* 全螢幕警示遮罩 */
+}
+.theme-care-a {
+  --bg-base:      #EFF5EF;  /* 60% 淡綠底 */
+  --bg-surface:   #FFFFFF;  /* 卡片 */
+  --bg-surface-2: #ECE9F7;  /* 30% 淡紫：側欄、表頭、次要區塊 */
+  --border:       #D8E0D8;
+  --text-primary:   #2C3E50;
+  --text-secondary: #5D6B7A;
+  --text-muted:     #8A97A5;
+  --brand:        #46785F;  /* 10%：選中態、連結、中性主鈕 */
+  --brand-soft:   #DCE9E0;
+  --notice:       #7A5C00;  --notice-bg: #F5E6B8; /* 僅限未讀／待辦等非緊急徽章 */
+}

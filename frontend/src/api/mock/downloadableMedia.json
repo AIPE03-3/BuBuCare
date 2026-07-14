@@ -1,0 +1,98 @@
+[
+  {
+    "id": "media-001",
+    "media_type": "event_clip",
+    "camera": { "id": 5, "name": "鏡頭5", "zone": "活動室A", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": "resolved",
+    "verdict": "true_alarm",
+    "false_alarm_type": null,
+    "escalated": true,
+    "captured_at": "2026-07-08T04:12:19.215Z",
+    "expires_at_offset_days": 25,
+    "download_url": "/mock-downloads/media-001.mp4"
+  },
+  {
+    "id": "media-002",
+    "media_type": "event_clip",
+    "camera": { "id": 17, "name": "鏡頭17", "zone": "302號房", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": "resolved",
+    "verdict": "true_alarm",
+    "false_alarm_type": null,
+    "escalated": false,
+    "captured_at": "2026-06-01T03:58:19.215Z",
+    "expires_at_offset_days": -3,
+    "download_url": "/mock-downloads/media-002.mp4"
+  },
+  {
+    "id": "media-003",
+    "media_type": "event_clip",
+    "camera": { "id": 15, "name": "鏡頭15", "zone": "東側走廊B", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": "resolved",
+    "verdict": "false_alarm",
+    "false_alarm_type": "坐地",
+    "escalated": false,
+    "captured_at": "2026-07-09T09:20:00.000Z",
+    "expires_at_offset_days": 28,
+    "download_url": "/mock-downloads/media-003.mp4"
+  },
+  {
+    "id": "media-004",
+    "media_type": "env_snapshot",
+    "camera": { "id": 21, "name": "鏡頭21", "zone": "花園走道", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": null,
+    "verdict": null,
+    "false_alarm_type": null,
+    "escalated": false,
+    "captured_at": "2026-07-11T06:00:00.000Z",
+    "expires_at_offset_days": 2,
+    "download_url": "/mock-downloads/media-004.jpg"
+  },
+  {
+    "id": "media-005",
+    "media_type": "event_clip",
+    "camera": { "id": 8, "name": "鏡頭8", "zone": "餐廳", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": "resolved",
+    "verdict": "false_alarm",
+    "false_alarm_type": "攙扶",
+    "escalated": true,
+    "captured_at": "2026-07-10T11:30:00.000Z",
+    "expires_at_offset_days": 6,
+    "download_url": "/mock-downloads/media-005.mp4"
+  },
+  {
+    "id": "media-006",
+    "media_type": "env_snapshot",
+    "camera": { "id": 12, "name": "鏡頭12", "zone": "北側3F樓梯間", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": null,
+    "verdict": null,
+    "false_alarm_type": null,
+    "escalated": false,
+    "captured_at": "2026-07-06T15:00:00.000Z",
+    "expires_at_offset_days": -1,
+    "download_url": "/mock-downloads/media-006.jpg"
+  },
+  {
+    "id": "media-007",
+    "media_type": "event_clip",
+    "camera": { "id": 3, "name": "鏡頭3", "zone": "205號房", "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
+    "status": "resolved",
+    "verdict": "true_alarm",
+    "false_alarm_type": null,
+    "escalated": false,
+    "captured_at": "2026-07-11T20:45:00.000Z",
+    "expires_at_offset_days": 30,
+    "download_url": "/mock-downloads/media-007.mp4"
+  },
+  {
+    "id": "media-008",
+    "media_type": "env_snapshot",
+    "camera": { "id": 9, "name": "鏡頭9", "zone": "交誼廳", "floor": null, "stream_url": null, "stream_source": null, "status": "offline" },
+    "status": null,
+    "verdict": null,
+    "false_alarm_type": null,
+    "escalated": false,
+    "captured_at": "2026-07-05T08:00:00.000Z",
+    "expires_at_offset_days": 15,
+    "download_url": "/mock-downloads/media-008.jpg"
+  }
+]
