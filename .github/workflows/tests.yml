@@ -1,5 +1,5 @@
 # GitHub Actions：每次 push 或開 PR，雲端自動跑一遍 pytest
-# 綠燈＝tests/ 下所有測試全過；紅燈＝有測試壞了，會標在 commit / PR 上
+# 綠燈＝backend/tests/ 下所有測試全過；紅燈＝有測試壞了，會標在 commit / PR 上
 name: tests
 
 on: [push, pull_request]
@@ -32,4 +32,4 @@ jobs:
         run: uv sync                        # 照 uv.lock 裝好套件（含 dev 群組的 pytest / httpx）
 
       - name: 跑測試
-        run: uv run pytest tests/ -v        # 雲端跑 uv run 沒問題，只有你本機才有 trampoline bug
+        run: uv run pytest backend/tests -v  # 雲端跑 uv run 沒問題，只有你本機才有 trampoline bug
