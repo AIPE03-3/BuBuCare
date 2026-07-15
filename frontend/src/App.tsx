@@ -10,6 +10,7 @@ import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { MLOps } from './pages/MLOps';
 import { Monitoring } from './pages/Monitoring';
+import { ReportFormPage } from './pages/ReportFormPage';
 import { ReportGeneration } from './pages/ReportGeneration';
 import { Settings } from './pages/Settings';
 
@@ -32,6 +33,7 @@ function App() {
         <Route path="/events" element={<EventCenter />} />
         <Route path="/events/:id" element={<EventDetail />} />
         <Route path="/reports" element={<ReportGeneration />} />
+        <Route path="/reports/:id" element={<ReportFormPage />} />
         <Route path="/history" element={<History />} />
         <Route
           path="/mlops"

@@ -40,6 +40,123 @@ export const EVENT_CENTER_LIVE_FILTERS: EventFilter[] = ['all', 'in_progress', '
 
 export type FalseReportLabel = '坐地' | '伸展' | '彎腰' | '攙扶' | '其他';
 
+// ── 生成通報單（IA：生成通報單頁）───────────────────────────────────────
+// 官方長照事件通報單欄位。選項清單集中此處，禁止散落各元件硬編碼。
+export type ReportGender = '男' | '女';
+export const REPORT_GENDERS: ReportGender[] = ['男', '女'];
+
+export type ReportWelfare = '低收入戶' | '中低收入戶' | '一般戶';
+export const REPORT_WELFARE_OPTIONS: ReportWelfare[] = ['低收入戶', '中低收入戶', '一般戶'];
+
+export const REPORT_DISTRICTS = [
+  '南港區', '內湖區', '中正區', '萬華區', '大安區', '松山區',
+  '文山區', '信義區', '士林區', '北投區', '中山區', '大同區',
+] as const;
+export type ReportDistrict = (typeof REPORT_DISTRICTS)[number];
+
+export type ReportLocation = '案家' | '案家附近' | '醫院' | '陪同外出活動途中' | '其他';
+export const REPORT_LOCATIONS: ReportLocation[] = [
+  '案家', '案家附近', '醫院', '陪同外出活動途中', '其他',
+];
+
+// 影響程度：有傷害（分五級）或無傷害。每項附官方說明文字。
+export type ReportImpact = '有傷害' | '無傷害';
+export type ReportInjuryLevel = '死亡' | '極重度' | '重度' | '中度' | '輕度';
+export const REPORT_INJURY_LEVELS: { value: ReportInjuryLevel; desc: string }[] = [
+  { value: '死亡', desc: '個案死亡。' },
+  { value: '極重度', desc: '個案永久性殘障或永久性功能障礙（如肢障、腦傷等）。' },
+  {
+    value: '重度',
+    desc: '個案除需額外的探視、評估或觀察外，還需手術、住院或延長住院處理（如骨折或氣胸等需延長住院）。',
+  },
+  {
+    value: '中度',
+    desc: '個案除需額外的探視、評估或處置，如量血壓、脈搏、血糖之次數比平常之次數多，照X光、抽血、驗尿檢查或包紮、縫合、止血治療、1~2 劑藥物治療。',
+  },
+  {
+    value: '輕度',
+    desc: '事件雖然造成傷害，但不需或只需稍微處理，不需增加例行照護。如表皮泛紅、擦傷、瘀青等。',
+  },
+];
+export const REPORT_NO_INJURY_DESC = '事件發生在個案身上，但是沒有造成任何的傷害。';
+
+export const REPORT_SERVICE_PERSONNEL = [
+  '專業人員', '居服員', '交通接送提供人員', '喘息服務提供人員', '輔具評估人員', '其他',
+] as const;
+export type ReportServicePersonnel = (typeof REPORT_SERVICE_PERSONNEL)[number];
+
+// 通報別（表單最上方，單選）：本次通報屬初報／續報／結報。
+export const REPORT_TYPES = ['初報', '續報', '結報'] as const;
+export type ReportType = (typeof REPORT_TYPES)[number];
+
+// 七、事件內容（一）服務過程（可複選）
+export const REPORT_SERVICE_PROCESS = [
+  '送醫事件', '照顧意外事件', '藥物事件', '治安事件',
+  '傷害行為事件', '公共意外', '違反專業倫理守則者', '其他',
+] as const;
+export type ReportServiceProcess = (typeof REPORT_SERVICE_PROCESS)[number];
+
+// 七、事件內容（二）不限服務時段，知悉時即通報（可複選）
+export const REPORT_IMMEDIATE_NOTIFY = [
+  '家庭暴力事件暨性侵害責任通報', '自殺（含意圖）、自傷事件', '傳染病通報',
+] as const;
+export type ReportImmediateNotify = (typeof REPORT_IMMEDIATE_NOTIFY)[number];
+
+// 九、此事件發生後的立即處理（可複選）。'無介入' 另有子選項見 REPORT_NO_INTERVENTION。
+export const REPORT_HANDLING = [
+  '無介入', '送醫治療', '予以病人家屬慰問及支持', '通報警政機關',
+  '已於24小時內完成家庭暴力暨性侵害事件責任通報', '已通報自殺防治中心', '其他',
+] as const;
+export type ReportHandling = (typeof REPORT_HANDLING)[number];
+
+// 九、「無介入」的子選項（可複選）
+export const REPORT_NO_INTERVENTION = ['不需任何處理', '病人拒絕處置', '其他'] as const;
+export type ReportNoIntervention = (typeof REPORT_NO_INTERVENTION)[number];
+
+// 通報單表單狀態。日期與地點於進頁時由事件自動帶入，其餘手填（事件無個案主檔資料）。
+export interface ReportFormData {
+  reportType: ReportType | null;
+  caseName: string;
+  caseIdNumber: string;
+  gender: ReportGender | null;
+  birthday: string;
+  welfare: ReportWelfare | null;
+  eventYear: string;
+  eventMonth: string;
+  eventDay: string;
+  eventHour: string;
+  eventMinute: string;
+  district: ReportDistrict | null;
+  location: ReportLocation | null;
+  locationNote: string;
+  impact: ReportImpact | null;
+  injuryLevel: ReportInjuryLevel | null;
+  serviceUnit: string;
+  servicePersonnel: ReportServicePersonnel[];
+  servicePersonnelNote: string;
+  // 七、事件內容
+  serviceProcess: ReportServiceProcess[];
+  serviceProcessNote: string;
+  immediateNotify: ReportImmediateNotify[];
+  // 八、事發經過說明
+  eventNarrative: string;
+  // 九、立即處理
+  handling: ReportHandling[];
+  handlingNote: string;
+  noIntervention: ReportNoIntervention[];
+  noInterventionNote: string;
+  // 十、通報者資料
+  reporterName: string;
+  reporterUnit: string;
+  reporterTitle: string;
+  // 十一、通報日期（進頁自動帶入當下時間）
+  reportYear: string;
+  reportMonth: string;
+  reportDay: string;
+  reportHour: string;
+  reportMinute: string;
+}
+
 // 鏡頭串流來源：目前 mock 資料僅有 null（無串流來源）這一種情境。
 // 'snapshot'／'hls' 為後續輪次接上真實影像來源時使用，本輪只定義型別、不實作渲染。
 export type StreamSource =
@@ -78,6 +195,8 @@ export interface CareEvent {
   confidence: number;        // YOLO 初篩
   vlm_result: VlmResult | null;  // ★ null＝YOLO 高分直通，UI 需顯示「YOLO 高信心直通」且不得噴錯
   verdict: EventVerdict;     // 判定結果，'false_alarm'＝誤報，UI「誤報」標籤依此判斷（非 status）
+  false_alarm_label: FalseReportLabel | null;  // 標記誤報時選的類型（坐地/伸展…）；非誤報為 null。誤報紀錄詳情頁「事件」欄顯示此值
+  false_alarm_note: string | null;   // 標記誤報時填的備註（選填）；空白或非誤報為 null。誤報紀錄詳情頁「備註」欄顯示此值
   clip_path: string | null;      // ← 事件影片片段路徑，詳情頁播放器用
   snapshot_path: string | null;  // ← 事件快照圖片路徑，卡片縮圖／彈窗用
   assignee: string | null;

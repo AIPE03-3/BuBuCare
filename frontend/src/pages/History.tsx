@@ -1,28 +1,23 @@
 import { useState } from 'react';
-import { useAuth } from '../hooks/useAuth';
-import { MediaDownloads } from './MediaDownloads';
-import { NotificationHistory } from './NotificationHistory';
+import { EventHistoryList } from './EventHistoryList';
+import { FalseAlarmHistoryList } from './FalseAlarmHistoryList';
 
-type HistoryTab = 'notifications' | 'videoClips';
+type HistoryTab = 'events' | 'falseAlarms';
 
 const TABS: { value: HistoryTab; label: string }[] = [
-  { value: 'notifications', label: '通報紀錄' },
-  { value: 'videoClips', label: '影像片段下載' },
+  { value: 'events', label: '已結報事件' },
+  { value: 'falseAlarms', label: '誤報紀錄' },
 ];
 
 export function History() {
-  const { role } = useAuth();
-  const [tab, setTab] = useState<HistoryTab>('videoClips');
-
-  // 通報紀錄 7-3 為 admin 專用；staff 頁籤按鈕本身完全不渲染（非灰階不可點）。
-  const visibleTabs = TABS.filter((t) => t.value !== 'notifications' || role === 'admin');
+  const [tab, setTab] = useState<HistoryTab>('events');
 
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">歷史紀錄</h1>
 
       <div className="flex gap-1 border-b border-[var(--border)]">
-        {visibleTabs.map((t) => (
+        {TABS.map((t) => (
           <button
             key={t.value}
             type="button"
@@ -38,8 +33,8 @@ export function History() {
         ))}
       </div>
 
-      {tab === 'videoClips' && <MediaDownloads />}
-      {tab === 'notifications' && role === 'admin' && <NotificationHistory />}
+      {tab === 'events' && <EventHistoryList />}
+      {tab === 'falseAlarms' && <FalseAlarmHistoryList />}
     </div>
   );
 }

@@ -18,8 +18,10 @@ export function formatDate(iso: string): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
 }
 
+// 年月日時分格式：2026/07/15 15:55
 export function formatDateTime(iso: string): string {
-  return `${formatDate(iso)} ${formatTime(iso)}`;
+  const d = new Date(iso);
+  return `${d.getFullYear()}/${formatDate(iso)} ${formatTime(iso)}`;
 }
 
 // 倒數計時：毫秒 → HH:MM:SS（時:分:秒）。負值一律歸零，由呼叫端另行判斷逾時顯示。

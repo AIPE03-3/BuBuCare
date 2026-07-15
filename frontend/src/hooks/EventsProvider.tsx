@@ -118,7 +118,13 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.warn('feedback API 呼叫失敗，僅前端狀態更新', err);
     }
-    const resolved: CareEvent = { ...event, status: 'resolved', verdict: 'false_alarm' };
+    const resolved: CareEvent = {
+      ...event,
+      status: 'resolved',
+      verdict: 'false_alarm',
+      false_alarm_label: label,
+      false_alarm_note: note.trim() || null,
+    };
     setEvents((prev) => {
       const exists = prev.some((e) => e.id === event.id);
       return exists ? prev.map((e) => (e.id === event.id ? resolved : e)) : [resolved, ...prev];
@@ -126,13 +132,40 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     dismissConfirmedAlert(event.id);
   }
 
+  // 恢復事件：誤報紀錄中的事件拉回事件中心（處理中），清掉誤報判定與類型並重啟 24 小時時限。
+  function restoreEvent(eventId: string) {
+    const resolveDeadline = new Date(Date.now() + RESOLVE_WINDOW_MS).toISOString();
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === eventId
+          ? {
+              ...e,
+              status: 'in_progress',
+              verdict: null,
+              false_alarm_label: null,
+              false_alarm_note: null,
+              resolve_deadline: resolveDeadline,
+            }
+          : e,
+      ),
+    );
+  }
+
   function clearLastAckedId() {
     setLastAckedId(null);
   }
 
   // 更新通報狀態：就地更新 context 內該筆事件，讓詳情頁與清單同步。後端補齊端點後於此改為呼叫 API。
+  // 「已結報」(final) 視為結案 → status 轉 resolved，事件離開事件中心（未結案）並進入歷史紀錄；
+  // 其餘階段（初報/複報）維持處理中，仍留在事件中心。
   function updateReportStage(eventId: string, stage: ReportStage) {
-    setEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, report_stage: stage } : e)));
+    setEvents((prev) =>
+      prev.map((e) =>
+        e.id === eventId
+          ? { ...e, report_stage: stage, status: stage === 'final' ? 'resolved' : 'in_progress' }
+          : e,
+      ),
+    );
   }
 
   // DEV-TEST：一鍵清空所有事件與警示相關狀態，把前端還原成無資料。移除測試功能時刪除此函式與 context 曝光。
@@ -161,6 +194,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     lastAckedEvent,
     undoAcknowledge,
     updateReportStage,
+    restoreEvent,
     // DEV-TEST：測試按鈕注入事件，直接複用真後端事件進場邏輯。移除測試功能時刪掉這兩行即可。
     injectTestEvent: handleIncomingEvent,
     clearTestEvents,

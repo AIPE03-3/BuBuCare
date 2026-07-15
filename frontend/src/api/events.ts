@@ -101,6 +101,9 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     confidence: raw.yolo_score,
     vlm_result,
     verdict: raw.verdict as EventVerdict, // 後端已對齊 true_alarm/false_alarm/null
+    // 誤報類型與備註後端尚無對應欄位，一律 null；由前端標記誤報（resolveViaFeedback）時寫入。
+    false_alarm_label: null,
+    false_alarm_note: null,
     clip_path: raw.clip_path,
     snapshot_path: raw.snapshot_path,
     // staff_id → assignee：後端尚無 GET /staff 名單可對姓名，先以「員工 #<id>」過渡呈現，

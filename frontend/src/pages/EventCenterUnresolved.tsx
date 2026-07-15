@@ -5,8 +5,15 @@ import { FlagIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
 import { formatDateTime } from '../utils/time';
 import { hasEscalatedFlag } from '../utils/eventFlags';
+import type { CareEvent } from '../types';
 
-export function EventCenterUnresolved() {
+// getRowHref：點列的導向目標。預設進事件詳情頁；生成通報單頁改傳入通報單填寫路由，
+// 讓同一份列表在不同頁面有不同去向，不必複製列表邏輯。
+export function EventCenterUnresolved({
+  getRowHref = (event: CareEvent) => `/events/${event.id}`,
+}: {
+  getRowHref?: (event: CareEvent) => string;
+} = {}) {
   const navigate = useNavigate();
   const { events, now } = useEvents();
   const inProgress = events.filter((event) => event.status === 'in_progress');
@@ -32,7 +39,7 @@ export function EventCenterUnresolved() {
           {inProgress.map((event) => (
             <tr
               key={event.id}
-              onClick={() => navigate(`/events/${event.id}`)}
+              onClick={() => navigate(getRowHref(event))}
               className="cursor-pointer border-t border-[var(--border)] bg-[var(--bg-surface)] transition-colors duration-150 hover:bg-[var(--brand-soft)]"
             >
               <td className="px-4 py-3 text-[var(--text-secondary)]">{event.id}</td>
