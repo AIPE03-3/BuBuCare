@@ -2,7 +2,7 @@
 
 > 日期：2026-07-07
 > 狀態：已與使用者逐段確認完成
-> 前置：`docs/superpowers/specs/2026-07-02-event-sse-design.md`（事件 + SSE 主體）
+> 前置：`backend/docs/superpowers/specs/2026-07-02-event-sse-design.md`（事件 + SSE 主體）
 
 ---
 

@@ -37,7 +37,7 @@ handle_incoming_event()   ← 共用處理函式，Kafka 接上時也呼叫它
 **設計原則**：
 
 - 事件「入口」（POST / 未來 Kafka consumer）與「處理」（存 DB + 廣播）拆開。Kafka 接上時只是新增入口，`handle_incoming_event()` 零改動，`POST /events` 保留當測試/備援入口
-  > **2026-07-11 更新**：Kafka 已實接，實際 topic 是 `processed-reports`（非當初預想的 `vlm.verdicts`），且 consumer 是獨立行程「轉打 POST /events」而非直呼函式。實際接法見 `docs/superpowers/specs/2026-07-09-kafka-consumer-design.md`。
+  > **2026-07-11 更新**：Kafka 已實接，實際 topic 是 `processed-reports`（非當初預想的 `vlm.verdicts`），且 consumer 是獨立行程「轉打 POST /events」而非直呼函式。實際接法見 `backend/docs/superpowers/specs/2026-07-09-kafka-consumer-design.md`。
 - 先存 DB 成功才廣播，資料庫是唯一真相
 
 ---
