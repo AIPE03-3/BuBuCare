@@ -18,6 +18,10 @@ export function formatDate(iso: string): string {
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
 }
 
+export function formatDateTime(iso: string): string {
+  return `${formatDate(iso)} ${formatTime(iso)}`;
+}
+
 export function formatOfflineDuration(offlineSince: string, now: number): string {
   const diffMs = Math.max(0, now - new Date(offlineSince).getTime());
   const totalMinutes = Math.floor(diffMs / 60000);

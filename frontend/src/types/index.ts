@@ -5,6 +5,17 @@ export const STATUS_LABEL: Record<EventStatus, string> = {
   pending: '待處理', in_progress: '處理中', resolved: '已結案',
 };
 
+// 通報狀態：獨立於事件生命週期 status（pending/in_progress/resolved）之外的上報流程追蹤。
+// 初報→複報→結報。null＝尚未通報。後端目前無此欄位（demo 前端記憶體維護），串接後改由後端下發。
+export type ReportStage = 'initial' | 'follow_up' | 'final';
+
+export const REPORT_STAGE_LABEL: Record<ReportStage, string> = {
+  initial: '已初報', follow_up: '已複報', final: '已結報',
+};
+
+// 通報狀態按鈕依此順序呈現，元件外禁止另寫死順序。
+export const REPORT_STAGES: ReportStage[] = ['initial', 'follow_up', 'final'];
+
 // 即時監控頁：偵測到疑似跌倒事件的鏡頭縮圖標籤（非 EventStatus，獨立於 STATUS_LABEL 之外）
 export const DETECTING_LABEL = '偵測中';
 
@@ -46,7 +57,7 @@ export interface Camera {
   zone: string;              // 活動室A（區域分組，無樓層層）
   floor: string | null;      // demo 一律不顯示
   stream_url: string | null; // 串流協定未定，先預留（既有欄位，勿動——FullScreenAlert/SuppressConfirmModal 仍依賴此欄位）
-  stream_source: StreamSource; // 畫面渲染來源；本輪 mock 資料一律為 null，見 CameraCard 渲染分支
+  stream_source: StreamSource; // 畫面渲染來源；本輪 mock 資料一律為 null，見 CameraDetailModal 渲染分支
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷（online 布林可由 status==='online' 導出）
 }
 
@@ -63,6 +74,7 @@ export interface CareEvent {
   camera: Camera;
   occurred_at: string;       // ISO
   status: EventStatus;
+  report_stage: ReportStage | null;  // 通報狀態（初報/複報/結報）；null＝尚未通報。demo 前端維護，見 REPORT_STAGE_LABEL
   confidence: number;        // YOLO 初篩
   vlm_result: VlmResult | null;  // ★ null＝YOLO 高分直通，UI 需顯示「YOLO 高信心直通」且不得噴錯
   verdict: EventVerdict;     // 判定結果，'false_alarm'＝誤報，UI「誤報」標籤依此判斷（非 status）
@@ -97,35 +109,6 @@ export interface EventHistoryStatPoint {
   false_alarm: number; // 誤報件數
 }
 
-// 環境安全評分（IA 4-1/4-2）：四向度定案 2026-07-12（地面30/通道30/危險物品20/照明20，不含安全設施完整性）。
-// 後端 env_safety_scores 表尚未建立，另一 branch 目前僅二分文字判斷、無分數（見 04_後端現況與規格落差.md A-6/A-7），
-// 本輪全走 mock，型別照規格 schema 設計，之後接真分數只需換 api/envScores.ts 內部實作。
-export type EnvScoreLevel = '良好' | '注意' | '警示' | '危險';
-
-export interface EnvDimensionScore {
-  score: number;
-  max: number;
-  level: EnvScoreLevel;
-}
-
-export interface EnvScore {
-  score_id: string;
-  camera: Camera;
-  total_score: number | null;       // null＝後端僅二分文字時的過渡狀態
-  dimensions: {
-    floor: EnvDimensionScore;       // 地面地板，滿分 30
-    pathway: EnvDimensionScore;     // 通道暢通性，滿分 30
-    hazard: EnvDimensionScore;      // 潛在危險物品，滿分 20
-    lighting: EnvDimensionScore;    // 照明條件，滿分 20
-  } | null;
-  level: EnvScoreLevel | null;
-  overall_description: string | null;
-  risk_factors: string[];           // 格式未定，暫定 string[]，待後端 JSONB 實際格式確認
-  score_drop: number | null;        // 計算基準未定，待後端 score_drop 定義確認
-  online: boolean;
-  assessed_at: string;              // ISO 字串
-}
-
 // Hard Negative Pool（MLOps 6-2）
 // ⚠ 語意提醒：MVP 沿用 02 規格「人工標記誤報」語意；後端實際現況為 YOLO 信心自動收集、存檔案系統，
 //    與人工標記無關，此落差尚未拍板（見 04 檔 H 段），正式串接前需重新確認。
@@ -142,27 +125,12 @@ export interface HardNegativeItem {
   clip_path: string | null; // 影片回放用
 }
 
-// 環境安全評分歷史（IA 7-2）：逐筆聚合時間序列，形狀不同於上面「每台最新一筆」的 EnvScore。
-// EnvSafetyGrade 與 EnvScoreLevel 同義（四值一致），以別名維持全案單一定義、避免兩套同義型別。
-export type EnvSafetyGrade = EnvScoreLevel;
-
-export interface EnvSafetyScore {
-  score_id: string;
-  device_id: number;
-  total_score: number;       // 0-100，四向度加總（地面30/通道30/危險物品20/照明20，2026-07-12定案）
-  grade: EnvSafetyGrade;     // 前端依 total_score 對照門檻算出（getEnvScoreLevel），非後端原始欄位
-  score_drop: number | null; // 較前次變化；null＝無前次可比較（如離線後首筆）
-  assessed_at: string;       // ISO
-}
-
 // 時間區間下拉：對應聚合粒度（≤24h 原始15分級距／1–7天每小時最低分／>7天每日最低分，皆取最低分非平均）。
 export type EnvHistoryRange = 'today' | '7d' | '30d' | 'custom';
 
 export interface KpiSummary {
   pending_events: number;
   false_positive_rate: number;
-  env_score_avg: number;
-  env_score_threshold: number;   // 低於此值數字轉 --danger
   hnp_count: number;
   hnp_threshold: number;         // 達標數字轉 --warning
 }

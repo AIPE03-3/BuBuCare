@@ -5,6 +5,7 @@ import { getEventHistoryStats, queryEventHistory } from '../api/events';
 import { QuickToggle } from '../components/QuickToggle';
 import { QuietFilterPills } from '../components/QuietFilterPills';
 import { StatusTag } from '../components/StatusTag';
+import { FlagIcon } from '../components/icons';
 import type { CareEvent, EventHistoryStatPoint } from '../types';
 import { hasEscalatedFlag } from '../utils/eventFlags';
 import { resolveCssVar } from '../utils/cssVar';
@@ -199,8 +200,8 @@ export function EventCenterHistory() {
                 </td>
                 <td className="px-3 py-2">
                   {hasEscalatedFlag(event) && (
-                    <span aria-hidden="true" title="事件曾升級並通知當日值班組長">
-                      🚩
+                    <span title="事件曾升級並通知當日值班組長">
+                      <FlagIcon aria-hidden="true" className="h-4 w-4 text-[var(--danger)]" />
                     </span>
                   )}
                 </td>

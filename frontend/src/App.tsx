@@ -3,8 +3,6 @@ import { AppLayout } from './components/AppLayout';
 import { RequireAdmin } from './components/RequireAdmin';
 import { RequireAuth } from './components/RequireAuth';
 import { EventsProvider } from './hooks/EventsProvider';
-import { EnvSafety } from './pages/EnvSafety';
-import { EnvScoreDetail } from './pages/EnvScoreDetail';
 import { EventCenter } from './pages/EventCenter';
 import { EventDetail } from './pages/EventDetail';
 import { History } from './pages/History';
@@ -32,8 +30,6 @@ function App() {
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/events" element={<EventCenter />} />
         <Route path="/events/:id" element={<EventDetail />} />
-        <Route path="/environment" element={<EnvSafety />} />
-        <Route path="/environment/:scoreId" element={<EnvScoreDetail />} />
         <Route path="/history" element={<History />} />
         <Route
           path="/mlops"

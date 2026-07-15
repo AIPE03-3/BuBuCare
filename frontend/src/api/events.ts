@@ -11,7 +11,6 @@ import type {
   VlmResult,
 } from '../types';
 import { hasEscalatedFlag } from '../utils/eventFlags';
-import eventsMock from './mock/events.json';
 
 /**
  * 後端 fulilian-backend 事件推播（SSE）的原始 payload 欄位命名。
@@ -97,6 +96,8 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     camera,
     occurred_at: normalizeBackendTime(raw.detected_at),
     status: raw.status as EventStatus,   // 後端已對齊三態，僅換欄位名，值不轉換
+    // 通報狀態後端尚無對應欄位，一律 null（尚未通報），由前端詳情頁按鈕更新。後端補齊後改由 raw 帶入。
+    report_stage: null,
     confidence: raw.yolo_score,
     vlm_result,
     verdict: raw.verdict as EventVerdict, // 後端已對齊 true_alarm/false_alarm/null
@@ -144,38 +145,9 @@ function normalizeBackendTime(iso: string): string {
   return hasTimezone ? iso : `${iso}+08:00`;
 }
 
-const PAGE_LOAD_TIME = Date.now();
-const ACK_DEADLINE_OFFSET_MS = 90000;
-
-/**
- * demo 專用：後端 RawEventPayload 目前無 escalated_to / alerted_at 欄位，parseRawEvent 固定回 null，
- * 但 demo（含日後串接前）仍靠 mock 呈現「曾升級」🚩 徽章與歷史頁「只顯示曾升級」切換，
- * 故在此於 parseRawEvent 之外補一層 demo 加工，把哪些事件曾升級的資訊套回。
- * ⚠ 後端補齊 escalation 欄位後，連同 mock 的 __demo_escalation 整段刪除即可，不影響 parseRawEvent 本身。
- */
-interface DemoEscalation {
-  event_id: string;
-  escalated_to: string;
-  alerted_at: string | null;
-}
-
-function applyDemoEscalation(event: CareEvent, demo: DemoEscalation | undefined): CareEvent {
-  if (!demo) return event;
-  return { ...event, escalated_to: demo.escalated_to, alerted_at: demo.alerted_at };
-}
-
-const rawEvents = eventsMock as unknown as (RawEventPayload & { __demo_escalation?: DemoEscalation })[];
-const demoEscalationById = new Map(
-  rawEvents.filter((r) => r.__demo_escalation).map((r) => [r.event_id, r.__demo_escalation!]),
-);
-
-const EVENTS: CareEvent[] = rawEvents.map((raw) => {
-  const event = applyDemoEscalation(parseRawEvent(raw), demoEscalationById.get(raw.event_id));
-  // pending 事件若尚無接手時限，種一個給逾時倒數 demo 用（正式版時限由後端下發）。
-  return event.status === 'pending' && event.ack_deadline === null
-    ? { ...event, ack_deadline: new Date(PAGE_LOAD_TIME + ACK_DEADLINE_OFFSET_MS).toISOString() }
-    : event;
-});
+// 假資料已移除：初始清單為空，事件一律由真後端 SSE（handleIncomingEvent）帶入。
+// 真後端 GET /events 就緒後，於此改為呼叫 API 並經 parseRawEvent 轉換即可。
+const EVENTS: CareEvent[] = [];
 
 export async function getEvents(offset: number, limit: number): Promise<CareEvent[]> {
   return EVENTS.slice(offset, offset + limit);

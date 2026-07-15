@@ -1,8 +1,20 @@
 import { useState } from 'react';
+import { ClockIcon } from './icons';
 
 const JUDGING_LOCATIONS = ['西側走廊C', '5F 樓梯間'];
 
-export function JudgingBadge() {
+type JudgingBadgeVariant = 'light' | 'dark';
+
+const VARIANT_STYLE: Record<JudgingBadgeVariant, string> = {
+  light: 'border border-[var(--border)] bg-[var(--bg-surface)] text-[var(--text-secondary)]',
+  dark: 'border border-white/25 bg-white/10 text-white/80',
+};
+
+interface JudgingBadgeProps {
+  variant?: JudgingBadgeVariant;
+}
+
+export function JudgingBadge({ variant = 'light' }: JudgingBadgeProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -10,11 +22,13 @@ export function JudgingBadge() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-1 text-xs text-[var(--text-secondary)] transition-colors duration-150"
+        className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors duration-150 ${VARIANT_STYLE[variant]}`}
       >
-        <span aria-hidden="true">⏳</span>
+        <ClockIcon aria-hidden="true" className="h-3.5 w-3.5" />
         <span>系統判斷中</span>
-        <span className="font-semibold text-[var(--text-primary)]">{JUDGING_LOCATIONS.length}</span>
+        <span className={`font-semibold ${variant === 'dark' ? 'text-white' : 'text-[var(--text-primary)]'}`}>
+          {JUDGING_LOCATIONS.length}
+        </span>
       </button>
 
       {open && (

@@ -1,20 +1,18 @@
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { EnvScoreHistory } from './EnvScoreHistory';
 import { MediaDownloads } from './MediaDownloads';
 import { NotificationHistory } from './NotificationHistory';
 
-type HistoryTab = 'envScore' | 'notifications' | 'videoClips';
+type HistoryTab = 'notifications' | 'videoClips';
 
 const TABS: { value: HistoryTab; label: string }[] = [
-  { value: 'envScore', label: '環境安全評分歷史' },
   { value: 'notifications', label: '通報紀錄' },
   { value: 'videoClips', label: '影像片段下載' },
 ];
 
 export function History() {
   const { role } = useAuth();
-  const [tab, setTab] = useState<HistoryTab>('envScore');
+  const [tab, setTab] = useState<HistoryTab>('videoClips');
 
   // 通報紀錄 7-3 為 admin 專用；staff 頁籤按鈕本身完全不渲染（非灰階不可點）。
   const visibleTabs = TABS.filter((t) => t.value !== 'notifications' || role === 'admin');
@@ -41,8 +39,7 @@ export function History() {
       </div>
 
       {tab === 'videoClips' && <MediaDownloads />}
-      {tab === 'notifications' && <NotificationHistory />}
-      {tab === 'envScore' && <EnvScoreHistory />}
+      {tab === 'notifications' && role === 'admin' && <NotificationHistory />}
     </div>
   );
 }

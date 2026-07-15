@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { EventCenterHistory } from './EventCenterHistory';
-import { EventCenterLive } from './EventCenterLive';
+import { EventCenterUnresolved } from './EventCenterUnresolved';
 
-type EventCenterMode = 'live' | 'history';
+type EventCenterMode = 'unresolved' | 'history';
 
 const MODE_TABS: { value: EventCenterMode; label: string }[] = [
-  { value: 'live', label: '即時處理' },
+  { value: 'unresolved', label: '未結案' },
   { value: 'history', label: '歷史查詢' },
 ];
 
 export function EventCenter() {
-  const [mode, setMode] = useState<EventCenterMode>('live');
+  const [mode, setMode] = useState<EventCenterMode>('unresolved');
 
   return (
     <div className="flex flex-col gap-4">
@@ -35,7 +35,7 @@ export function EventCenter() {
         ))}
       </div>
 
-      {mode === 'live' ? <EventCenterLive /> : <EventCenterHistory />}
+      {mode === 'unresolved' ? <EventCenterUnresolved /> : <EventCenterHistory />}
     </div>
   );
 }

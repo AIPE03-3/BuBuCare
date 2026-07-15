@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Camera } from '../types';
 import { groupCamerasByZone } from '../utils/groupCamerasByZone';
 
-// MLOps 每日效能指標（6-1）攝影機選擇器：在 EnvScoreHistory 的區域收合選擇器樣式上，
+// MLOps 每日效能指標（6-1）攝影機選擇器：區域收合清單，
 // 多加一個頂部「全部攝影機（全域彙總）」選項（對應 device_id: null）。
 // demo 樓層固定 1 樓，沿用 Camera.floor 一律不顯示規則，只呈現「區域・攝影機」。
 interface CameraPickerWithAllProps {
@@ -13,7 +13,7 @@ interface CameraPickerWithAllProps {
 
 export function CameraPickerWithAll({ cameras, selectedId, onSelect }: CameraPickerWithAllProps) {
   const [open, setOpen] = useState(false);
-  // 選擇器清單排除已停用（disabled）裝置；離線（offline）仍可查歷史指標故保留（比照 EnvScoreHistory 規則）。
+  // 選擇器清單排除已停用（disabled）裝置；離線（offline）仍可查歷史指標故保留。
   const selectable = cameras.filter((c) => c.status !== 'disabled');
   const zones = groupCamerasByZone(selectable);
   const selected = selectedId === null ? null : (cameras.find((c) => c.id === selectedId) ?? null);

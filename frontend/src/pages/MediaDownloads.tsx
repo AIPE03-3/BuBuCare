@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getDownloadableMedia } from '../api/mediaDownloads';
 import { QuickToggle } from '../components/QuickToggle';
 import { QuietFilterPills } from '../components/QuietFilterPills';
+import { DownloadIcon, FlagIcon, ImageIcon, VideoClipIcon } from '../components/icons';
 import { STATUS_LABEL } from '../types';
 import type { DownloadableMedia } from '../types';
 
@@ -19,9 +20,9 @@ const ALL_ZONES_LABEL = '全部區域';
 // 即將到期門檻（天）：與保存期限欄位的 --danger／--warning 顏色門檻一致，見 renderExpiry。
 const EXPIRING_SOON_DAYS = 7;
 
-const MEDIA_TYPE_ICON: Record<DownloadableMedia['media_type'], string> = {
-  event_clip: '🎬',
-  env_snapshot: '🖼',
+const MEDIA_TYPE_ICON: Record<DownloadableMedia['media_type'], typeof VideoClipIcon> = {
+  event_clip: VideoClipIcon,
+  env_snapshot: ImageIcon,
 };
 
 const MEDIA_TYPE_LABEL: Record<DownloadableMedia['media_type'], string> = {
@@ -40,6 +41,11 @@ function renderExpiry(media: DownloadableMedia, now: number) {
   const days = daysUntil(media.expires_at, now);
   const colorClass = days <= 3 ? 'text-[var(--danger)]' : days <= 7 ? 'text-[var(--warning)]' : 'text-[var(--text-secondary)]';
   return <span className={colorClass}>剩 {days} 天</span>;
+}
+
+function renderMediaTypeIcon(media: DownloadableMedia) {
+  const Icon = MEDIA_TYPE_ICON[media.media_type];
+  return <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" />;
 }
 
 function renderLocation(media: DownloadableMedia): string {
@@ -65,8 +71,8 @@ function renderStatus(media: DownloadableMedia) {
         <span className="text-xs text-[var(--text-muted)]">{media.false_alarm_type}</span>
       )}
       {media.escalated && (
-        <span aria-hidden="true" title="曾升級">
-          🚩
+        <span title="曾升級">
+          <FlagIcon aria-hidden="true" className="h-4 w-4 text-[var(--danger)]" />
         </span>
       )}
     </div>
@@ -199,24 +205,26 @@ export function MediaDownloads() {
                   />
                 </td>
                 <td className="px-3 py-2 text-[var(--text-primary)]">
-                  <span aria-hidden="true">{MEDIA_TYPE_ICON[media.media_type]}</span>{' '}
-                  {MEDIA_TYPE_LABEL[media.media_type]}
+                  <span className="inline-flex items-center gap-1.5">
+                    {renderMediaTypeIcon(media)}
+                    {MEDIA_TYPE_LABEL[media.media_type]}
+                  </span>
                 </td>
                 <td className="px-3 py-2 text-[var(--text-primary)]">{renderLocation(media)}</td>
                 <td className="px-3 py-2">{renderStatus(media)}</td>
                 <td className="px-3 py-2">{renderExpiry(media, now)}</td>
                 <td className="px-3 py-2">
                   {media.is_expired ? (
-                    <span aria-hidden="true" title="檔案已刪除" className="cursor-not-allowed text-[var(--text-muted)]">
-                      ⬇
+                    <span title="檔案已刪除" className="cursor-not-allowed">
+                      <DownloadIcon aria-hidden="true" className="h-4 w-4 text-[var(--text-muted)]" />
                     </span>
                   ) : (
                     <a
                       href={media.download_url ?? undefined}
                       aria-label={`下載 ${media.id}`}
-                      className="text-[var(--brand)] transition-colors duration-150 hover:underline"
+                      className="inline-flex text-[var(--brand)] transition-colors duration-150 hover:opacity-80"
                     >
-                      ⬇
+                      <DownloadIcon aria-hidden="true" className="h-4 w-4" />
                     </a>
                   )}
                 </td>

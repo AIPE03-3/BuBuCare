@@ -7,7 +7,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const HISTORY_DAYS = 30;
 const PAGE_LOAD_TIME = Date.now();
 
-// 假資料以載入當下為錨點回推 30 天，避免 demo 資料隨時間過去而失真（比照 src/api/envScores.ts 的 PAGE_LOAD_TIME 手法）。
+// 假資料以載入當下為錨點回推 30 天，避免 demo 資料隨時間過去而失真。
 function dayIso(daysAgo: number): string {
   return new Date(PAGE_LOAD_TIME - daysAgo * DAY_MS).toISOString().slice(0, 10);
 }

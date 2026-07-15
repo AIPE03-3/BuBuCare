@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getKpiSummary } from '../../api/kpi';
 import { getModelVersions, promoteToProduction, rollbackToVersion, triggerManualFineTune } from '../../api/modelVersions';
 import { ModelVersionActionModal } from '../../components/ModelVersionActionModal';
+import { WarningIcon } from '../../components/icons';
 import type { KpiSummary, ModelVersion, ModelVersionStatus } from '../../types';
 import { MODEL_VERSION_STATUS_LABEL } from '../../types';
 
@@ -34,8 +35,9 @@ function FineTuneTriggerCard({ kpi, onManualTrigger }: FineTuneTriggerCardProps)
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4">
       <div className="flex items-start justify-between gap-3">
-        <h2 className="text-base font-medium text-[var(--text-primary)]">
-          {triggered && '⚠ '}Fine-tune 觸發
+        <h2 className="flex items-center gap-1.5 text-base font-medium text-[var(--text-primary)]">
+          {triggered && <WarningIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-[var(--warning)]" />}
+          Fine-tune 觸發
         </h2>
         <button
           type="button"

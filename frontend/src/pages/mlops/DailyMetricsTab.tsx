@@ -112,7 +112,7 @@ export function DailyMetricsTab() {
 
       {/* KPI 卡 ×3，沿用首頁 KpiCard 元件樣式 */}
       {latest ? (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <KpiCard label="今日誤報數（FP/Day）" value={String(latest.false_positive_count)} />
           <KpiCard label="YOLO 信心分數均值" value={`${Math.round(latest.avg_confidence * 100)}%`} />
           <KpiCard label="VLM 推翻率" value={`${Math.round(latest.vlm_override_rate * 100)}%`} />

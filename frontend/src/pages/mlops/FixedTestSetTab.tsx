@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getFixedTestSet } from '../../api/fixedTestSet';
+import { LockIcon } from '../../components/icons';
 import type { FixedTestSet } from '../../types';
 import { formatDate } from '../../utils/time';
 
@@ -14,12 +15,12 @@ export function FixedTestSetTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4">
           <h2 className="text-base font-medium text-[var(--text-primary)]">凍結狀態</h2>
           {data.is_frozen && (
             <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-[var(--brand-soft)] px-3 py-1 text-sm text-[var(--text-primary)]">
-              <span aria-hidden="true">🔒</span>
+              <LockIcon aria-hidden="true" className="h-4 w-4" />
               <span>已凍結</span>
             </div>
           )}
@@ -27,7 +28,9 @@ export function FixedTestSetTab() {
 
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4">
           <h2 className="text-base font-medium text-[var(--text-primary)]">建立時間</h2>
-          <p className="mt-3 text-sm text-[var(--text-primary)]">{formatDate(data.created_at)}</p>
+          <p className="mt-3 text-sm text-[var(--text-primary)]">
+            {data.created_at ? formatDate(data.created_at) : '—'}
+          </p>
         </div>
       </div>
 

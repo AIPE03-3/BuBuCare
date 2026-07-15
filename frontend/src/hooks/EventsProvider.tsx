@@ -1,40 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { getEvents, submitEventFeedback } from '../api/events';
 import { FullScreenAlert } from '../components/FullScreenAlert';
-import type { CareEvent, FalseReportLabel } from '../types';
+import type { CareEvent, FalseReportLabel, ReportStage } from '../types';
 import { EventsContext, type EventsContextValue } from './eventsContext';
 import { useAuth } from './useAuth';
 import { useEventSocket } from './useEventSocket';
 
 const PAGE_SIZE = 3;
+// 首頁「未結案事件」需一次顯示所有未結案事件、不分頁，故初始載入直接抓完全部 mock 資料；
+// 「載入更多」（事件中心即時頁使用）仍維持每次 PAGE_SIZE 筆的漸進載入。
+const INITIAL_LOAD_SIZE = 200;
 const TICK_INTERVAL_MS = 1000;
 const ACK_TOAST_DURATION_MS = 10000;
-
-// 離線 demo 後路：後端無法推事件時，按 Shift+A 手動塞一筆待處理事件觸發全螢幕警示。
-function createDemoAlert(): CareEvent {
-  return {
-    id: `evt-demo-${Date.now()}`,
-    event_type: 'fall',
-    camera: { id: 12, name: '鏡頭12', zone: '北側3F樓梯間', floor: null, stream_url: null, stream_source: null, status: 'online' },
-    occurred_at: new Date().toISOString(),
-    status: 'pending',
-    confidence: 0.92,
-    vlm_result: {
-      confidence: 0.93,
-      severity: '高',
-      description: '住民於樓梯間跌倒，倒地後無明顯自主移動。',
-      suggestion: '請立即派員前往確認狀況並協助起身。',
-    },
-    verdict: null,
-    clip_path: null,
-    snapshot_path: null,
-    assignee: null,
-    notified_to: null,
-    ack_deadline: null,
-    escalated_to: null,
-    alerted_at: new Date().toISOString(),
-  };
-}
 
 export function EventsProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
@@ -51,7 +28,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   // 初始清單目前仍走 mock（getEvents），待後端 GET /events 就緒再切。
   useEffect(() => {
-    getEvents(0, PAGE_SIZE).then((initial) => {
+    getEvents(0, INITIAL_LOAD_SIZE).then((initial) => {
       setEvents(initial);
       setOffset(initial.length);
     });
@@ -75,20 +52,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), TICK_INTERVAL_MS);
-
-    // 離線 demo 後路：Shift+A 手動觸發一筆警示。
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.shiftKey && e.key.toLowerCase() === 'a') {
-        handleIncomingEvent(createDemoAlert());
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      clearInterval(tick);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [handleIncomingEvent]);
+    return () => clearInterval(tick);
+  }, []);
 
   function dismissConfirmedAlert(id: string) {
     setConfirmedAlerts((prev) => prev.filter((event) => event.id !== id));
@@ -155,6 +120,23 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     setLastAckedId(null);
   }
 
+  // 更新通報狀態：就地更新 context 內該筆事件，讓詳情頁與清單同步。後端補齊端點後於此改為呼叫 API。
+  function updateReportStage(eventId: string, stage: ReportStage) {
+    setEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, report_stage: stage } : e)));
+  }
+
+  // DEV-TEST：一鍵清空所有事件與警示相關狀態，把前端還原成無資料。移除測試功能時刪除此函式與 context 曝光。
+  function clearTestEvents() {
+    if (ackToastTimerRef.current) clearTimeout(ackToastTimerRef.current);
+    preAckSnapshotRef.current.clear();
+    setEvents([]);
+    setOffset(0);
+    setConfirmedAlerts([]);
+    setLastAckedId(null);
+    setAckToastEvent(null);
+    setLastAckedEvent(null);
+  }
+
   const value: EventsContextValue = {
     events,
     now,
@@ -168,6 +150,10 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     handleResolveViaFeedback: resolveViaFeedback,
     lastAckedEvent,
     undoAcknowledge,
+    updateReportStage,
+    // DEV-TEST：測試按鈕注入事件，直接複用真後端事件進場邏輯。移除測試功能時刪掉這兩行即可。
+    injectTestEvent: handleIncomingEvent,
+    clearTestEvents,
   };
 
   return (
