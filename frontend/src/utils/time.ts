@@ -22,6 +22,15 @@ export function formatDateTime(iso: string): string {
   return `${formatDate(iso)} ${formatTime(iso)}`;
 }
 
+// 倒數計時：毫秒 → HH:MM:SS（時:分:秒）。負值一律歸零，由呼叫端另行判斷逾時顯示。
+export function formatCountdown(ms: number): string {
+  const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
 export function formatOfflineDuration(offlineSince: string, now: number): string {
   const diffMs = Math.max(0, now - new Date(offlineSince).getTime());
   const totalMinutes = Math.floor(diffMs / 60000);

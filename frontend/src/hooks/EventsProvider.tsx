@@ -12,6 +12,8 @@ const PAGE_SIZE = 3;
 const INITIAL_LOAD_SIZE = 200;
 const TICK_INTERVAL_MS = 1000;
 const ACK_TOAST_DURATION_MS = 10000;
+// 接手後須結案的處理時限：24 小時。倒數顯示於未結案列表與事件詳情頁。
+const RESOLVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export function EventsProvider({ children }: { children: ReactNode }) {
   const { session } = useAuth();
@@ -71,7 +73,15 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   async function acknowledgeEvent(event: CareEvent) {
     preAckSnapshotRef.current.set(event.id, event);
     const assignee = session?.display_name ?? null;
-    const acknowledged: CareEvent = { ...event, status: 'in_progress', ack_deadline: null, assignee };
+    // 接手當下啟動該筆專屬的 24 小時結案倒數（存絕對到期時間戳，各事件互不共用）。
+    const resolveDeadline = new Date(Date.now() + RESOLVE_WINDOW_MS).toISOString();
+    const acknowledged: CareEvent = {
+      ...event,
+      status: 'in_progress',
+      ack_deadline: null,
+      resolve_deadline: resolveDeadline,
+      assignee,
+    };
     setEvents((prev) => {
       const exists = prev.some((e) => e.id === event.id);
       return exists ? prev.map((e) => (e.id === event.id ? acknowledged : e)) : [acknowledged, ...prev];

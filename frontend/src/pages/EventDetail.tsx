@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { CountdownTimer } from '../components/CountdownTimer';
 import { DEMO_VIDEO_SRC } from '../components/FullScreenAlert';
 import { EventStatusBadge } from '../components/EventStatusBadge';
 import { useEvents } from '../hooks/eventsContext';
@@ -83,6 +84,10 @@ export function EventDetail() {
             <InfoRow label="事發地點" value={`${event.camera.zone}（${event.camera.name}）`} />
             <InfoRow label="事發時間" value={formatDateTime(event.occurred_at)} />
             <InfoRow label="事件狀態" value={<EventStatusBadge event={event} now={now} />} />
+            <InfoRow
+              label="處理時限"
+              value={<CountdownTimer deadline={event.resolve_deadline} now={now} />}
+            />
           </div>
 
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)] p-5 shadow-sm">

@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import { CountdownTimer } from '../components/CountdownTimer';
 import { EventStatusBadge } from '../components/EventStatusBadge';
 import { FlagIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
@@ -23,6 +24,7 @@ export function EventCenterUnresolved() {
             <th className="px-4 py-3 font-medium">事件</th>
             <th className="px-4 py-3 font-medium">事發地點</th>
             <th className="px-4 py-3 font-medium">事發時間</th>
+            <th className="px-4 py-3 font-medium">處理時限</th>
             <th className="px-4 py-3 font-medium">事件狀態</th>
           </tr>
         </thead>
@@ -40,6 +42,9 @@ export function EventCenterUnresolved() {
               </td>
               <td className="px-4 py-3 text-[var(--text-secondary)]">
                 {formatDateTime(event.occurred_at)}
+              </td>
+              <td className="px-4 py-3">
+                <CountdownTimer deadline={event.resolve_deadline} now={now} />
               </td>
               <td className="px-4 py-3">
                 <span className="inline-flex items-center gap-1.5">

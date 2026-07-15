@@ -109,6 +109,8 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     // 以下欄位後端 MVP 階段尚無對應來源，固定 null（非漏接，後端補齊後再帶入）：
     notified_to: null,
     ack_deadline: null,
+    // 尚未接手，故無 24 小時結案時限；接手（acknowledgeEvent）當下才寫入。
+    resolve_deadline: null,
     escalated_to: null,
     alerted_at: null,
   };

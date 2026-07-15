@@ -194,13 +194,13 @@ export function AppLayout() {
           <div className="flex flex-col gap-1">
             <NavGroupLabel>支援</NavGroupLabel>
             <nav className="flex flex-col gap-1">
-              <div className="flex items-center justify-between rounded-xl px-3 py-2.5 text-sm text-[var(--text-muted)]">
-                <span className="flex items-center gap-3">
-                  <SparklesIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
-                通報單生成
-                </span>
-                <span className="text-xs">即將推出</span>
-              </div>
+              <NavItem
+                to="/reports"
+                label="生成通報單"
+                icon={SparklesIcon}
+                active={isActive('/reports')}
+                onNavigate={closeSidebar}
+              />
 
               <NavItem
                 to="/history"

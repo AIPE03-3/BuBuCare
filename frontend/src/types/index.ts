@@ -83,6 +83,7 @@ export interface CareEvent {
   assignee: string | null;
   notified_to: string | null;
   ack_deadline: string | null;   // 接手時限（ISO），pending 時有值，用於逾時倒數
+  resolve_deadline: string | null; // 接手後須結案的 24 小時時限（ISO）；接手當下寫入＝now+24h，null＝尚未接手。每筆各自獨立
   escalated_to: string | null;   // 升級通知對象；待班表系統導入後帶入實際值班人員，demo 暫以當日值班組長代替
   alerted_at: string | null;     // 曾以全螢幕警示呈現的時間（ISO），用於「⚠ 曾全螢幕警示」持久徽章
   stage_latency_ms?: { capture: number; inference: number; emit: number }; // 預留，本期不顯示

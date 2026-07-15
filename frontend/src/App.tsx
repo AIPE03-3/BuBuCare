@@ -10,6 +10,7 @@ import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { MLOps } from './pages/MLOps';
 import { Monitoring } from './pages/Monitoring';
+import { ReportGeneration } from './pages/ReportGeneration';
 import { Settings } from './pages/Settings';
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/events" element={<EventCenter />} />
         <Route path="/events/:id" element={<EventDetail />} />
+        <Route path="/reports" element={<ReportGeneration />} />
         <Route path="/history" element={<History />} />
         <Route
           path="/mlops"
