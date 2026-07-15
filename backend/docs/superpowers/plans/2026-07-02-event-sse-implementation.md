@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 實作 spec（`docs/superpowers/specs/2026-07-02-event-sse-design.md`）定義的事件通報流程：POST /events 收事件 → 存 DB → SSE 廣播 → 人工判定/結案。
+**Goal:** 實作 spec（`backend/docs/superpowers/specs/2026-07-02-event-sse-design.md`）定義的事件通報流程：POST /events 收事件 → 存 DB → SSE 廣播 → 人工判定/結案。
 
 **Architecture:** 事件「入口」（POST /events）與「處理」（`handle_incoming_event()`：存 DB + 廣播）拆開，未來 Kafka consumer 直接呼叫處理函式。SSE 用全域連線池（每連線一個 asyncio.Queue），先存 DB 成功才廣播。
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 一切以 spec 為準：`docs/superpowers/specs/2026-07-02-event-sse-design.md`
+- 一切以 spec 為準：`backend/docs/superpowers/specs/2026-07-02-event-sse-design.md`
 - 測試指令一律用完整路徑：`& "C:\Users\user\Projects\fulilian-backend\.venv\Scripts\python.exe" -m pytest ...`（PowerShell 每次是新 session，不繼承 venv）
 - 禁用 `uv run`（本機有 trampoline bug）
 - bcrypt 鎖定 4.0.1，不得升級
