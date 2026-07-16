@@ -8,7 +8,6 @@ import { EventDetail } from './pages/EventDetail';
 import { History } from './pages/History';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
-import { MLOps } from './pages/MLOps';
 import { Monitoring } from './pages/Monitoring';
 import { ReportFormPage } from './pages/ReportFormPage';
 import { ReportGeneration } from './pages/ReportGeneration';
@@ -35,14 +34,6 @@ function App() {
         <Route path="/reports" element={<ReportGeneration />} />
         <Route path="/reports/:id" element={<ReportFormPage />} />
         <Route path="/history" element={<History />} />
-        <Route
-          path="/mlops"
-          element={
-            <RequireAdmin>
-              <MLOps />
-            </RequireAdmin>
-          }
-        />
         <Route
           path="/settings"
           element={

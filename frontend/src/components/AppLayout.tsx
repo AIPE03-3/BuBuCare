@@ -10,7 +10,6 @@ import {
   BellIcon,
   SparklesIcon,
   ClockIcon,
-  CpuIcon,
   GearIcon,
   LogoutIcon,
   SearchIcon,
@@ -209,16 +208,6 @@ export function AppLayout() {
                 active={isActive('/history')}
                 onNavigate={closeSidebar}
               />
-
-              {role === 'admin' && (
-                <NavItem
-                  to="/mlops"
-                  label="MLOps 面板(待確認)"
-                  icon={CpuIcon}
-                  active={isActive('/mlops')}
-                  onNavigate={closeSidebar}
-                />
-              )}
             </nav>
           </div>
         </div>

@@ -60,10 +60,10 @@ export function DevTestPanel() {
   return (
     <div className="flex flex-wrap gap-2">
       <button type="button" onClick={handleInject} className={devButtonClass}>
-        🧪 測試：模擬後端跌倒通知
+        測試：模擬後端跌倒通知
       </button>
       <button type="button" onClick={clearTestEvents} className={devButtonClass}>
-        🧹 清除所有測試資料
+        清除所有測試資料
       </button>
     </div>
   );
