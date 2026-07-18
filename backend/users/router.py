@@ -121,3 +121,30 @@ def delete_user(user_id: int, current_user: dict = Depends(require_admin), db: S
     db.delete(user)
     db.commit()
     return {"message": f"已刪除使用者 {user_id}"}
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6)
+
+
+# ════════════════════════════════════════════════════════
+# 路由五：PATCH /me/password（登入者改自己的密碼）
+# ════════════════════════════════════════════════════════
+@router.patch("/me/password")
+def change_my_password(body: ChangePasswordRequest,
+                       current_user: dict = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    # token 的 sub 就是員編，撈出本人那筆
+    user = db.query(User).filter(User.employee_id == current_user["sub"]).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="token 無效或過期")
+
+    # 先驗舊密碼，防止「電腦沒鎖被別人拿去改密碼」
+    if not verify_password(body.old_password, user.password):
+        raise HTTPException(status_code=400, detail="舊密碼錯誤")
+
+    user.password = hash_password(body.new_password)
+    user.must_change_password = False  # 已經換掉臨時密碼，解除首次登入強制改密碼
+    db.commit()
+    return {"message": "密碼已更新"}
