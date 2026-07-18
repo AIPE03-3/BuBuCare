@@ -2,12 +2,13 @@
 # 帳號相關的所有路由（註冊/登入/查自己/刪帳號）。用 APIRouter 分檔，main.py 只負責組裝 app。
 
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
 # OAuth2PasswordRequestForm 是 FastAPI 內建的登入表單格式
 # 前端送來的 username + password 會被自動解析成這個物件
-from pydantic import BaseModel  # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
+from pydantic import BaseModel, Field  # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
 from sqlalchemy.orm import Session
 
 from backend.core.auth import create_access_token
@@ -20,38 +21,42 @@ router = APIRouter()
 
 
 # ── 定義「POST /register 收到的 JSON 格式」────────────────
-# 前端送來 {"username": "alice", "password": "1234"}
+# 前端送來 {"employee_id": "E100", "full_name": "新同事", "password": "..."}
 # FastAPI 會自動比對這個格式
 class RegisterRequest(BaseModel):
     employee_id: str
     full_name: str
-    password: str
-    email: str | None = None  # 改選填：不再是找回密碼的管道
+    password: str = Field(min_length=6)   # admin 給的臨時密碼，最低 6 碼
+    role: Literal["staff", "admin"] = "staff"  # 只收這兩種值，其他直接 422
+    email: str | None = None              # 改選填：不再是找回密碼的管道
 
 
 # ════════════════════════════════════════════════════════
-# 路由一：POST /register（公開，不需要登入）
+# 路由一：POST /register（admin-only：員編是人資編號，只有 admin 能開帳號）
 # ════════════════════════════════════════════════════════
-@router.post("/register")
-def register(body: RegisterRequest, db: Session = Depends(get_db)):
-    # body        → FastAPI 自動把前端送來的 JSON 解析成 RegisterRequest 物件
-    # Depends(get_db) → 執行這個函式前，先幫我開一個資料庫連線，用完自動關
-
-    # 查資料庫有沒有同員編的帳號
-    existing = db.query(User).filter(User.employee_id == body.employee_id).first()
-    if existing:
+@router.post("/register", status_code=201)
+def register(body: RegisterRequest,
+             current_user: dict = Depends(require_admin),
+             db: Session = Depends(get_db)):
+    if db.query(User).filter(User.employee_id == body.employee_id).first():
         raise HTTPException(status_code=400, detail="員編已存在")
+    # email 沒填（None）不查重——資料庫允許多筆 NULL；有填才需要擋重複
+    if body.email and db.query(User).filter(User.email == body.email).first():
+        raise HTTPException(status_code=400, detail="email 已被使用")
 
     new_user = User(
         employee_id=body.employee_id,
         full_name=body.full_name,
         password=hash_password(body.password),  # 密碼雜湊後才存，不存明文
         email=body.email,
-        role="staff"
+        role=body.role,
+        # must_change_password 不用指定：模型預設 True，逼新帳號首次登入改密碼
     )
     db.add(new_user)
     db.commit()
-    return {"message": f"帳號 {body.employee_id} 建立成功"}
+    db.refresh(new_user)  # 讓資料庫回填自動編號的 id
+    return {"id": new_user.id, "employee_id": new_user.employee_id,
+            "full_name": new_user.full_name, "role": new_user.role}
 
 
 # ════════════════════════════════════════════════════════
