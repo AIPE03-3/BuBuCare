@@ -148,3 +148,27 @@ def change_my_password(body: ChangePasswordRequest,
     user.must_change_password = False  # 已經換掉臨時密碼，解除首次登入強制改密碼
     db.commit()
     return {"message": "密碼已更新"}
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=6)  # admin 給的新臨時密碼
+
+
+# ════════════════════════════════════════════════════════
+# 路由六：PATCH /users/{user_id}/password（admin 幫忘記密碼的員工重設）
+# ════════════════════════════════════════════════════════
+@router.patch("/users/{user_id}/password")
+def reset_user_password(user_id: int, body: ResetPasswordRequest,
+                        current_user: dict = Depends(require_admin),
+                        db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="找不到使用者")
+
+    user.password = hash_password(body.new_password)
+    # 這是 admin 給的臨時密碼，員工下次登入要換成自己的
+    # （admin 對自己的 id 呼叫也放行：無害，只是自己下次登入會被要求改密碼；
+    #   正常改自己的密碼該用 PATCH /me/password）
+    user.must_change_password = True
+    db.commit()
+    return {"message": f"已重設使用者 {user_id} 的密碼"}
