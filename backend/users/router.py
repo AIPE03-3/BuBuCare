@@ -108,19 +108,21 @@ def read_me(current_user: dict = Depends(get_current_user)):
 
 
 # ════════════════════════════════════════════════════════
-# 路由四：DELETE /users/{user_id}（需要登入 + 需要 admin 角色）
+# 路由四：DELETE /users/{user_id}（需 admin；軟刪除＝停用，不真的刪資料）
 # ════════════════════════════════════════════════════════
 @router.delete("/users/{user_id}")
 def delete_user(user_id: int, current_user: dict = Depends(require_admin), db: Session = Depends(get_db)):
-    # {user_id} → URL 路徑參數，FastAPI 自動抓出來並確認是整數
-    # Depends(require_admin) → 先驗證 token，再確認 role == "admin"，兩關都過才進來
-
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="找不到使用者")
-    db.delete(user)
+
+    # 不能停用自己：防止最後一個 admin 把自己鎖死後沒人能開帳號
+    if user.employee_id == current_user["sub"]:
+        raise HTTPException(status_code=400, detail="不能停用自己的帳號")
+
+    user.is_active = False  # 軟刪除：資料留著可回溯，員編也不會被重用
     db.commit()
-    return {"message": f"已刪除使用者 {user_id}"}
+    return {"message": f"已停用使用者 {user_id}"}
 
 
 class ChangePasswordRequest(BaseModel):
