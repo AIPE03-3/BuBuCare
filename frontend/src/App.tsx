@@ -5,13 +5,16 @@ import { RequireAuth } from './components/RequireAuth';
 import { EventsProvider } from './hooks/EventsProvider';
 import { EventCenter } from './pages/EventCenter';
 import { EventDetail } from './pages/EventDetail';
+import { HazardDetail } from './pages/HazardDetail';
 import { History } from './pages/History';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { Monitoring } from './pages/Monitoring';
 import { ReportFormPage } from './pages/ReportFormPage';
+import { ReportPreview } from './pages/ReportPreview';
 import { ReportGeneration } from './pages/ReportGeneration';
-import { Settings } from './pages/Settings';
+import { UserManagement } from './pages/UserManagement';
+import { UserDetail } from './pages/UserDetail';
 
 function App() {
   return (
@@ -31,14 +34,24 @@ function App() {
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/events" element={<EventCenter />} />
         <Route path="/events/:id" element={<EventDetail />} />
+        <Route path="/hazards/:id" element={<HazardDetail />} />
         <Route path="/reports" element={<ReportGeneration />} />
         <Route path="/reports/:id" element={<ReportFormPage />} />
+        <Route path="/reports/:id/preview" element={<ReportPreview />} />
         <Route path="/history" element={<History />} />
         <Route
-          path="/settings"
+          path="/users"
           element={
             <RequireAdmin>
-              <Settings />
+              <UserManagement />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/users/:id"
+          element={
+            <RequireAdmin>
+              <UserDetail />
             </RequireAdmin>
           }
         />

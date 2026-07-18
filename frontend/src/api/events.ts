@@ -2,15 +2,12 @@ import { apiClient } from './client';
 import type {
   CareEvent,
   Camera,
-  EventHistoryQuery,
-  EventHistoryStatPoint,
   EventStatus,
   EventVerdict,
   FalseReportLabel,
-  PagedResult,
   VlmResult,
 } from '../types';
-import { hasEscalatedFlag } from '../utils/eventFlags';
+import { HAZARD_OBJECTS } from '../types';
 
 /**
  * 後端 fulilian-backend 事件推播（SSE）的原始 payload 欄位命名。
@@ -38,6 +35,7 @@ export interface RawEventPayload {
   yolo_threshold: number;
   vlm_summary: string | { confidence?: number; description?: string; suggestion?: string } | null;
   severity: string | null;
+  hazard_object?: string | null; // 潛在危險事件才有；後端實際欄位未定，先預留（見 DevTestPanel）
 }
 
 /**
@@ -92,7 +90,10 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
 
   return {
     id: raw.event_id,
-    event_type: 'fall',
+    // hazard＝物件偵測（危險物品）；其餘一律當跌倒。後端 hazard 實際字串未定，先以 'hazard' 對應（見 DevTestPanel）。
+    event_type: raw.event_type === 'hazard' ? 'hazard' : 'fall',
+    // 危險物品類型：僅取後端有效值，其餘一律 null（跌倒事件亦為 null）。
+    hazard_object: HAZARD_OBJECTS.find((o) => o === raw.hazard_object) ?? null,
     camera,
     occurred_at: normalizeBackendTime(raw.detected_at),
     status: raw.status as EventStatus,   // 後端已對齊三態，僅換欄位名，值不轉換
@@ -114,6 +115,8 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     ack_deadline: null,
     // 尚未接手，故無 24 小時結案時限；接手（acknowledgeEvent）當下才寫入。
     resolve_deadline: null,
+    // 續報期限於初報（updateReportStage stage='initial'）時才計算，此前為 null。
+    follow_up_deadline: null,
     escalated_to: null,
     alerted_at: null,
   };
@@ -150,27 +153,12 @@ function normalizeBackendTime(iso: string): string {
   return hasTimezone ? iso : `${iso}+08:00`;
 }
 
-// 假資料已移除：初始清單為空，事件一律由真後端 SSE（handleIncomingEvent）帶入。
-// 真後端 GET /events 就緒後，於此改為呼叫 API 並經 parseRawEvent 轉換即可。
-const EVENTS: CareEvent[] = [];
-
+// 初始清單：後端尚無 GET /events 端點，先回空陣列，事件一律由 SSE（handleIncomingEvent）帶入。
+// 端點就緒後改為：apiClient.get<RawEventPayload[]>(`/events?offset=&limit=`) 再逐筆 parseRawEvent。
 export async function getEvents(offset: number, limit: number): Promise<CareEvent[]> {
-  return EVENTS.slice(offset, offset + limit);
-}
-
-export async function getEventById(id: string): Promise<CareEvent | null> {
-  return EVENTS.find((e) => e.id === id) ?? null;
-}
-
-export async function updateStatus(id: string, status: EventStatus, assignee?: string | null): Promise<void> {
-  const event = EVENTS.find((e) => e.id === id);
-  if (event) {
-    event.status = status;
-    if (status === 'in_progress') {
-      event.ack_deadline = null;
-      if (assignee !== undefined) event.assignee = assignee;
-    }
-  }
+  void offset;
+  void limit;
+  return [];
 }
 
 // 送達確認：後端 POST /events/{id}/ack，無 request body，回 { status: 'ok' }。
@@ -192,50 +180,8 @@ export async function submitEventFeedback(
   await apiClient.patch(`/events/${id}/resolve`);
 }
 
-// 歷史查詢終態一律 resolved；真跌倒／誤報改由 verdict 區分，不再用舊 RESOLVED／SUPPRESSED 兩態。
-export async function queryEventHistory(query: EventHistoryQuery): Promise<PagedResult<CareEvent>> {
-  const fromMs = query.from ? new Date(query.from).getTime() : null;
-  const toMs = query.to ? new Date(query.to).getTime() : null;
-
-  const filtered = EVENTS.filter((event) => {
-    if (event.status !== 'resolved') return false;
-    if (query.verdict && event.verdict !== query.verdict) return false;
-    if (query.escalatedOnly && !hasEscalatedFlag(event)) return false;
-    const occurredMs = new Date(event.occurred_at).getTime();
-    if (fromMs !== null && occurredMs < fromMs) return false;
-    if (toMs !== null && occurredMs > toMs) return false;
-    return true;
-  }).sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
-
-  const start = (query.page - 1) * query.pageSize;
-  return {
-    items: filtered.slice(start, start + query.pageSize),
-    total: filtered.length,
-  };
-}
-
-export async function getEventHistoryStats(days: number): Promise<EventHistoryStatPoint[]> {
-  const now = Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const points: EventHistoryStatPoint[] = [];
-
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(now - i * dayMs);
-    const dateKey = date.toISOString().slice(0, 10);
-    points.push({ date: dateKey, true_alarm: 0, false_alarm: 0 });
-  }
-
-  const indexByDate = new Map(points.map((p, idx) => [p.date, idx]));
-
-  EVENTS.forEach((event) => {
-    if (event.status !== 'resolved') return;
-    const dateKey = event.occurred_at.slice(0, 10);
-    const idx = indexByDate.get(dateKey);
-    if (idx === undefined) return;
-    // 依 verdict 分桶：false_alarm 計誤報，其餘（true_alarm／null）計已結案（真跌倒）。
-    if (event.verdict === 'false_alarm') points[idx].false_alarm += 1;
-    else points[idx].true_alarm += 1;
-  });
-
-  return points;
+// 潛在危險「已排除」：後端 hazard 事件規格未定、尚無對應端點，先只記 log 佔位。
+// 端點就緒後改為實際呼叫（候選：PATCH /events/{id}/resolve，與誤報共用 resolve）。
+export async function clearHazardEvent(id: string): Promise<void> {
+  console.info('[clearHazardEvent] 後端端點未定，僅前端狀態更新', id);
 }

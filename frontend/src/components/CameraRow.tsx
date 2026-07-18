@@ -1,6 +1,5 @@
 import type { Camera } from '../types';
 import { DETECTING_LABEL, OFFLINE_LABEL } from '../types';
-import { MonitorIcon } from './icons';
 
 interface CameraRowProps {
   camera: Camera;
@@ -19,17 +18,7 @@ export function CameraRow({ camera, isDetecting, onSelect }: CameraRowProps) {
       className="cursor-pointer border-t border-[var(--border)] bg-[var(--bg-surface)] transition-colors duration-150 hover:bg-[var(--brand-soft)]"
     >
       <td className="px-4 py-3">
-        <span className="flex items-center gap-3">
-          <span
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-              showDetecting ? 'bg-[var(--danger-bg)] text-[var(--danger)]' : 'bg-[var(--brand-soft)] text-[var(--brand)]'
-            }`}
-            aria-hidden="true"
-          >
-            <MonitorIcon className="h-4 w-4" />
-          </span>
-          <span className="truncate text-sm font-medium text-[var(--text-primary)]">{camera.name}</span>
-        </span>
+        <span className="truncate text-sm font-medium text-[var(--text-primary)]">{camera.name}</span>
       </td>
       <td className="hidden px-4 py-3 text-sm text-[var(--text-secondary)] sm:table-cell">{camera.zone}</td>
       <td className="px-4 py-3">

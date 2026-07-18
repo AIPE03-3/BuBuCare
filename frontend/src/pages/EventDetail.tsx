@@ -1,15 +1,14 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { BackButton } from '../components/BackButton';
-import { ConfirmModal } from '../components/ConfirmModal';
 import { CountdownTimer } from '../components/CountdownTimer';
 import { DEMO_VIDEO_SRC } from '../components/FullScreenAlert';
 import { EventStatusBadge } from '../components/EventStatusBadge';
 import { useEvents } from '../hooks/eventsContext';
-import { formatDateTime } from '../utils/time';
+import { getStoredReports } from '../api/reports';
+import { formatDateTime, formatFullDate } from '../utils/time';
 import { getEventTypeLabel } from '../utils/eventFlags';
-import { REPORT_STAGES, REPORT_STAGE_LABEL } from '../types';
-import type { CareEvent } from '../types';
+import type { CareEvent, SavedReport } from '../types';
 
 function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -23,10 +22,15 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
 export function EventDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { events, now, updateReportStage, restoreEvent } = useEvents();
+  const { events, now, restoreEvent } = useEvents();
   const [videoError, setVideoError] = useState(false);
-  // 「已結報」需二次確認（結案並移入歷史）；初報／複報則即時更新。
-  const [confirmFinal, setConfirmFinal] = useState(false);
+  // 通報單紀錄走 async api（好換成後端 fetch），effect 載入；本頁進場時載一次即可。
+  const [storedReports, setStoredReports] = useState<SavedReport[]>([]);
+
+  useEffect(() => {
+    if (!id) return;
+    getStoredReports(id).then(setStoredReports);
+  }, [id]);
 
   const event: CareEvent | undefined = events.find((e) => e.id === id);
 
@@ -40,16 +44,19 @@ export function EventDetail() {
   }
 
   const videoSrc = event.camera.stream_url ?? DEMO_VIDEO_SRC;
-  // 誤報紀錄的事件：事件類型顯示誤報時選的類型，隱藏生成通報單與通報狀態，改提供「恢復事件」。
+  // 誤報紀錄的事件：事件類型顯示誤報時選的類型，隱藏製作通報單，改提供「恢復事件」。
   const isFalseAlarm = event.verdict === 'false_alarm';
   const eventTypeLabel = getEventTypeLabel(event);
+  // 每次通報都獨立儲存：最新一筆（陣列尾）決定 PDF 預覽鈕標籤；續報筆數用於「已續報次數」。
+  const savedReport = storedReports.length > 0 ? storedReports[storedReports.length - 1] : null;
+  const followUpCount = storedReports.filter((r) => r.form.reportType === '續報').length;
 
   return (
     <div className="flex flex-col gap-4">
       <BackButton />
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">事件詳情</h1>
 
-      {/* 單欄置中：影片 → 生成通報單按鈕 → 事件資訊 → 通報狀態，依序堆疊，寬度貼齊影片並置中。 */}
+      {/* 單欄置中：影片 → 製作通報單按鈕 → 事件資訊，依序堆疊，寬度貼齊影片並置中。 */}
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
         {/* 事發影片片段：維持 16:9 填滿（無灰邊）。 */}
         <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-[var(--bg-surface-2)]">
@@ -71,13 +78,25 @@ export function EventDetail() {
           )}
         </div>
 
-        {!isFalseAlarm && (
+        {/* 尚未建立任何通報單時才給「製作通報單」（初報）；已建立後改由下方續報／結報鈕推進，
+            避免重複新增同型通報單而灌大續報次數。 */}
+        {!isFalseAlarm && !savedReport && (
           <button
             type="button"
             onClick={() => navigate(`/reports/${event.id}`)}
             className="w-full rounded-md bg-[var(--brand)] px-4 py-2 text-center text-sm font-medium text-white transition-colors duration-150 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
           >
-            生成通報單
+            製作通報單
+          </button>
+        )}
+
+        {!isFalseAlarm && savedReport && (
+          <button
+            type="button"
+            onClick={() => navigate(`/reports/${event.id}/preview`)}
+            className="w-full rounded-md border border-[var(--brand)] bg-transparent px-4 py-2 text-center text-sm font-medium text-[var(--brand)] transition-colors duration-150 hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
+          >
+            預覽{savedReport.form.reportType} PDF
           </button>
         )}
 
@@ -92,41 +111,28 @@ export function EventDetail() {
             label="處理時限"
             value={<CountdownTimer deadline={event.resolve_deadline} now={now} />}
           />
+          <InfoRow
+            label="續報期限"
+            value={event.follow_up_deadline ? formatFullDate(event.follow_up_deadline) : '—'}
+          />
+          {followUpCount > 0 && <InfoRow label="已續報次數" value={`${followUpCount} 次`} />}
           {isFalseAlarm && <InfoRow label="備註" value={event.false_alarm_note ?? '—'} />}
         </div>
 
-        {!isFalseAlarm && (
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)] p-5 shadow-sm">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <h2 className="text-base font-semibold text-[var(--text-primary)]">通報狀態</h2>
-              <span className="text-sm text-[var(--text-secondary)]">
-                目前：{event.report_stage ? REPORT_STAGE_LABEL[event.report_stage] : '尚未通報'}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {REPORT_STAGES.map((stage) => {
-                const active = event.report_stage === stage;
-                return (
-                  <button
-                    key={stage}
-                    type="button"
-                    onClick={() =>
-                      stage === 'final'
-                        ? setConfirmFinal(true)
-                        : updateReportStage(event.id, stage)
-                    }
-                    aria-pressed={active}
-                    className={`rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2 ${
-                      active
-                        ? 'bg-[var(--brand)] text-white'
-                        : 'border border-[var(--brand)] bg-transparent text-[var(--brand)] hover:bg-[var(--brand-soft)]'
-                    }`}
-                  >
-                    {REPORT_STAGE_LABEL[stage]}
-                  </button>
-                );
-              })}
-            </div>
+        {/* 已初報或已續報時出現後續通報動作（可反覆續報，或結報結案）；點擊帶通報別導向填寫頁，
+            該頁會載入既有通報單並自動勾選對應通報別。 */}
+        {(event.report_stage === 'initial' || event.report_stage === 'follow_up') && (
+          <div className="grid grid-cols-2 gap-2">
+            {(['續報', '結報'] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                onClick={() => navigate(`/reports/${event.id}?type=${encodeURIComponent(type)}`)}
+                className="w-full rounded-md border border-[var(--brand)] bg-transparent px-4 py-2 text-center text-sm font-medium text-[var(--brand)] transition-colors duration-150 hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] focus-visible:ring-offset-2"
+              >
+                {type}
+              </button>
+            ))}
           </div>
         )}
 
@@ -143,19 +149,6 @@ export function EventDetail() {
           </button>
         )}
       </div>
-
-      {confirmFinal && (
-        <ConfirmModal
-          title="標記為結報"
-          message="確定要標記為結報嗎？結報後事件將結案並移至歷史紀錄。"
-          onConfirm={() => {
-            updateReportStage(event.id, 'final');
-            setConfirmFinal(false);
-            navigate('/events');
-          }}
-          onCancel={() => setConfirmFinal(false)}
-        />
-      )}
     </div>
   );
 }

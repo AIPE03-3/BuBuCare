@@ -10,7 +10,7 @@ export interface EventListColumn {
 }
 
 // 響應式事件清單：桌機（md 以上）顯示表格，手機顯示堆疊卡片，避免窄螢幕被迫橫向捲動。
-// 事件中心、生成通報單、歷史紀錄、誤報紀錄共用同一版型，各頁只需提供欄位定義與點列去向。
+// 事件中心、製作通報單、歷史紀錄、誤報紀錄共用同一版型，各頁只需提供欄位定義與點列去向。
 export function ResponsiveEventList({
   events,
   columns,

@@ -79,12 +79,12 @@ function UserMenu({ name, employeeCode, isAdmin, onLogout, onNavigate }: UserMen
               onClick={() => {
                 setOpen(false);
                 onNavigate?.();
-                navigate('/settings');
+                navigate('/users');
               }}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
             >
               <GearIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
-              設定
+              管理使用者
             </button>
           )}
           <button
@@ -187,15 +187,10 @@ export function AppLayout() {
                   onNavigate={closeSidebar}
                 />
               ))}
-            </nav>
-          </div>
 
-          <div className="flex flex-col gap-1">
-            <NavGroupLabel>支援</NavGroupLabel>
-            <nav className="flex flex-col gap-1">
               <NavItem
                 to="/reports"
-                label="生成通報單"
+                label="製作通報單"
                 icon={SparklesIcon}
                 active={isActive('/reports')}
                 onNavigate={closeSidebar}
@@ -241,18 +236,21 @@ export function AppLayout() {
               {name ? `您好，${name}` : '您好'}
             </p>
 
-            <label className="relative order-last w-full sm:order-none sm:w-64">
-              <span className="sr-only">搜尋</span>
-              <SearchIcon
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"
-                aria-hidden="true"
-              />
-              <input
-                type="search"
-                placeholder="搜尋"
-                className="w-full rounded-full border border-[var(--border)] bg-[var(--bg-surface)] py-2 pl-9 pr-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-soft)]"
-              />
-            </label>
+            {/* 搜尋框只在事件中心／歷史紀錄清單頁顯示；用完全比對排除事件詳情等子頁面。 */}
+            {(pathname === '/events' || pathname === '/history') && (
+              <label className="relative order-last w-full sm:order-none sm:w-64">
+                <span className="sr-only">搜尋</span>
+                <SearchIcon
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]"
+                  aria-hidden="true"
+                />
+                <input
+                  type="search"
+                  placeholder="搜尋"
+                  className="w-full rounded-full border border-[var(--border)] bg-[var(--bg-surface)] py-2 pl-9 pr-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-soft)]"
+                />
+              </label>
+            )}
           </header>
           <Outlet />
         </main>

@@ -1,9 +1,12 @@
-import { useRef, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BackButton } from '../components/BackButton';
+import { ConfirmModal } from '../components/ConfirmModal';
 import { useEvents } from '../hooks/eventsContext';
+import { getLatestReport, saveReport } from '../api/reports';
 import {
   REPORT_TYPES,
+  REPORT_TYPE_TO_STAGE,
   REPORT_GENDERS,
   REPORT_WELFARE_OPTIONS,
   REPORT_DISTRICTS,
@@ -25,11 +28,13 @@ function toggleArrayValue<T>(arr: readonly T[], value: T): T[] {
 
 // 進頁時由事件自動帶入：事件發生日期（年/月/日/時/分）與地點（帶入鏡頭區域，勾「其他」）。
 // 其餘欄位事件無對應資料，留空手填。
+// 通報別預設「初報」：本函式只在該事件尚無任何通報單時使用（首次填寫必為初報）；
+// 續報／結報走已存紀錄帶入或 ?type 覆寫，不經此預設。
 function buildInitialForm(event: CareEvent): ReportFormData {
   const d = new Date(event.occurred_at);
   const nowDate = new Date(); // 十一、通報日期＝進入本頁的當下時間
   return {
-    reportType: null,
+    reportType: '初報',
     caseName: '',
     caseIdNumber: '',
     gender: null,
@@ -181,18 +186,37 @@ function CheckOption({
 
 export function ReportFormPage() {
   const { id } = useParams();
-  const { events } = useEvents();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { events, updateReportStage } = useEvents();
   const event = events.find((e) => e.id === id);
   const formRef = useRef<HTMLFormElement>(null);
   // 多選（核取方塊）群組的「至少選一項」錯誤；文字／數字／單選由原生 required 驗證，不進此集合。
   const [arrayErrors, setArrayErrors] = useState<Set<string>>(new Set());
+  // 選「結報」＝結案並移入歷史，儲存前二次確認避免誤結案；true＝確認中。
+  const [confirmFinal, setConfirmFinal] = useState(false);
 
-  // 表單狀態以事件為初值一次性建立；找不到事件時走下方 early return，不呼叫 setForm。
-  const [form, setForm] = useState<ReportFormData | null>(() =>
-    event ? buildInitialForm(event) : null,
-  );
+  // ?type=續報｜結報：由詳情頁「續報／結報」鈕帶入，套用在初報單資料上並改通報別（自動勾選）。
+  const requestedType = REPORT_TYPES.find((t) => t === searchParams.get('type')) ?? null;
 
-  if (!event || !form) {
+  // 表單初值：已存過通報單則沿用最新一筆內容（自動帶入），否則由事件建空表；
+  // 續報／結報再依 requestedType 覆寫通報別。api/reports 為 async（好換成後端 fetch），故走 effect 載入。
+  const [form, setForm] = useState<ReportFormData | null>(null);
+  // 每個事件只載入一次初值：SSE 更新會讓 event 物件換身分，若跟著重載會洗掉使用者填到一半的內容。
+  const loadedEventIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!event || loadedEventIdRef.current === event.id) return;
+    const eventForLoad = event;
+    getLatestReport(eventForLoad.id).then((latest) => {
+      if (loadedEventIdRef.current === eventForLoad.id) return; // 併發載入（如 StrictMode 雙跑）已完成
+      loadedEventIdRef.current = eventForLoad.id;
+      const base = latest ? latest.form : buildInitialForm(eventForLoad);
+      setForm(requestedType ? { ...base, reportType: requestedType } : base);
+    });
+  }, [event, requestedType]);
+
+  if (!event) {
     return (
       <div className="flex flex-col gap-3">
         <BackButton />
@@ -201,17 +225,30 @@ export function ReportFormPage() {
     );
   }
 
+  if (!form) {
+    return (
+      <div className="flex flex-col gap-3">
+        <BackButton />
+        <p className="text-sm text-[var(--text-secondary)]">載入中…</p>
+      </div>
+    );
+  }
+
   const currentForm = form;
+  // early return 後的 narrowed 事件常數，供下方巢狀函式引用（closure 內 event 會失去 narrowing）。
+  const currentEvent = event;
 
   const update = <K extends keyof ReportFormData>(key: K, value: ReportFormData[K]) =>
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
 
   // 多選群組必填（至少一項）；「無介入」子選項僅在勾選「無介入」時要求。
+  // 第七題（服務過程／知悉時即通報）兩小點合計至少勾一項即可，不必兩點都勾。
   function collectArrayErrors(): Set<string> {
     const errors = new Set<string>();
     if (currentForm.servicePersonnel.length === 0) errors.add('servicePersonnel');
-    if (currentForm.serviceProcess.length === 0) errors.add('serviceProcess');
-    if (currentForm.immediateNotify.length === 0) errors.add('immediateNotify');
+    if (currentForm.serviceProcess.length === 0 && currentForm.immediateNotify.length === 0) {
+      errors.add('section7');
+    }
     if (currentForm.handling.length === 0) errors.add('handling');
     if (currentForm.handling.includes('無介入') && currentForm.noIntervention.length === 0) {
       errors.add('noIntervention');
@@ -231,6 +268,26 @@ export function ReportFormPage() {
     arrayErrors.has(key) ? (
       <p className="text-xs text-[var(--danger)]">請至少選擇一項</p>
     ) : null;
+
+  // 儲存通報單並依通報別更新事件通報狀態（初報→已初報…），完成後回事件詳情。
+  // 先 await 儲存再導頁：換成真後端時才不會「頁面已走、儲存失敗」。reportType 由原生 required 保證非空。
+  async function persistAndReturn() {
+    if (!currentForm.reportType) return;
+    await saveReport(currentEvent.id, currentForm);
+    updateReportStage(currentEvent.id, REPORT_TYPE_TO_STAGE[currentForm.reportType]);
+    navigate(`/events/${currentEvent.id}`);
+  }
+
+  // 儲存：先驗證全部必填；「結報」會結案，先進二次確認，其餘直接存並回事件詳情。
+  function submit() {
+    runIfValid(() => {
+      if (currentForm.reportType === '結報') {
+        setConfirmFinal(true);
+        return;
+      }
+      void persistAndReturn();
+    });
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -455,7 +512,6 @@ export function ReportFormPage() {
                 className="flex-1"
               />
             )}
-            {arrayErrorHint('serviceProcess')}
           </fieldset>
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-1 text-sm text-[var(--text-secondary)]">
@@ -473,8 +529,11 @@ export function ReportFormPage() {
                 />
               ))}
             </div>
-            {arrayErrorHint('immediateNotify')}
           </fieldset>
+          {/* （一）（二）合計至少勾一項即可，故錯誤提示放兩小點之後、整題僅一則。 */}
+          {arrayErrors.has('section7') && (
+            <p className="text-xs text-[var(--danger)]">（一）（二）請至少勾選一項</p>
+          )}
         </Section>
 
         {/* 八、事發經過說明 */}
@@ -587,23 +646,28 @@ export function ReportFormPage() {
       </div>
       </form>
 
-      {/* 儲存／輸出 PDF：先驗證全部必填，通過才動作（本輪動作仍為 stub，待接後端與匯出模組）。 */}
-      <div className="flex flex-wrap justify-center gap-2">
+      {/* 儲存：先驗證全部必填，通過即寫入 localStorage 並更新通報狀態，回事件詳情。PDF 預覽只留在詳情頁。 */}
+      <div className="flex justify-center">
         <button
           type="button"
-          onClick={() => runIfValid(() => console.info('[通報單] 儲存（功能待接後端）', form))}
+          onClick={() => submit()}
           className="rounded-md bg-[var(--brand)] px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:opacity-90"
         >
           儲存
         </button>
-        <button
-          type="button"
-          onClick={() => runIfValid(() => console.info('[通報單] 輸出 PDF（功能待接匯出模組）', form))}
-          className="rounded-md border border-[var(--brand)] bg-transparent px-4 py-2 text-sm font-medium text-[var(--brand)] transition-colors duration-150 hover:bg-[var(--brand-soft)]"
-        >
-          輸出 PDF
-        </button>
       </div>
+
+      {confirmFinal && (
+        <ConfirmModal
+          title="標記為結報"
+          message="通報別為「結報」，儲存後事件將結案並移至歷史紀錄。確定要結報嗎？"
+          onConfirm={() => {
+            setConfirmFinal(false);
+            void persistAndReturn();
+          }}
+          onCancel={() => setConfirmFinal(false)}
+        />
+      )}
     </div>
   );
 }

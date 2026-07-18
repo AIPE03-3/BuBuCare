@@ -1,16 +1,22 @@
 import { useState } from 'react';
 import { EventHistoryList } from './EventHistoryList';
 import { FalseAlarmHistoryList } from './FalseAlarmHistoryList';
+import { HazardList } from '../components/HazardList';
+import { useEvents } from '../hooks/eventsContext';
 
-type HistoryTab = 'events' | 'falseAlarms';
+type HistoryTab = 'events' | 'falseAlarms' | 'clearedHazards';
 
 const TABS: { value: HistoryTab; label: string }[] = [
   { value: 'events', label: '已結報事件' },
   { value: 'falseAlarms', label: '誤報紀錄' },
+  { value: 'clearedHazards', label: '已排除危險' },
 ];
 
 export function History() {
   const [tab, setTab] = useState<HistoryTab>('events');
+  const { hazardEvents } = useEvents();
+  // 已排除危險：hazard 事件中已標記 resolved 者。
+  const clearedHazards = hazardEvents.filter((e) => e.status === 'resolved');
 
   return (
     <div className="flex flex-col gap-4">
@@ -35,6 +41,9 @@ export function History() {
 
       {tab === 'events' && <EventHistoryList />}
       {tab === 'falseAlarms' && <FalseAlarmHistoryList />}
+      {tab === 'clearedHazards' && (
+        <HazardList hazards={clearedHazards} emptyMessage="尚無已排除危險" />
+      )}
     </div>
   );
 }

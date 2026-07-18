@@ -3,11 +3,11 @@ import { EventStatusBadge } from '../components/EventStatusBadge';
 import { FlagIcon } from '../components/icons';
 import { ResponsiveEventList, type EventListColumn } from '../components/ResponsiveEventList';
 import { useEvents } from '../hooks/eventsContext';
-import { formatDateTime } from '../utils/time';
-import { hasEscalatedFlag } from '../utils/eventFlags';
+import { formatDateTime, formatFullDate } from '../utils/time';
+import { getEventTypeLabel, hasEscalatedFlag } from '../utils/eventFlags';
 import type { CareEvent } from '../types';
 
-// getRowHref：點列的導向目標。預設進事件詳情頁；生成通報單頁改傳入通報單填寫路由，
+// getRowHref：點列的導向目標。預設進事件詳情頁；製作通報單頁改傳入通報單填寫路由，
 // 讓同一份列表在不同頁面有不同去向，不必複製列表邏輯。
 export function EventCenterUnresolved({
   getRowHref = (event: CareEvent) => `/events/${event.id}`,
@@ -26,7 +26,7 @@ export function EventCenterUnresolved({
     {
       key: 'type',
       header: '事件',
-      cell: () => <span className="text-[var(--text-primary)]">跌倒</span>,
+      cell: (event) => <span className="text-[var(--text-primary)]">{getEventTypeLabel(event)}</span>,
     },
     {
       key: 'location',
@@ -48,6 +48,18 @@ export function EventCenterUnresolved({
       key: 'deadline',
       header: '處理時限',
       cell: (event) => <CountdownTimer deadline={event.resolve_deadline} now={now} />,
+    },
+    {
+      key: 'follow_up_deadline',
+      header: '續報期限',
+      cell: (event) =>
+        event.follow_up_deadline ? (
+          <span className="text-[var(--text-primary)]">
+            {formatFullDate(event.follow_up_deadline)}
+          </span>
+        ) : (
+          <span className="text-[var(--text-muted)]">—</span>
+        ),
     },
     {
       key: 'status',

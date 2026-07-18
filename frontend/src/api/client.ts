@@ -27,7 +27,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     throw new Error(`API error ${res.status}: ${res.statusText}`);
   }
-  return res.json() as Promise<T>;
+  // 容忍空回應（204 或空 body，ack/resolve 類端點常見）：直接 res.json() 會把成功誤判成解析失敗。
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const apiClient = {

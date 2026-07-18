@@ -3,7 +3,7 @@ import type { CareEvent } from '../types';
 import { CAMERA_LABEL } from '../types';
 import { StatusTag } from './StatusTag';
 import { formatElapsedMinutes } from '../utils/time';
-import { hasEscalatedFlag } from '../utils/eventFlags';
+import { getEventTypeLabel, hasEscalatedFlag } from '../utils/eventFlags';
 import { FlagIcon } from './icons';
 
 interface ActionRequiredCardProps {
@@ -35,7 +35,7 @@ export function ActionRequiredCard({ event, now, onAcknowledge }: ActionRequired
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium text-[var(--text-primary)]">
-            跌倒　{event.camera.zone}（{event.camera.name}）
+            {getEventTypeLabel(event)}　{event.camera.zone}（{event.camera.name}）
           </p>
           {hasEscalatedFlag(event) && (
             <span title="事件曾升級並通知當日值班組長" className="shrink-0">
