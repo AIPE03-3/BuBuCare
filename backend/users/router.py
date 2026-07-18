@@ -69,8 +69,8 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     # 到資料庫查有沒有這個帳號
     user = db.query(User).filter(User.employee_id == form_data.username).first()
 
-    # 帳號不存在，或密碼比對失敗 → 回傳 401
-    if not user or not verify_password(form_data.password, user.password):
+    # 帳號不存在、已停用、或密碼比對失敗 → 一律同一句 401，不透露差別
+    if not user or not user.is_active or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
 
     # 登入成功 → 記下這次登入時間（UTC），存回資料庫
@@ -82,8 +82,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     access_token = create_access_token(
         data={"sub": user.employee_id, "full_name": user.full_name, "role": user.role})
 
-    # 回傳 token 給前端，前端要把它存起來，之後每次請求放在 Header 裡
-    return {"access_token": access_token, "token_type": "bearer"}
+    # must_change_password 走回應欄位、不放進 token——
+    # token 產生後內容不可變，改完密碼會翻不回來（見 spec「JWT 改動」）
+    return {"access_token": access_token, "token_type": "bearer",
+            "must_change_password": user.must_change_password}
 
 
 # ════════════════════════════════════════════════════════

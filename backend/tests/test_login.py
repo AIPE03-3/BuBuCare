@@ -4,6 +4,7 @@
 
 from backend.core.auth import decode_access_token
 from backend.core.models import User
+from backend.core.security import hash_password
 
 
 def test_login_correct_credentials_returns_token(client):
@@ -56,3 +57,30 @@ def test_login_updates_last_login_time(client, db_session):
     db_session.expire_all()  # 清掉 session 快取，強制重新從 DB 讀最新值
     after = db_session.query(User).filter(User.employee_id == "alice").first()
     assert after.last_login_time is not None
+
+
+def test_login_response_contains_must_change_password(client):
+    # 種子帳號 alice 的 must_change_password 是 False，登入回應要帶出來
+    response = client.post("/login", data={"username": "alice", "password": "secret123"})
+    assert response.json()["must_change_password"] is False
+
+
+def test_login_new_account_must_change_password_true(client, db_session):
+    # 沒指定 must_change_password 的新帳號（模型預設 True）→ 登入回應是 true
+    db_session.add(User(employee_id="E777", full_name="新人",
+                        password=hash_password("temp66"), role="staff"))
+    db_session.commit()
+    response = client.post("/login", data={"username": "E777", "password": "temp66"})
+    assert response.json()["must_change_password"] is True
+
+
+def test_login_inactive_account_returns_401_with_same_message(client, db_session):
+    # 停用帳號登入 → 401，且訊息與帳密錯誤完全相同（不透露帳號被停用）
+    alice = db_session.query(User).filter(User.employee_id == "alice").first()
+    alice.is_active = False
+    db_session.commit()
+
+    inactive = client.post("/login", data={"username": "alice", "password": "secret123"})
+    wrong_pw = client.post("/login", data={"username": "boss", "password": "wrongpass"})
+    assert inactive.status_code == 401
+    assert inactive.json()["detail"] == wrong_pw.json()["detail"]
