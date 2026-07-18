@@ -34,3 +34,5 @@ CLAUDE.md
 
 # 本機 Docker 版本覆蓋（只為了繞開個人環境的相容性問題，不影響 docker-compose.yml 主檔）
 docker-compose.override.yml
+
+gcp_vm_environment/.env
