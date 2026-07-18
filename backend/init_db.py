@@ -1,4 +1,4 @@
-"""初始化正式資料庫（PostgreSQL）：建表 → 補舊表欄位 → 種 demo 資料 → 建初始帳號。
+"""初始化正式資料庫（PostgreSQL）：建表 → 種 demo 資料 → 建初始帳號。
 
 可重複執行：已存在的一律略過，不會報錯。
 新環境（組員的機器、驗收主機、未來部署）第一次跑這支就能讓事件流程動起來。
@@ -6,8 +6,6 @@
 用法：
     python -m backend.init_db
 """
-from sqlalchemy import text
-
 from backend.core.database import SessionLocal, Base, engine
 from backend.core.models import Company, Location, Device, Staff, User
 from backend.core.security import hash_password
@@ -17,37 +15,6 @@ def create_tables():
     """建立 models.py 定義的所有表（已存在的不動）。"""
     Base.metadata.create_all(bind=engine)
     print("表建立完成（已存在的不動）")
-
-
-def run_column_migrations():
-    """補齊「舊表」缺的欄位——歷史遺留，全新資料庫上是空轉。
-
-    這幾個欄位（company_id / floor / location_id / notified_at）都是功能做到一半才加的。
-    當初正式 DB 的表已經建好了，create_all 不會回頭改既有的表，只好手寫 ALTER TABLE 補。
-
-    現在 models.py 已完整定義這些欄位，所以：
-      - 全新的 DB：上面 create_tables() 建表時就含這些欄位，這裡的 IF NOT EXISTS 不會做事
-      - 現有的正式 DB：欄位早就補完了，一樣不會做事
-    留著只是為了保護「還沒升級的舊 DB」（例如組員手上的）。等確認大家的 DB 都升級後可整段刪除。
-    """
-    with engine.begin() as conn:
-        conn.execute(text(
-            "ALTER TABLE user_account "
-            "ADD COLUMN IF NOT EXISTS company_id INT NOT NULL DEFAULT 1"
-        ))
-        conn.execute(text(
-            "ALTER TABLE locations "
-            "ADD COLUMN IF NOT EXISTS floor VARCHAR(10)"
-        ))
-        conn.execute(text(
-            "ALTER TABLE detect_events "
-            "ADD COLUMN IF NOT EXISTS location_id INT REFERENCES locations(location_id)"
-        ))
-        conn.execute(text(
-            "ALTER TABLE detect_events "
-            "ADD COLUMN IF NOT EXISTS notified_at TIMESTAMP"
-        ))
-    print("舊表欄位補齊完成（已存在則略過）")
 
 
 def seed_demo_data(db):
@@ -113,7 +80,6 @@ def seed_accounts(db):
 
 if __name__ == "__main__":
     create_tables()
-    run_column_migrations()
 
     db = SessionLocal()
     try:
