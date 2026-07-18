@@ -2,30 +2,41 @@
 import uuid
 from typing import Optional
 from datetime import datetime
-from sqlalchemy import Integer, String, DateTime, Float, Text, ForeignKey, Enum
+from sqlalchemy import Integer, String, DateTime, Float, Text, ForeignKey, Enum, Boolean
 from sqlalchemy.orm import mapped_column, Mapped, relationship  # 新版 SQLAlchemy 的欄位寫法，可以標記型別
 from backend.core.database import Base
 
 class User(Base):  # 對應資料庫裡的 user_account 表
     __tablename__ = "user_account"
 
-    # Mapped[int] 告訴 Python「這個欄位是整數」，autoincrement=True 表示 id 自動從 1 累加
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Mapped[str] 告訴 Python「這個欄位是字串」，String(100) 限制最多 100 個字元
-    # nullable=False 表示這個欄位不能是空的，一定要有值
-    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    # 登入用的員工編號（機構既有人資編號），取代原本使用者自取的 name
+    employee_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
 
-    # String(255) 給密碼雜湊值足夠空間（bcrypt 結果大約 60 字元，255 是安全上限）
+    # 真實姓名，顯示用
+    full_name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # String(255) 給密碼雜湊值足夠空間（bcrypt 結果大約 60 字元）
     password: Mapped[str] = mapped_column(String(255), nullable=False)
 
-    # email 也不能重複，每個帳號一個 email
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # 不再是找回密碼的管道，改選填；有填仍不可重複
+    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
 
-    # default="staff" 表示新帳號預設是一般員工，除非明確指定 admin
-    role: Mapped[str] = mapped_column(String(50), default="staff")
+    # 固定選項欄位比照 status/verdict/severity 慣例：
+    # PostgreSQL 真 ENUM、SQLite 用 CHECK 約束擋非法值
+    role: Mapped[str] = mapped_column(
+        Enum("staff", "admin", name="user_role", create_constraint=True),
+        default="staff", nullable=False,
+    )
 
-    # Optional 表示這個欄位可以是空的（新帳號還沒登入過，沒有紀錄）
+    # admin 開的新帳號預設要求首次登入改密碼；種子帳號由種子腳本設 False
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # 軟刪除：停用帳號設 False，不真的刪資料（員編不可重用，資料留著可回溯）
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # 可以是空的（新帳號還沒登入過）
     last_login_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # 所屬機構。default=1 表示新帳號自動掛預設公司，多租戶邏輯未來才做

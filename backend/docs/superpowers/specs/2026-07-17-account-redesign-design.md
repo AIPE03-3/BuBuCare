@@ -142,7 +142,7 @@ TDD。受影響與新增的測試：
 ## 已記入 `backend/docs/future-work.md`，本輪不處理
 
 - 事件判定／結案要記錄操作者（稽核追蹤）
-- `user_account` 與 `staff` 是否該建立關聯
+- `staff` 表停用、處理人改用 `user_account`（2026-07-17 已決定方向，本輪不動）
 - 初始 admin 密碼改用環境變數指定
 - 多租戶「選機構登入」
 - 軟刪除的復職端點（把 `is_active` 改回 `True`）

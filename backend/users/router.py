@@ -23,9 +23,10 @@ router = APIRouter()
 # 前端送來 {"username": "alice", "password": "1234"}
 # FastAPI 會自動比對這個格式
 class RegisterRequest(BaseModel):
-    username: str
+    employee_id: str
+    full_name: str
     password: str
-    email: str
+    email: str | None = None  # 改選填：不再是找回密碼的管道
 
 
 # ════════════════════════════════════════════════════════
@@ -36,20 +37,21 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)):
     # body        → FastAPI 自動把前端送來的 JSON 解析成 RegisterRequest 物件
     # Depends(get_db) → 執行這個函式前，先幫我開一個資料庫連線，用完自動關
 
-    # 查資料庫有沒有同名帳號
-    existing = db.query(User).filter(User.name == body.username).first()
+    # 查資料庫有沒有同員編的帳號
+    existing = db.query(User).filter(User.employee_id == body.employee_id).first()
     if existing:
-        raise HTTPException(status_code=400, detail="帳號已存在")
+        raise HTTPException(status_code=400, detail="員編已存在")
 
     new_user = User(
-        name=body.username,
+        employee_id=body.employee_id,
+        full_name=body.full_name,
         password=hash_password(body.password),  # 密碼雜湊後才存，不存明文
         email=body.email,
         role="staff"
     )
     db.add(new_user)
     db.commit()
-    return {"message": f"帳號 {body.username} 建立成功"}
+    return {"message": f"帳號 {body.employee_id} 建立成功"}
 
 
 # ════════════════════════════════════════════════════════
@@ -60,7 +62,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     # OAuth2...Form → FastAPI 自動從 form body 抓 username、password
 
     # 到資料庫查有沒有這個帳號
-    user = db.query(User).filter(User.name == form_data.username).first()
+    user = db.query(User).filter(User.employee_id == form_data.username).first()
 
     # 帳號不存在，或密碼比對失敗 → 回傳 401
     if not user or not verify_password(form_data.password, user.password):
@@ -70,9 +72,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     user.last_login_time = datetime.now(timezone.utc)
     db.commit()
 
-    # 驗證通過 → 產生 JWT token，把帳號名稱和角色包進去
+    # 驗證通過 → 產生 JWT token，把員編、姓名和角色包進去
     # 之後每次請求帶著這個 token，伺服器就知道你是誰
-    access_token = create_access_token(data={"sub": user.name, "role": user.role})
+    access_token = create_access_token(
+        data={"sub": user.employee_id, "full_name": user.full_name, "role": user.role})
 
     # 回傳 token 給前端，前端要把它存起來，之後每次請求放在 Header 裡
     return {"access_token": access_token, "token_type": "bearer"}
@@ -84,12 +87,17 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @router.get("/me")
 def read_me(current_user: dict = Depends(get_current_user)):
     # Depends(get_current_user) → 執行這個路由前，先去 dependencies.py 驗證 token
-    #   token 合法 → current_user 是解出來的資料，例如 {"sub": "alice", "role": "staff"}
+    #   token 合法 → current_user 是解出來的資料，例如 {"sub": "alice", "full_name": "愛麗絲", "role": "staff"}
     #   token 無效 → 直接回 401，這個函式根本不會被執行
     #
     # 這就是 FastAPI + JWT 的核心：
     #   路由本身不管驗證邏輯，驗證交給 Depends，通過了才進來
-    return {"username": current_user["sub"], "role": current_user["role"]}
+    # current_user 是解出來的 JWT payload，三個欄位都在裡面，不用查資料庫
+    return {
+        "employee_id": current_user["sub"],
+        "full_name": current_user["full_name"],
+        "role": current_user["role"],
+    }
 
 
 # ════════════════════════════════════════════════════════

@@ -31,5 +31,5 @@ def test_種子資料存在(db_session):
 
 
 def test_既有帳號自動掛預設公司(db_session):
-    alice = db_session.query(User).filter_by(name="alice").first()
+    alice = db_session.query(User).filter_by(employee_id="alice").first()
     assert alice.company_id == 1

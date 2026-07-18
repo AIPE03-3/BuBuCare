@@ -20,7 +20,7 @@ def _staff_token(client):
 
 def test_admin_can_delete_existing_user(client, db_session):
     # admin 刪除存在的使用者 → 應該回傳 200
-    alice = db_session.query(User).filter(User.name == "alice").first()
+    alice = db_session.query(User).filter(User.employee_id == "alice").first()
     token = _admin_token(client)
     response = client.delete(f"/users/{alice.id}", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -28,7 +28,7 @@ def test_admin_can_delete_existing_user(client, db_session):
 
 def test_staff_cannot_delete_user_returns_403(client, db_session):
     # staff 嘗試刪人 → 沒有權限，應該回傳 403
-    alice = db_session.query(User).filter(User.name == "alice").first()
+    alice = db_session.query(User).filter(User.employee_id == "alice").first()
     token = _staff_token(client)
     response = client.delete(f"/users/{alice.id}", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 403
@@ -43,6 +43,6 @@ def test_delete_nonexistent_user_returns_404(client):
 
 def test_delete_without_token_returns_401(client, db_session):
     # 沒有帶 token 就刪 → 應該回傳 401
-    alice = db_session.query(User).filter(User.name == "alice").first()
+    alice = db_session.query(User).filter(User.employee_id == "alice").first()
     response = client.delete(f"/users/{alice.id}")
     assert response.status_code == 401
