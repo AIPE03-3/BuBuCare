@@ -10,7 +10,7 @@ def test_is_delivered_notified有值即已送達(db_session, make_event):
 
 
 def test_is_delivered_status非pending即已送達(db_session, make_event):
-    event = make_event(status="in_progress", verdict="true_alarm", staff_id=1)
+    event = make_event(status="in_progress", verdict="true_alarm", verdict_by="alice")
     assert is_delivered(db_session, event.event_id) is True
 
 
@@ -86,7 +86,7 @@ def test_watch_delivery_已被處理_不重推(make_event, session_factory):
     import asyncio
     from backend.events.service import watch_delivery
     from backend.events.sse import pool
-    event = make_event(status="in_progress", verdict="true_alarm", staff_id=1)
+    event = make_event(status="in_progress", verdict="true_alarm", verdict_by="alice")
     q = pool.register()
     try:
         asyncio.run(watch_delivery(

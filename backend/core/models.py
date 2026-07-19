@@ -81,7 +81,7 @@ class Device(Base):  # 攝影機裝置
     location: Mapped[Optional["Location"]] = relationship("Location")
 
 
-class Staff(Base):  # 照護員：被指派去現場處理的人（跟 user_account 的登入帳號是兩回事）
+class Staff(Base):
     __tablename__ = "staff"
 
     staff_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -116,7 +116,6 @@ class DetectEvent(Base):  # 跌倒事件主表
     detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     # 前端第一次回報收到（ack）的時間；NULL = 尚未收到，重推機制據此判斷要不要補推
     notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    staff_id: Mapped[Optional[int]] = mapped_column(ForeignKey("staff.staff_id"), nullable=True)  # 判真跌倒時指派
     # 誰點的誰負責：兩欄都存 user_account 的員編（JWT 的 sub），不是 staff 表的數字 id
     verdict_by: Mapped[Optional[str]] = mapped_column(
         String(50), ForeignKey("user_account.employee_id"), nullable=True
