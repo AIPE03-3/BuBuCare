@@ -174,6 +174,7 @@ async def resolve_event(
         raise HTTPException(status_code=409, detail="只有處理中的事件可以結案")
 
     event.status = "resolved"
+    event.resolved_by = current_user["sub"]  # 誰按結案誰負責
     db.commit()
     db.refresh(event)
 
