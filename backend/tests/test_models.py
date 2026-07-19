@@ -18,7 +18,9 @@ def test_建立事件_預設狀態是pending(db_session):
     assert event.event_id  # UUID 字串自動產生
     assert event.status == "pending"   # 後端預設，不靠外部指定
     assert event.verdict is None       # 還沒人判定
-    assert event.staff_id is None      # 還沒指派照護員
+    assert event.verdict_by is None    # 還沒人按判定（Task 1 新增）
+    assert event.resolved_by is None   # 還沒人按結案（Task 1 新增）
+    assert event.staff_id is None      # 舊欄位，Task 4 移除
 
 
 def test_種子資料存在(db_session):

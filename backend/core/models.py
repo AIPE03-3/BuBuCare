@@ -117,6 +117,13 @@ class DetectEvent(Base):  # 跌倒事件主表
     # 前端第一次回報收到（ack）的時間；NULL = 尚未收到，重推機制據此判斷要不要補推
     notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     staff_id: Mapped[Optional[int]] = mapped_column(ForeignKey("staff.staff_id"), nullable=True)  # 判真跌倒時指派
+    # 誰點的誰負責：兩欄都存 user_account 的員編（JWT 的 sub），不是 staff 表的數字 id
+    verdict_by: Mapped[Optional[str]] = mapped_column(
+        String(50), ForeignKey("user_account.employee_id"), nullable=True
+    )  # 判定者：按下 verdict 的人；真跌倒、誤報都記
+    resolved_by: Mapped[Optional[str]] = mapped_column(
+        String(50), ForeignKey("user_account.employee_id"), nullable=True
+    )  # 結案者：按下 resolve 的人；誤報一鍵結案時與 verdict_by 同人
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False, default=1)
 
     yolo_score: Mapped[Optional[float]] = mapped_column(Float)      # 該事件 YOLO 打的分數
