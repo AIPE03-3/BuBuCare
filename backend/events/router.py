@@ -111,9 +111,9 @@ def list_staff(
 
 
 # ── PATCH /events/{id}/verdict 收到的 JSON 格式 ──
+# 不收任何「人」的欄位：誰點的誰負責，操作員由後端從 JWT 記錄
 class VerdictRequest(BaseModel):
     verdict: Literal["true_alarm", "false_alarm"]
-    staff_id: Optional[int] = None  # 只有判真跌倒時必填
 
 
 # ════════════════════════════════════════════════════════
@@ -134,20 +134,17 @@ async def verdict_event(
     if event.status != "pending":
         raise HTTPException(status_code=409, detail="事件已被判定過")
 
+    operator = current_user["sub"]  # JWT 的 sub 就是員編：誰按的誰負責
     if body.verdict == "true_alarm":
-        # 真跌倒：必須同時指派照護員
-        if body.staff_id is None:
-            raise HTTPException(status_code=422, detail="判定真跌倒必須指派照護員（staff_id）")
-        staff = db.query(Staff).filter(Staff.staff_id == body.staff_id).first()
-        if staff is None:
-            raise HTTPException(status_code=400, detail=f"照護員 {body.staff_id} 不存在")
         event.status = "in_progress"
         event.verdict = "true_alarm"
-        event.staff_id = body.staff_id
+        event.verdict_by = operator
     else:
-        # 誤報：不用派人，直接結案（staff_id 留空）
+        # 誤報：判定即結案，同一個按鈕同時記判定者與結案者
         event.status = "resolved"
         event.verdict = "false_alarm"
+        event.verdict_by = operator
+        event.resolved_by = operator
 
     db.commit()
     db.refresh(event)
