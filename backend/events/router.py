@@ -13,7 +13,7 @@ from backend.core.auth import decode_access_token
 from backend.core.config import EVENT_API_KEY
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user
-from backend.core.models import DetectEvent, Device, Staff
+from backend.core.models import DetectEvent, Device
 from backend.events.service import handle_incoming_event, serialize_event, watch_delivery, DeviceNotFoundError
 from backend.events.sse import pool, format_sse
 
@@ -94,20 +94,6 @@ def list_events(
         .all()
     )
     return [serialize_event(event, device) for event, device in rows]
-
-
-# ════════════════════════════════════════════════════════
-# GET /staff（登入即可）：照護員名單（指派下拉選單用）
-# ════════════════════════════════════════════════════════
-@router.get("/staff")
-def list_staff(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return [
-        {"staff_id": s.staff_id, "staff_name": s.staff_name}
-        for s in db.query(Staff).order_by(Staff.staff_id).all()
-    ]
 
 
 # ── PATCH /events/{id}/verdict 收到的 JSON 格式 ──
