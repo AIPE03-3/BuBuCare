@@ -1,10 +1,8 @@
 import type { ModelVersion } from '../types';
-import { modelVersionsMock } from './mock/modelVersions';
 
-// 模型版本管理（MLOps 6-3~6-6）：後端尚無對應 API，本輪全走 mock，
-// 介面維持 async 回傳，之後只需替換函式內部實作即可接上真實 API。
+// 假資料已移除：模型版本清單回傳空陣列，待後端對應 API 就緒後改為實際呼叫。
 export async function getModelVersions(): Promise<ModelVersion[]> {
-  return modelVersionsMock;
+  return [];
 }
 
 export async function triggerManualFineTune(): Promise<void> {

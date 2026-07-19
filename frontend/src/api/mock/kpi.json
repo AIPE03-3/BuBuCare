@@ -1,8 +1,0 @@
-{
-  "pending_events": 3,
-  "false_positive_rate": 5,
-  "env_score_avg": 80,
-  "env_score_threshold": 60,
-  "hnp_count": 83,
-  "hnp_threshold": 100
-}

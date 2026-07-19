@@ -5,6 +5,29 @@ export const STATUS_LABEL: Record<EventStatus, string> = {
   pending: '待處理', in_progress: '處理中', resolved: '已結案',
 };
 
+// 事件類型：fall＝跌倒偵測；hazard＝物件偵測（系統抓到危險物品，UI 以「潛在危險」標示）。
+// 顯示文字一律走 EVENT_TYPE_LABEL，元件外禁止另寫死「跌倒」等字樣。
+export type EventType = 'fall' | 'hazard';
+export const EVENT_TYPE_LABEL: Record<EventType, string> = {
+  fall: '跌倒',
+  hazard: '潛在危險',
+};
+
+// 潛在危險（物件偵測）可辨識的危險物品類型；跌倒事件此欄為 null。
+export type HazardObject = '刀具' | '熱源' | '藥品' | '玻璃碎片' | '積水' | '其他';
+export const HAZARD_OBJECTS: HazardObject[] = ['刀具', '熱源', '藥品', '玻璃碎片', '積水', '其他'];
+
+// 通報狀態：獨立於事件生命週期 status（pending/in_progress/resolved）之外的上報流程追蹤。
+// 初報→續報→結報。null＝尚未通報。後端目前無此欄位（demo 前端記憶體維護），串接後改由後端下發。
+export type ReportStage = 'initial' | 'follow_up' | 'final';
+
+export const REPORT_STAGE_LABEL: Record<ReportStage, string> = {
+  initial: '已初報', follow_up: '已續報', final: '已結報',
+};
+
+// 通報狀態按鈕依此順序呈現，元件外禁止另寫死順序。
+export const REPORT_STAGES: ReportStage[] = ['initial', 'follow_up', 'final'];
+
 // 即時監控頁：偵測到疑似跌倒事件的鏡頭縮圖標籤（非 EventStatus，獨立於 STATUS_LABEL 之外）
 export const DETECTING_LABEL = '偵測中';
 
@@ -29,6 +52,153 @@ export const EVENT_CENTER_LIVE_FILTERS: EventFilter[] = ['all', 'in_progress', '
 
 export type FalseReportLabel = '坐地' | '伸展' | '彎腰' | '攙扶' | '其他';
 
+// ── 生成通報單（IA：生成通報單頁）───────────────────────────────────────
+// 官方長照事件通報單欄位。選項清單集中此處，禁止散落各元件硬編碼。
+export type ReportGender = '男' | '女';
+export const REPORT_GENDERS: ReportGender[] = ['男', '女'];
+
+export type ReportWelfare = '低收入戶' | '中低收入戶' | '一般戶';
+export const REPORT_WELFARE_OPTIONS: ReportWelfare[] = ['低收入戶', '中低收入戶', '一般戶'];
+
+export const REPORT_DISTRICTS = [
+  '南港區', '內湖區', '中正區', '萬華區', '大安區', '松山區',
+  '文山區', '信義區', '士林區', '北投區', '中山區', '大同區',
+] as const;
+export type ReportDistrict = (typeof REPORT_DISTRICTS)[number];
+
+export type ReportLocation = '案家' | '案家附近' | '醫院' | '陪同外出活動途中' | '其他';
+export const REPORT_LOCATIONS: ReportLocation[] = [
+  '案家', '案家附近', '醫院', '陪同外出活動途中', '其他',
+];
+
+// 影響程度：有傷害（分五級）或無傷害。每項附官方說明文字。
+export type ReportImpact = '有傷害' | '無傷害';
+export type ReportInjuryLevel = '死亡' | '極重度' | '重度' | '中度' | '輕度';
+export const REPORT_INJURY_LEVELS: { value: ReportInjuryLevel; desc: string }[] = [
+  { value: '死亡', desc: '個案死亡。' },
+  { value: '極重度', desc: '個案永久性殘障或永久性功能障礙（如肢障、腦傷等）。' },
+  {
+    value: '重度',
+    desc: '個案除需額外的探視、評估或觀察外，還需手術、住院或延長住院處理（如骨折或氣胸等需延長住院）。',
+  },
+  {
+    value: '中度',
+    desc: '個案除需額外的探視、評估或處置，如量血壓、脈搏、血糖之次數比平常之次數多，照X光、抽血、驗尿檢查或包紮、縫合、止血治療、1~2 劑藥物治療。',
+  },
+  {
+    value: '輕度',
+    desc: '事件雖然造成傷害，但不需或只需稍微處理，不需增加例行照護。如表皮泛紅、擦傷、瘀青等。',
+  },
+];
+export const REPORT_NO_INJURY_DESC = '事件發生在個案身上，但是沒有造成任何的傷害。';
+
+export const REPORT_SERVICE_PERSONNEL = [
+  '專業人員', '居服員', '交通接送提供人員', '喘息服務提供人員', '輔具評估人員', '其他',
+] as const;
+export type ReportServicePersonnel = (typeof REPORT_SERVICE_PERSONNEL)[number];
+
+// 通報別（表單最上方，單選）：本次通報屬初報／續報／結報。
+export const REPORT_TYPES = ['初報', '續報', '結報'] as const;
+export type ReportType = (typeof REPORT_TYPES)[number];
+
+// 通報別 → 事件通報狀態的唯一對照。儲存通報單時依此把表單 reportType 轉成事件 report_stage，
+// 禁止在元件內散落硬編碼（配合 REPORT_STAGE_LABEL：initial→已初報／follow_up→已續報／final→已結報）。
+export const REPORT_TYPE_TO_STAGE: Record<ReportType, ReportStage> = {
+  初報: 'initial',
+  續報: 'follow_up',
+  結報: 'final',
+};
+
+// 七、事件內容（一）服務過程（可複選）
+export const REPORT_SERVICE_PROCESS = [
+  '送醫事件', '照顧意外事件', '藥物事件', '治安事件',
+  '傷害行為事件', '公共意外', '違反專業倫理守則者', '其他',
+] as const;
+export type ReportServiceProcess = (typeof REPORT_SERVICE_PROCESS)[number];
+
+// 七、事件內容（二）不限服務時段，知悉時即通報（可複選）
+export const REPORT_IMMEDIATE_NOTIFY = [
+  '家庭暴力事件暨性侵害責任通報', '自殺（含意圖）、自傷事件', '傳染病通報',
+] as const;
+export type ReportImmediateNotify = (typeof REPORT_IMMEDIATE_NOTIFY)[number];
+
+// 九、此事件發生後的立即處理（可複選）。'無介入' 另有子選項見 REPORT_NO_INTERVENTION。
+export const REPORT_HANDLING = [
+  '無介入', '送醫治療', '予以病人家屬慰問及支持', '通報警政機關',
+  '已於24小時內完成家庭暴力暨性侵害事件責任通報', '已通報自殺防治中心', '其他',
+] as const;
+export type ReportHandling = (typeof REPORT_HANDLING)[number];
+
+// 九、「無介入」的子選項（可複選）
+export const REPORT_NO_INTERVENTION = ['不需任何處理', '病人拒絕處置', '其他'] as const;
+export type ReportNoIntervention = (typeof REPORT_NO_INTERVENTION)[number];
+
+// 通報單表單狀態。日期與地點於進頁時由事件自動帶入，其餘手填（事件無個案主檔資料）。
+export interface ReportFormData {
+  reportType: ReportType | null;
+  caseName: string;
+  caseIdNumber: string;
+  gender: ReportGender | null;
+  birthday: string;
+  welfare: ReportWelfare | null;
+  eventYear: string;
+  eventMonth: string;
+  eventDay: string;
+  eventHour: string;
+  eventMinute: string;
+  district: ReportDistrict | null;
+  location: ReportLocation | null;
+  locationNote: string;
+  impact: ReportImpact | null;
+  injuryLevel: ReportInjuryLevel | null;
+  serviceUnit: string;
+  servicePersonnel: ReportServicePersonnel[];
+  servicePersonnelNote: string;
+  // 七、事件內容
+  serviceProcess: ReportServiceProcess[];
+  serviceProcessNote: string;
+  immediateNotify: ReportImmediateNotify[];
+  // 八、事發經過說明
+  eventNarrative: string;
+  // 九、立即處理
+  handling: ReportHandling[];
+  handlingNote: string;
+  noIntervention: ReportNoIntervention[];
+  noInterventionNote: string;
+  // 十、通報者資料
+  reporterName: string;
+  reporterUnit: string;
+  reporterTitle: string;
+  // 十一、通報日期（進頁自動帶入當下時間）
+  reportYear: string;
+  reportMonth: string;
+  reportDay: string;
+  reportHour: string;
+  reportMinute: string;
+}
+
+// 已儲存的通報單。demo 存 localStorage（見 api/reports.ts），未來改由後端下發（GET /events/{id}/report）。
+export interface SavedReport {
+  eventId: string;
+  form: ReportFormData;
+  savedAt: string; // ISO，儲存當下時間
+}
+
+// 警示處理紀錄（首頁右側 log）：每則全螢幕警示被「接手」／標記「誤報」，或偵測到潛在危險，轉成一筆 log。
+export type AlertLogAction = 'acknowledged' | 'false_alarm' | 'hazard_detected';
+export const ALERT_LOG_ACTION_LABEL: Record<AlertLogAction, string> = {
+  acknowledged: '接手', false_alarm: '誤報', hazard_detected: '潛在危險',
+};
+
+export interface AlertLogEntry {
+  id: string;
+  eventId: string;
+  cameraName: string;   // 事發鏡頭：區域（名稱）
+  action: AlertLogAction;
+  hazardObject: HazardObject | null; // hazard_detected 才有值，其餘 null
+  at: string;           // ISO，處理當下時間
+}
+
 // 鏡頭串流來源：目前 mock 資料僅有 null（無串流來源）這一種情境。
 // 'snapshot'／'hls' 為後續輪次接上真實影像來源時使用，本輪只定義型別、不實作渲染。
 export type StreamSource =
@@ -46,7 +216,7 @@ export interface Camera {
   zone: string;              // 活動室A（區域分組，無樓層層）
   floor: string | null;      // demo 一律不顯示
   stream_url: string | null; // 串流協定未定，先預留（既有欄位，勿動——FullScreenAlert/SuppressConfirmModal 仍依賴此欄位）
-  stream_source: StreamSource; // 畫面渲染來源；本輪 mock 資料一律為 null，見 CameraCard 渲染分支
+  stream_source: StreamSource; // 畫面渲染來源；本輪 mock 資料一律為 null，見 CameraDetailModal 渲染分支
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷（online 布林可由 status==='online' 導出）
 }
 
@@ -59,18 +229,24 @@ export interface VlmResult {
 
 export interface CareEvent {
   id: string;
-  event_type: 'fall';
+  event_type: EventType;
+  hazard_object: HazardObject | null; // 潛在危險偵測到的物品類型；跌倒事件為 null
   camera: Camera;
   occurred_at: string;       // ISO
   status: EventStatus;
+  report_stage: ReportStage | null;  // 通報狀態（初報/續報/結報）；null＝尚未通報。demo 前端維護，見 REPORT_STAGE_LABEL
   confidence: number;        // YOLO 初篩
   vlm_result: VlmResult | null;  // ★ null＝YOLO 高分直通，UI 需顯示「YOLO 高信心直通」且不得噴錯
   verdict: EventVerdict;     // 判定結果，'false_alarm'＝誤報，UI「誤報」標籤依此判斷（非 status）
+  false_alarm_label: FalseReportLabel | null;  // 標記誤報時選的類型（坐地/伸展…）；非誤報為 null。誤報紀錄詳情頁「事件」欄顯示此值
+  false_alarm_note: string | null;   // 標記誤報時填的備註（選填）；空白或非誤報為 null。誤報紀錄詳情頁「備註」欄顯示此值
   clip_path: string | null;      // ← 事件影片片段路徑，詳情頁播放器用
   snapshot_path: string | null;  // ← 事件快照圖片路徑，卡片縮圖／彈窗用
   assignee: string | null;
   notified_to: string | null;
   ack_deadline: string | null;   // 接手時限（ISO），pending 時有值，用於逾時倒數
+  resolve_deadline: string | null; // 接手後須結案的 24 小時時限（ISO）；接手當下寫入＝now+24h，null＝尚未接手。每筆各自獨立
+  follow_up_deadline: string | null; // 續報期限（ISO）：初報起算 5 個工作日（排除週末），未初報＝null。以日期顯示，非倒數
   escalated_to: string | null;   // 升級通知對象；待班表系統導入後帶入實際值班人員，demo 暫以當日值班組長代替
   alerted_at: string | null;     // 曾以全螢幕警示呈現的時間（ISO），用於「⚠ 曾全螢幕警示」持久徽章
   stage_latency_ms?: { capture: number; inference: number; emit: number }; // 預留，本期不顯示
@@ -97,35 +273,6 @@ export interface EventHistoryStatPoint {
   false_alarm: number; // 誤報件數
 }
 
-// 環境安全評分（IA 4-1/4-2）：四向度定案 2026-07-12（地面30/通道30/危險物品20/照明20，不含安全設施完整性）。
-// 後端 env_safety_scores 表尚未建立，另一 branch 目前僅二分文字判斷、無分數（見 04_後端現況與規格落差.md A-6/A-7），
-// 本輪全走 mock，型別照規格 schema 設計，之後接真分數只需換 api/envScores.ts 內部實作。
-export type EnvScoreLevel = '良好' | '注意' | '警示' | '危險';
-
-export interface EnvDimensionScore {
-  score: number;
-  max: number;
-  level: EnvScoreLevel;
-}
-
-export interface EnvScore {
-  score_id: string;
-  camera: Camera;
-  total_score: number | null;       // null＝後端僅二分文字時的過渡狀態
-  dimensions: {
-    floor: EnvDimensionScore;       // 地面地板，滿分 30
-    pathway: EnvDimensionScore;     // 通道暢通性，滿分 30
-    hazard: EnvDimensionScore;      // 潛在危險物品，滿分 20
-    lighting: EnvDimensionScore;    // 照明條件，滿分 20
-  } | null;
-  level: EnvScoreLevel | null;
-  overall_description: string | null;
-  risk_factors: string[];           // 格式未定，暫定 string[]，待後端 JSONB 實際格式確認
-  score_drop: number | null;        // 計算基準未定，待後端 score_drop 定義確認
-  online: boolean;
-  assessed_at: string;              // ISO 字串
-}
-
 // Hard Negative Pool（MLOps 6-2）
 // ⚠ 語意提醒：MVP 沿用 02 規格「人工標記誤報」語意；後端實際現況為 YOLO 信心自動收集、存檔案系統，
 //    與人工標記無關，此落差尚未拍板（見 04 檔 H 段），正式串接前需重新確認。
@@ -142,27 +289,12 @@ export interface HardNegativeItem {
   clip_path: string | null; // 影片回放用
 }
 
-// 環境安全評分歷史（IA 7-2）：逐筆聚合時間序列，形狀不同於上面「每台最新一筆」的 EnvScore。
-// EnvSafetyGrade 與 EnvScoreLevel 同義（四值一致），以別名維持全案單一定義、避免兩套同義型別。
-export type EnvSafetyGrade = EnvScoreLevel;
-
-export interface EnvSafetyScore {
-  score_id: string;
-  device_id: number;
-  total_score: number;       // 0-100，四向度加總（地面30/通道30/危險物品20/照明20，2026-07-12定案）
-  grade: EnvSafetyGrade;     // 前端依 total_score 對照門檻算出（getEnvScoreLevel），非後端原始欄位
-  score_drop: number | null; // 較前次變化；null＝無前次可比較（如離線後首筆）
-  assessed_at: string;       // ISO
-}
-
 // 時間區間下拉：對應聚合粒度（≤24h 原始15分級距／1–7天每小時最低分／>7天每日最低分，皆取最低分非平均）。
 export type EnvHistoryRange = 'today' | '7d' | '30d' | 'custom';
 
 export interface KpiSummary {
   pending_events: number;
   false_positive_rate: number;
-  env_score_avg: number;
-  env_score_threshold: number;   // 低於此值數字轉 --danger
   hnp_count: number;
   hnp_threshold: number;         // 達標數字轉 --warning
 }
@@ -192,6 +324,21 @@ export interface AuthProvider {
   verifyCode?(email: string, code: string): Promise<AuthSession>;
   loginWithPassword?(employeeId: string, password: string): Promise<AuthSession>;
   logout(): void;
+}
+
+// 角色顯示文字（管理使用者頁、UserMenu 共用），元件外禁止另寫死。
+export const ROLE_LABEL: Record<Role, string> = {
+  admin: '系統管理者',
+  staff: '護理站值班人員',
+};
+
+// 管理使用者頁（🔒 admin-only）：demo 以假資料呈現。密碼為 write-only，不納入本型別。
+// 後端 /users 就緒後改由 API 下發（密碼一律後端雜湊，前端不留存）。
+export interface ManagedUser {
+  id: string;
+  name: string;
+  employee_code: string; // 工號
+  role: Role;
 }
 
 // 通報紀錄頁（IA 7-3，🔒 admin-only）：Web Push 逐筆送達紀錄。
