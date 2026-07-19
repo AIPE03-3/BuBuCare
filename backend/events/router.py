@@ -35,9 +35,7 @@ class EventCreateRequest(BaseModel):
     detected_at: datetime
     snapshot_path: Optional[str] = None
     yolo_score: Optional[float] = None
-    yolo_threshold: Optional[float] = None
     vlm_summary: Optional[str] = None
-    severity: Optional[Literal["low", "medium", "high"]] = None
 
 
 # ════════════════════════════════════════════════════════

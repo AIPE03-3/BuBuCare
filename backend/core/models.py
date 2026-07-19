@@ -120,11 +120,7 @@ class DetectEvent(Base):  # 跌倒事件主表
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False, default=1)
 
     yolo_score: Mapped[Optional[float]] = mapped_column(Float)      # 該事件 YOLO 打的分數
-    yolo_threshold: Mapped[Optional[float]] = mapped_column(Float)  # 當時的門檻值（門檻日後會調，回訓分析要知道）
     vlm_summary: Mapped[Optional[str]] = mapped_column(Text)        # VLM 情境描述
-    severity: Mapped[Optional[str]] = mapped_column(
-        Enum("low", "medium", "high", name="event_severity", create_constraint=True)
-    )
 
     # 顯示事件位置走這個關聯（凍住的 location_id），不要繞去 device.location（那是裝置現況）
     location: Mapped[Optional["Location"]] = relationship("Location")

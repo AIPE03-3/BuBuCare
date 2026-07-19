@@ -35,9 +35,7 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "staff_id": event.staff_id,
         "company_id": event.company_id,
         "yolo_score": event.yolo_score,
-        "yolo_threshold": event.yolo_threshold,
         "vlm_summary": event.vlm_summary,
-        "severity": event.severity,
     }
 
 
