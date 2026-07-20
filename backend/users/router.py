@@ -152,6 +152,20 @@ def change_my_password(body: ChangePasswordRequest,
     return {"message": "密碼已更新"}
 
 
+# ════════════════════════════════════════════════════════
+# 路由七：GET /users（需 admin；使用者管理名單）
+# ════════════════════════════════════════════════════════
+@router.get("/users")
+def list_users(current_user: dict = Depends(require_admin), db: Session = Depends(get_db)):
+    # 只回未停用帳號：停用的不該出現在管理名單（前端也沒有「停用中」的顯示）
+    users = db.query(User).filter(User.is_active == True).order_by(User.id).all()  # noqa: E712
+    # 白名單式只挑四欄吐出去，回應永遠不會出現 password（連雜湊值都不給）
+    return [
+        {"id": u.id, "employee_id": u.employee_id, "full_name": u.full_name, "role": u.role}
+        for u in users
+    ]
+
+
 class ResetPasswordRequest(BaseModel):
     new_password: str = Field(min_length=6)  # admin 給的新臨時密碼
 
