@@ -152,6 +152,29 @@ def change_my_password(body: ChangePasswordRequest,
     return {"message": "密碼已更新"}
 
 
+class UpdateUserRequest(BaseModel):
+    # 只收 full_name：不收 role（防權限竄改）、不收密碼（重設密碼走專屬端點）
+    full_name: str = Field(min_length=1)
+
+
+# ════════════════════════════════════════════════════════
+# 路由八：PATCH /users/{user_id}（需 admin；改使用者姓名）
+# ════════════════════════════════════════════════════════
+@router.patch("/users/{user_id}")
+def update_user(user_id: int, body: UpdateUserRequest,
+                current_user: dict = Depends(require_admin),
+                db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="找不到使用者")
+
+    user.full_name = body.full_name
+    db.commit()
+    db.refresh(user)
+    return {"id": user.id, "employee_id": user.employee_id,
+            "full_name": user.full_name, "role": user.role}
+
+
 # ════════════════════════════════════════════════════════
 # 路由七：GET /users（需 admin；使用者管理名單）
 # ════════════════════════════════════════════════════════
