@@ -13,6 +13,7 @@ from backend.core.config import SKIP_DB_INIT
 from backend.core.database import Base, engine
 from backend.devices.router import router as device_router
 from backend.events.router import router as event_router
+from backend.reports.router import router as report_router
 from backend.users.router import router as user_router
 
 # 程式啟動時建立所有還不存在的資料表（表名見 core/models.py，例如 user_account）
@@ -37,3 +38,4 @@ app.add_middleware(
 app.include_router(user_router)   # 帳號：register / login / me / delete
 app.include_router(event_router)  # 事件：POST /events、SSE、判定 / 結案
 app.include_router(device_router)  # 裝置：鏡頭清單 / 改名
+app.include_router(report_router)  # 通報單：存 / 查
