@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import SKIP_DB_INIT
 from backend.core.database import Base, engine
+from backend.devices.router import router as device_router
 from backend.events.router import router as event_router
 from backend.users.router import router as user_router
 
@@ -35,3 +36,4 @@ app.add_middleware(
 # ── 掛上各功能的路由 ──────────────────────────────────────
 app.include_router(user_router)   # 帳號：register / login / me / delete
 app.include_router(event_router)  # 事件：POST /events、SSE、判定 / 結案
+app.include_router(device_router)  # 裝置：鏡頭清單 / 改名
