@@ -1,41 +1,48 @@
-import { useState } from 'react';
-import { EventCenterHistory } from './EventCenterHistory';
-import { EventCenterLive } from './EventCenterLive';
+import { useSearchParams } from 'react-router-dom';
+import { EventCenterUnresolved } from './EventCenterUnresolved';
+import { HazardList } from '../components/HazardList';
+import { useEvents } from '../hooks/eventsContext';
 
-type EventCenterMode = 'live' | 'history';
+type EventCenterTab = 'events' | 'hazards';
 
-const MODE_TABS: { value: EventCenterMode; label: string }[] = [
-  { value: 'live', label: '即時處理' },
-  { value: 'history', label: '歷史查詢' },
+const TABS: { value: EventCenterTab; label: string }[] = [
+  { value: 'events', label: '事件' },
+  { value: 'hazards', label: '潛在危險' },
 ];
 
 export function EventCenter() {
-  const [mode, setMode] = useState<EventCenterMode>('live');
+  // 分頁走網址參數（?tab=hazards），讓外部連結（如首頁「排除危險」鈕）可直接深連到指定分頁。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: EventCenterTab = searchParams.get('tab') === 'hazards' ? 'hazards' : 'events';
+  const { hazardEvents } = useEvents();
+  // 潛在危險頁只列未排除者；已排除移入歷史「已排除危險」頁。
+  const activeHazards = hazardEvents.filter((e) => e.status !== 'resolved');
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-[var(--text-primary)]">事件中心</h1>
-      </div>
+      <h1 className="text-xl font-semibold text-[var(--text-primary)]">事件中心</h1>
 
       <div className="flex gap-1 border-b border-[var(--border)]">
-        {MODE_TABS.map((tab) => (
+        {TABS.map((t) => (
           <button
-            key={tab.value}
+            key={t.value}
             type="button"
-            onClick={() => setMode(tab.value)}
+            onClick={() => setSearchParams(t.value === 'events' ? {} : { tab: t.value })}
             className={`px-4 py-2 text-sm transition-colors duration-150 ${
-              mode === tab.value
+              tab === t.value
                 ? 'border-b-2 border-[var(--brand)] font-medium text-[var(--brand)]'
                 : 'text-[var(--text-secondary)]'
             }`}
           >
-            {tab.label}
+            {t.label}
           </button>
         ))}
       </div>
 
-      {mode === 'live' ? <EventCenterLive /> : <EventCenterHistory />}
+      {tab === 'events' && <EventCenterUnresolved />}
+      {tab === 'hazards' && (
+        <HazardList hazards={activeHazards} emptyMessage="目前沒有潛在危險" />
+      )}
     </div>
   );
 }

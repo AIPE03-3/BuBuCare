@@ -19,8 +19,8 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
 
 export function NotificationDetailModal({ event, onClose }: NotificationDetailModalProps) {
   return createPortal(
-    <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-[var(--overlay)] p-6">
-      <div className="flex w-[420px] max-h-[90vh] min-h-0 flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-6">
+    <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-[var(--overlay)] p-4 sm:p-6">
+      <div className="flex w-full max-w-[420px] max-h-[90vh] min-h-0 flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-6">
         <h2 className="mb-2 text-lg font-semibold text-[var(--text-primary)]">事件摘要</h2>
 
         <DetailRow label="發生時間" value={`${formatDate(event.occurred_at)} ${formatTime(event.occurred_at)}`} />

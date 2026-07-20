@@ -3,16 +3,18 @@ import { AppLayout } from './components/AppLayout';
 import { RequireAdmin } from './components/RequireAdmin';
 import { RequireAuth } from './components/RequireAuth';
 import { EventsProvider } from './hooks/EventsProvider';
-import { EnvSafety } from './pages/EnvSafety';
-import { EnvScoreDetail } from './pages/EnvScoreDetail';
 import { EventCenter } from './pages/EventCenter';
 import { EventDetail } from './pages/EventDetail';
+import { HazardDetail } from './pages/HazardDetail';
 import { History } from './pages/History';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
-import { MLOps } from './pages/MLOps';
 import { Monitoring } from './pages/Monitoring';
-import { Settings } from './pages/Settings';
+import { ReportFormPage } from './pages/ReportFormPage';
+import { ReportPreview } from './pages/ReportPreview';
+import { ReportGeneration } from './pages/ReportGeneration';
+import { UserManagement } from './pages/UserManagement';
+import { UserDetail } from './pages/UserDetail';
 
 function App() {
   return (
@@ -32,22 +34,24 @@ function App() {
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/events" element={<EventCenter />} />
         <Route path="/events/:id" element={<EventDetail />} />
-        <Route path="/environment" element={<EnvSafety />} />
-        <Route path="/environment/:scoreId" element={<EnvScoreDetail />} />
+        <Route path="/hazards/:id" element={<HazardDetail />} />
+        <Route path="/reports" element={<ReportGeneration />} />
+        <Route path="/reports/:id" element={<ReportFormPage />} />
+        <Route path="/reports/:id/preview" element={<ReportPreview />} />
         <Route path="/history" element={<History />} />
         <Route
-          path="/mlops"
+          path="/users"
           element={
             <RequireAdmin>
-              <MLOps />
+              <UserManagement />
             </RequireAdmin>
           }
         />
         <Route
-          path="/settings"
+          path="/users/:id"
           element={
             <RequireAdmin>
-              <Settings />
+              <UserDetail />
             </RequireAdmin>
           }
         />
