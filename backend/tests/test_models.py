@@ -34,3 +34,25 @@ def test_種子資料存在(db_session):
 def test_既有帳號自動掛預設公司(db_session):
     alice = db_session.query(User).filter_by(employee_id="alice").first()
     assert alice.company_id == 1
+
+
+def test_detect_event_report_roundtrip(db_session, make_event):
+    # 通報單：form 整包 JSON 存進去，讀回來還是 dict、內容不變
+    from backend.core.models import DetectEventReport
+    from datetime import datetime
+
+    event = make_event()
+    report = DetectEventReport(
+        event_id=event.event_id,
+        report_type="initial",
+        form={"caseName": "王小明", "reportType": "初報", "handling": ["送醫治療"]},
+        created_by="alice",
+        created_at=datetime(2026, 7, 20, 10, 0),
+    )
+    db_session.add(report)
+    db_session.commit()
+    db_session.refresh(report)
+
+    assert report.report_id == 1                      # 自動編號 PK
+    assert report.form["caseName"] == "王小明"        # JSON 欄位讀寫是 dict
+    assert report.form["handling"] == ["送醫治療"]    # 巢狀結構原樣保存

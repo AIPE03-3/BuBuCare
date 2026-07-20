@@ -2,7 +2,7 @@
 import uuid
 from typing import Optional
 from datetime import datetime
-from sqlalchemy import Integer, String, DateTime, Float, Text, ForeignKey, Enum, Boolean
+from sqlalchemy import Integer, String, DateTime, Float, Text, ForeignKey, Enum, Boolean, JSON
 from sqlalchemy.orm import mapped_column, Mapped, relationship  # 新版 SQLAlchemy 的欄位寫法，可以標記型別
 from backend.core.database import Base
 
@@ -130,3 +130,24 @@ class DetectEvent(Base):  # 跌倒事件主表
 
     # 顯示事件位置走這個關聯（凍住的 location_id），不要繞去 device.location（那是裝置現況）
     location: Mapped[Optional["Location"]] = relationship("Location")
+
+
+class DetectEventReport(Base):  # 事件通報單：每次儲存獨立一筆（初報/續報/結報累積，不覆蓋）
+    __tablename__ = "detect_event_reports"
+
+    report_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("detect_events.event_id"), nullable=False
+    )
+    # 初報/續報/結報。抽出成欄是因為要獨立查詢；其餘表單內容不查、整包存 form
+    report_type: Mapped[str] = mapped_column(
+        Enum("initial", "follow_up", "final", name="report_type", create_constraint=True),
+        nullable=False,
+    )
+    # 表單整包 JSON 保管：定義權在前端（政府制式表單），表單改版後端零修改
+    form: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # 誰存的誰負責：從 JWT 的 sub 記員編，前端不帶（同 verdict_by/resolved_by 模式）
+    created_by: Mapped[str] = mapped_column(
+        String(50), ForeignKey("user_account.employee_id"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
