@@ -1,6 +1,7 @@
 // 員工帳號＋密碼登入（fulilian-backend）。
 // 後端 POST /login 是 OAuth2 form 格式（非 JSON），成功回 { access_token, token_type }，
-// access_token 為 JWT，payload 內含 role。display_name 暫用帳號字串，待 /me 端點就緒再補真名。
+// access_token 為 JWT，payload 內含 sub（員編）／full_name（真名）／role。
+// display_name 直接取 JWT 的 full_name（後端登入時已包入），毋須額外打 /me。
 import { BASE_URL, NGROK_HEADERS } from '../client';
 import type { AuthProvider, AuthSession, Role } from '../../types';
 import { setStoredSession, clearStoredSession } from './session';
@@ -12,6 +13,7 @@ interface LoginResponse {
 
 interface JwtPayload {
   sub?: string;
+  full_name?: string;
   role?: string;
   exp?: number;
 }
@@ -54,7 +56,7 @@ export const employeePasswordProvider: AuthProvider = {
     const session: AuthSession = {
       token: data.access_token,
       role: normalizeRole(payload.role),
-      display_name: payload.sub ?? employeeId,
+      display_name: payload.full_name ?? payload.sub ?? employeeId,
     };
     setStoredSession(session);
     return session;
