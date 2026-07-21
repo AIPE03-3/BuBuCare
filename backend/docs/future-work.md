@@ -46,16 +46,41 @@
 - **做法（業界標準正解）**：consumer 改為直接呼叫 `handle_incoming_event`，並把 `backend/events/sse.py` 的記憶體 `pool` 換成 **Redis Pub/Sub**，讓 broadcast 跨行程／跨機器（該檔 `pool` 定義處的註解已預告）。與上面第 5 項是同一個根因（記憶體 pool 不跨程序）、同一個解法（Redis Pub/Sub），屆時一起做。
 - **為什麼現在不做**：作品集階段單機單 web，方案 B 正常運作；B 是 D 的墊腳石，consumer 主結構升級時幾乎不動。
 
-### 7. 評估 `user_account` 與 `staff` 是否該建立關聯
+### 7. `staff` 表停用，處理人改用 `user_account`（含刪除 `GET /staff`）
 
-- **現況**：兩張表完全獨立、沒有任何欄位互相參照。`staff.staff_name` 是自由填寫的姓名字串，跟 `user_account`（登入帳號）完全不連動。
-- **問題**：`user_account` 的帳號改成員編後，理論上照護員也是安養院員工、也可能需要登入系統，`user_account` 和 `staff` 有機會代表同一批人，但目前無法互相對應。
-- **做法**：待評估——可能是 `staff` 加欄位存對應的 `user_account.id`，或重新檢視兩張表是否該合併，需先確認業務上「照護員」是否都需要登入權限。
-- **為什麼現在不做**：MVP 階段兩者分開處理不影響功能，屬於設計面的觀察，非急迫問題。
+- **決定（2026-07-17）**：
+  1. 不再維護 `staff` 表。照護員本來就是安養院員工、都有登入帳號，用 `user_account`
+     一張表同時當通報人與事件處理人就夠，不需要兩套人員名單。
+  2. **處理人＝按下判定按鈕的人**：`PATCH /events/{id}/verdict` 不再收 `staff_id`，
+     處理人直接從 token 的 `sub` 拿。
+  3. **刪除 `GET /staff`**：它的用途是「指派下拉選單的資料來源」，改成自己接手後沒有名單要挑。
+- **與前端的落差（動工前要對齊）**：`frontend/src/hooks/EventsProvider.tsx` 的「接手」早就是
+  「誰按誰接手」、沒有下拉選單，與決定 2 一致；但 `frontend/src/api/events.ts` 的註解顯示前端
+  不知道 `GET /staff` 存在（畫面用「員工 #<id>」佔位），且前端還在等一個後端沒做的「接手」端點。
+- **要改的地方**：
+  - `detect_events.staff_id`：FK 從 `staff.staff_id` 改指 `user_account.id`，語意變成「處理人」
+  - `backend/events/router.py`：刪 `GET /staff` 與 `Staff` import；`VerdictRequest` 拿掉 `staff_id`；
+    verdict 改用 `current_user["sub"]` 查出 `user_account.id` 當處理人
+  - `init_db.py`／`backend/tests/conftest.py`：不再種 `Staff` 資料
+  - 測試：刪 `test_staff.py`；`test_verdict.py`／`test_resolve.py`／`test_models.py`／
+    `test_delivery.py` 凡是帶 `staff_id` 的地方都要改
+  - 舊 `staff` 表留著不刪——沒有程式讀它就不影響
+- **待確認的業務問題**：護理站實際作業是「誰看到誰去處理」還是「值班的人指派別人去」？
+  決定 2 假設是前者，動工前跟組長／前端同學確認。
+- **與第 4 項的關係**：兩項會動到同一批欄位。真跌倒時「處理人」就是操作者，但誤報時不指派
+  處理人、仍需記錄是誰判的誤報，兩者不完全重疊，屆時一起設計、只改一次事件表。
+- **為什麼現在不做**：本輪先做帳號系統改版；事件流程目前運作正常，改動會牽動已驗收的功能。
 
-## 程式品質
+## 帳號系統（2026-07 改版時記入，詳見 `superpowers/specs/2026-07-17-account-redesign-design.md`）
 
-### 8. 加 ruff linting（2026-06-29 舊計畫的未完成項）
+### 8. 軟刪除的復職端點
 
-- **現況**：專案沒有 linter，程式風格靠人工維持。
-- **做法**：`uv add --dev ruff`，在 pyproject.toml 設定規則，跑 `ruff check .` 修完既有警告。
+`is_active` 設 `False` 後沒有 API 能改回 `True`，只能進 DB 手改。做法：加 admin-only 的啟用端點。
+
+### 9. 初始 admin 密碼改用環境變數
+
+`init_db.py` 的 `seed_accounts` 把密碼 `123456` 寫死在程式碼裡。做法：改讀 `.env`。
+
+### 10. 多租戶「選機構登入」
+
+員編僅「機構內」唯一時，登入要多帶機構識別才查得到正確帳號。單機構 MVP 用不到。

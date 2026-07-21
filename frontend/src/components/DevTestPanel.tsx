@@ -41,7 +41,7 @@ function buildRawPayload(
     event_id: `evt-test-${Date.now()}`,
     device_id: camera.id,
     device_name: camera.name,
-    location: { zone: camera.zone, floor: camera.floor ?? undefined },
+    location: camera.zone,
     event_type: preset.event_type,
     status: 'pending',
     verdict: null,
@@ -49,16 +49,11 @@ function buildRawPayload(
     snapshot_path: null,
     detected_at: new Date().toISOString(),
     notified_at: null,
-    staff_id: null,
+    verdict_by: null,
+    resolved_by: null,
     company_id: 0,
     yolo_score: 0.94,
-    yolo_threshold: 0.8,
-    vlm_summary: {
-      confidence: 0.94,
-      description: preset.description,
-      suggestion: preset.suggestion,
-    },
-    severity: '高',
+    vlm_summary: preset.description,
     // 潛在危險才帶物品類型（demo 隨機挑一種），跌倒事件為 null。
     hazard_object:
       kind === 'hazard' ? HAZARD_OBJECTS[Math.floor(Math.random() * HAZARD_OBJECTS.length)] : null,

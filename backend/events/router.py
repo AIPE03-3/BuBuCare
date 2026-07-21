@@ -13,7 +13,7 @@ from backend.core.auth import decode_access_token
 from backend.core.config import EVENT_API_KEY
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user
-from backend.core.models import DetectEvent, Device, Staff
+from backend.core.models import DetectEvent, Device
 from backend.events.service import handle_incoming_event, serialize_event, watch_delivery, DeviceNotFoundError
 from backend.events.sse import pool, format_sse
 
@@ -35,9 +35,7 @@ class EventCreateRequest(BaseModel):
     detected_at: datetime
     snapshot_path: Optional[str] = None
     yolo_score: Optional[float] = None
-    yolo_threshold: Optional[float] = None
     vlm_summary: Optional[str] = None
-    severity: Optional[Literal["low", "medium", "high"]] = None
 
 
 # ════════════════════════════════════════════════════════
@@ -98,24 +96,10 @@ def list_events(
     return [serialize_event(event, device) for event, device in rows]
 
 
-# ════════════════════════════════════════════════════════
-# GET /staff（登入即可）：照護員名單（指派下拉選單用）
-# ════════════════════════════════════════════════════════
-@router.get("/staff")
-def list_staff(
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return [
-        {"staff_id": s.staff_id, "staff_name": s.staff_name}
-        for s in db.query(Staff).order_by(Staff.staff_id).all()
-    ]
-
-
 # ── PATCH /events/{id}/verdict 收到的 JSON 格式 ──
+# 不收任何「人」的欄位：誰點的誰負責，操作員由後端從 JWT 記錄
 class VerdictRequest(BaseModel):
     verdict: Literal["true_alarm", "false_alarm"]
-    staff_id: Optional[int] = None  # 只有判真跌倒時必填
 
 
 # ════════════════════════════════════════════════════════
@@ -136,20 +120,17 @@ async def verdict_event(
     if event.status != "pending":
         raise HTTPException(status_code=409, detail="事件已被判定過")
 
+    operator = current_user["sub"]  # JWT 的 sub 就是員編：誰按的誰負責
     if body.verdict == "true_alarm":
-        # 真跌倒：必須同時指派照護員
-        if body.staff_id is None:
-            raise HTTPException(status_code=422, detail="判定真跌倒必須指派照護員（staff_id）")
-        staff = db.query(Staff).filter(Staff.staff_id == body.staff_id).first()
-        if staff is None:
-            raise HTTPException(status_code=400, detail=f"照護員 {body.staff_id} 不存在")
         event.status = "in_progress"
         event.verdict = "true_alarm"
-        event.staff_id = body.staff_id
+        event.verdict_by = operator
     else:
-        # 誤報：不用派人，直接結案（staff_id 留空）
+        # 誤報：判定即結案，同一個按鈕同時記判定者與結案者
         event.status = "resolved"
         event.verdict = "false_alarm"
+        event.verdict_by = operator
+        event.resolved_by = operator
 
     db.commit()
     db.refresh(event)
@@ -179,6 +160,7 @@ async def resolve_event(
         raise HTTPException(status_code=409, detail="只有處理中的事件可以結案")
 
     event.status = "resolved"
+    event.resolved_by = current_user["sub"]  # 誰按結案誰負責
     db.commit()
     db.refresh(event)
 

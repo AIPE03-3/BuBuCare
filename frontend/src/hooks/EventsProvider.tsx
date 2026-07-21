@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { clearHazardEvent, getEvents, submitEventFeedback } from '../api/events';
+import { claimEvent, clearHazardEvent, getEvents, submitEventFeedback } from '../api/events';
 import { addBusinessDays } from '../utils/time';
 import { FullScreenAlert } from '../components/FullScreenAlert';
 import type { AlertLogAction, AlertLogEntry, CareEvent, FalseReportLabel, ReportStage } from '../types';
@@ -20,7 +20,7 @@ import { useAuth } from './useAuth';
 import { useEventSocket } from './useEventSocket';
 
 const PAGE_SIZE = 3;
-// 首頁「未結案事件」需一次顯示所有未結案事件、不分頁，故初始載入直接抓完全部 mock 資料；
+// 首頁「未結案事件」需一次顯示所有未結案事件、不分頁，故初始載入直接抓完全部事件；
 // 「載入更多」（事件中心即時頁使用）仍維持每次 PAGE_SIZE 筆的漸進載入。
 const INITIAL_LOAD_SIZE = 200;
 const TICK_INTERVAL_MS = 1000;
@@ -45,7 +45,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const ackToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preAckSnapshotRef = useRef<Map<string, CareEvent>>(new Map());
 
-  // 初始清單目前仍走 mock（getEvents），待後端 GET /events 就緒再切。
+  // 初始清單走真後端 GET /events（新→舊），之後的新事件由 SSE 帶入。
   useEffect(() => {
     getEvents(0, INITIAL_LOAD_SIZE).then((initial) => {
       setEvents(initial);
@@ -96,9 +96,17 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   }
 
   // 「接手」：護理人員點選前往處理，事件轉「處理中」並記錄 assignee。清單卡與全螢幕警示都走這裡。
-  // ⚠ 後端 /ack 是「送達確認」（收到即自動打，見 useEventSocket），非接手；後端尚無「接手」端點，
-  //   故此處僅前端狀態更新，待後端補接手端點後再串接。
+  // ⚠ 後端 /ack 是「送達確認」（收到即自動打，見 useEventSocket），與接手是兩件事。
+  // 接手走 claimEvent（實際打判定端點 true_alarm，見 api/events.ts 說明），後端才會真的轉 in_progress。
+  // 先 await 後端再改前端狀態（非樂觀更新）：後端沒存成功就不該讓畫面顯示已接手，
+  // 否則重整後狀態會退回待處理，等於騙使用者。失敗時警示留在畫面上讓人重按。
   async function acknowledgeEvent(event: CareEvent) {
+    try {
+      await claimEvent(event.id);
+    } catch (err) {
+      console.error('[acknowledgeEvent] 接手失敗，狀態未變更', event.id, err);
+      return;
+    }
     preAckSnapshotRef.current.set(event.id, event);
     const assignee = session?.display_name ?? null;
     // 接手當下啟動該筆專屬的 24 小時結案倒數（存絕對到期時間戳，各事件互不共用）。

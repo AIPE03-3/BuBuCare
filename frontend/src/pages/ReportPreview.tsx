@@ -4,7 +4,7 @@ import { BackButton } from '../components/BackButton';
 import { getLatestReport } from '../api/reports';
 import type { ReportFormData, SavedReport } from '../types';
 
-// 讀 localStorage 的已儲存通報單，渲染成可列印版面；按「列印／存 PDF」呼叫瀏覽器列印，
+// 讀後端已儲存的通報單，渲染成可列印版面；按「列印／存 PDF」呼叫瀏覽器列印，
 // 使用者在列印對話框選「另存為 PDF」即完成輸出（MVP 零外掛，未來可換真匯出模組）。
 
 function formatDate(y: string, m: string, d: string, h: string, min: string): string {

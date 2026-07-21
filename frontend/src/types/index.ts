@@ -18,7 +18,9 @@ export type HazardObject = '刀具' | '熱源' | '藥品' | '玻璃碎片' | '�
 export const HAZARD_OBJECTS: HazardObject[] = ['刀具', '熱源', '藥品', '玻璃碎片', '積水', '其他'];
 
 // 通報狀態：獨立於事件生命週期 status（pending/in_progress/resolved）之外的上報流程追蹤。
-// 初報→續報→結報。null＝尚未通報。後端目前無此欄位（demo 前端記憶體維護），串接後改由後端下發。
+// 初報→續報→結報。null＝尚未通報。
+// ⚠ 通報單本身已存後端（見 api/reports.ts），但 detect_events 沒有 report_stage 欄位，
+//   故事件的通報狀態仍由前端記憶體維護（重整會歸零）；後端補欄位後改由事件 payload 帶入。
 export type ReportStage = 'initial' | 'follow_up' | 'final';
 
 export const REPORT_STAGE_LABEL: Record<ReportStage, string> = {
@@ -177,7 +179,8 @@ export interface ReportFormData {
   reportMinute: string;
 }
 
-// 已儲存的通報單。demo 存 localStorage（見 api/reports.ts），未來改由後端下發（GET /events/{id}/report）。
+// 已儲存的通報單。走真後端 GET /events/{id}/reports（見 api/reports.ts）。
+// 後端另有 report_id 與 created_by（通報人員編），前端目前無顯示處故未帶入。
 export interface SavedReport {
   eventId: string;
   form: ReportFormData;
