@@ -646,7 +646,7 @@ export function ReportFormPage() {
       </div>
       </form>
 
-      {/* 儲存：先驗證全部必填，通過即寫入 localStorage 並更新通報狀態，回事件詳情。PDF 預覽只留在詳情頁。 */}
+      {/* 儲存：先驗證全部必填，通過即存到後端並更新通報狀態，回事件詳情。PDF 預覽只留在詳情頁。 */}
       <div className="flex justify-center">
         <button
           type="button"
