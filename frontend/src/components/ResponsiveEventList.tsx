@@ -64,10 +64,18 @@ export function ResponsiveEventList({
       <ul className="flex flex-col gap-3 md:hidden">
         {events.map((event, index) => (
           <li key={event.id}>
-            <button
-              type="button"
+            {/* 用 div 而非 button：欄位內可能有按鈕（接手鈕），button 不能巢狀 */}
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => navigate(getRowHref(event))}
-              className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 text-left transition-colors duration-150 hover:bg-[var(--brand-soft)]"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  navigate(getRowHref(event));
+                }
+              }}
+              className="w-full cursor-pointer rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-4 text-left transition-colors duration-150 hover:bg-[var(--brand-soft)]"
             >
               <dl className="flex flex-col gap-2 text-sm">
                 {columns.map((col) => (
@@ -77,7 +85,7 @@ export function ResponsiveEventList({
                   </div>
                 ))}
               </dl>
-            </button>
+            </div>
           </li>
         ))}
       </ul>

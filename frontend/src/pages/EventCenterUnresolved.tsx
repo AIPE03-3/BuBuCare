@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { CountdownTimer } from '../components/CountdownTimer';
 import { EventStatusBadge } from '../components/EventStatusBadge';
 import { FlagIcon } from '../components/icons';
@@ -9,13 +10,24 @@ import type { CareEvent } from '../types';
 
 // getRowHref：點列的導向目標。預設進事件詳情頁；製作通報單頁改傳入通報單填寫路由，
 // 讓同一份列表在不同頁面有不同去向，不必複製列表邏輯。
+// showPending：連同待處理事件一起列出並附接手鈕。事件中心開（待處理的常駐出口），
+// 製作通報單頁關（還沒接手不該先填通報單）。
+// showAssignee：是否顯示「處理人」欄。通報單頁只是挑事件來填，不需要這欄。
 export function EventCenterUnresolved({
   getRowHref = (event: CareEvent) => `/events/${event.id}`,
+  showPending = false,
+  showAssignee = false,
 }: {
   getRowHref?: (event: CareEvent) => string;
+  showPending?: boolean;
+  showAssignee?: boolean;
 } = {}) {
-  const { events, now } = useEvents();
-  const inProgress = events.filter((event) => event.status === 'in_progress');
+  const { events, now, handleAcknowledgeEvent } = useEvents();
+  // 接手送出中的事件 id：送出期間停用該列按鈕，避免連點對同一筆送出兩次判定。
+  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const visibleEvents = events.filter((event) =>
+    showPending ? event.status !== 'resolved' : event.status === 'in_progress',
+  );
 
   const columns: EventListColumn[] = [
     {
@@ -73,17 +85,49 @@ export function EventCenterUnresolved({
               <FlagIcon aria-hidden="true" className="h-4 w-4 text-[var(--danger)]" />
             </span>
           )}
+          {/* 接手鈕併在徽章旁，不另開一欄——否則非待處理的列會排滿無意義的「—」 */}
+          {showPending && event.status === 'pending' && (
+            <button
+              type="button"
+              disabled={claimingId === event.id}
+              // stopPropagation：不擋的話按接手會連帶觸發整列跳頁
+              onClick={async (e) => {
+                e.stopPropagation();
+                setClaimingId(event.id);
+                await handleAcknowledgeEvent(event);
+                setClaimingId(null);
+              }}
+              className="rounded-lg bg-[var(--success)] px-2.5 py-1 text-xs font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--success)] focus-visible:ring-offset-2"
+            >
+              {claimingId === event.id ? '接手中…' : '接手'}
+            </button>
+          )}
         </span>
       ),
     },
+    // assignee 取自後端 verdict_by（員編），尚無人接手時為 null
+    ...(showAssignee
+      ? [
+          {
+            key: 'assignee',
+            header: '處理人',
+            cell: (event: CareEvent) =>
+              event.assignee ? (
+                <span className="text-[var(--text-primary)]">{event.assignee}</span>
+              ) : (
+                <span className="text-[var(--text-muted)]">—</span>
+              ),
+          },
+        ]
+      : []),
   ];
 
   return (
     <ResponsiveEventList
-      events={inProgress}
+      events={visibleEvents}
       columns={columns}
       getRowHref={getRowHref}
-      emptyMessage="目前沒有處理中的事件"
+      emptyMessage={showPending ? '目前沒有未結案的事件' : '目前沒有處理中的事件'}
     />
   );
 }

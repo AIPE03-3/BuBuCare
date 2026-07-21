@@ -3,9 +3,8 @@ import { Link } from 'react-router-dom';
 import { getCameras } from '../api/cameras';
 import { DevTestPanel } from '../components/DevTestPanel'; // DEV-TEST：測試按鈕面板，移除測試功能時連同下方使用處一併刪除
 import { MonitorIcon } from '../components/icons';
-import { StatusTag } from '../components/StatusTag';
 import { useEvents } from '../hooks/eventsContext';
-import { formatElapsedMinutes, formatTime } from '../utils/time';
+import { formatTime } from '../utils/time';
 import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, type AlertLogEntry, type Camera } from '../types';
 
 // 切換鏡頭畫面選單。桌機置於右欄頂端、手機緊接鏡頭下方，故抽成元件於兩處各渲染一次
@@ -70,9 +69,7 @@ function AlertLogCard({ entry }: { entry: AlertLogEntry }) {
 export function Home() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
-  const { events, now, alertLog, hazardEvents, handleAcknowledgeEvent } = useEvents();
-  // 接手送出中的事件 id：按鈕停用用，避免連點對同一筆送出兩次判定。
-  const [claimingId, setClaimingId] = useState<string | null>(null);
+  const { events, alertLog, hazardEvents } = useEvents();
 
   useEffect(() => {
     getCameras().then((list) => {
@@ -83,8 +80,6 @@ export function Home() {
   }, []);
 
   const unresolvedCount = events.filter((e) => e.status !== 'resolved').length;
-  // 待處理＝尚無人接手，新到舊（events 本身即後端的新→舊排序）。
-  const pendingEvents = events.filter((e) => e.status === 'pending');
   const onlineCameraCount = cameras.filter((c) => c.status === 'online').length;
   const hazardCount = hazardEvents.filter((e) => e.status !== 'resolved').length;
   const selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
@@ -218,57 +213,6 @@ export function Home() {
         </div>
       </div>
 
-      {/* 待處理事件（status === 'pending'）：尚未有人接手的事件。
-          ⚠ 這一區是 pending 事件在畫面上的唯一常駐出口。全螢幕警示只在 SSE 推播當下跳出、
-          重整後不重現，事件中心又只列處理中（03 檔 §10 刻意排除待處理），
-          少了這一區，重整後這些事件就只剩上方那個數字看得到（見 04 檔 G 段）。 */}
-      <section className="rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)] p-6">
-        <h2 className="text-base font-medium text-[var(--text-primary)]">待處理事件</h2>
-        {pendingEvents.length === 0 ? (
-          <p className="mt-4 text-sm text-[var(--text-muted)]">目前沒有待處理事件</p>
-        ) : (
-          <ul className="mt-4 flex flex-col gap-3">
-            {pendingEvents.map((event) => (
-              <li
-                key={event.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-surface-2)] px-4 py-3"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <StatusTag
-                    status={event.status}
-                    verdict={event.verdict}
-                    ackDeadline={event.ack_deadline}
-                    now={now}
-                  />
-                  <Link
-                    to={`/events/${event.id}`}
-                    className="truncate text-sm text-[var(--text-primary)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
-                  >
-                    {event.camera.zone}（{event.camera.name}）
-                  </Link>
-                  <span className="shrink-0 text-xs text-[var(--text-muted)]">
-                    {formatElapsedMinutes(event.occurred_at, now)}
-                  </span>
-                </div>
-                {/* 「接手」是具語意的正向操作，依 CLAUDE.md 配色規則用 --success 填色白字。
-                    送出中停用按鈕，避免連點送出兩次判定。 */}
-                <button
-                  type="button"
-                  disabled={claimingId === event.id}
-                  onClick={async () => {
-                    setClaimingId(event.id);
-                    await handleAcknowledgeEvent(event);
-                    setClaimingId(null);
-                  }}
-                  className="shrink-0 rounded-lg bg-[var(--success)] px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--success)] focus-visible:ring-offset-2"
-                >
-                  {claimingId === event.id ? '接手中…' : '接手'}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </div>
   );
 }

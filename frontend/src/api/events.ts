@@ -87,9 +87,11 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     false_alarm_note: null,
     clip_path: raw.clip_path,
     snapshot_path: raw.snapshot_path,
-    // assignee＝「接手處理的人」，後端無此概念（沒有接手端點），故一律 null，由前端接手動作寫入。
-    // ⚠ 後端的 verdict_by／resolved_by 是「判定者／結案者員編」，語意不同，不可拿來當 assignee。
-    assignee: null,
+    // assignee＝「接手處理的人」，直接取後端的 verdict_by（員編字串，如 "staff01"）。
+    // 本案「接手」就是打判定端點 true_alarm（見下方 claimEvent），按鈕按下去的人會被後端從 JWT
+    // 記進 verdict_by——判定者即接手者，是同一個人，故可直接對應。
+    // 這樣接手人是從 DB 讀回來的，重整頁面不會消失（先前寫死 null，接手人只活在前端記憶體裡）。
+    assignee: raw.verdict_by,
     // 以下欄位後端 MVP 階段尚無對應來源，固定 null（非漏接，後端補齊後再帶入）：
     notified_to: null,
     ack_deadline: null,

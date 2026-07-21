@@ -39,7 +39,7 @@ export function EventCenter() {
         ))}
       </div>
 
-      {tab === 'events' && <EventCenterUnresolved />}
+      {tab === 'events' && <EventCenterUnresolved showPending showAssignee />}
       {tab === 'hazards' && (
         <HazardList hazards={activeHazards} emptyMessage="目前沒有潛在危險" />
       )}
