@@ -6,7 +6,7 @@ import type { CareEvent } from '../types';
 export interface EventListColumn {
   key: string;
   header: string;
-  cell: (event: CareEvent) => ReactNode;
+  cell: (event: CareEvent, index: number) => ReactNode;
 }
 
 // 響應式事件清單：桌機（md 以上）顯示表格，手機顯示堆疊卡片，避免窄螢幕被迫橫向捲動。
@@ -43,7 +43,7 @@ export function ResponsiveEventList({
             </tr>
           </thead>
           <tbody>
-            {events.map((event) => (
+            {events.map((event, index) => (
               <tr
                 key={event.id}
                 onClick={() => navigate(getRowHref(event))}
@@ -51,7 +51,7 @@ export function ResponsiveEventList({
               >
                 {columns.map((col) => (
                   <td key={col.key} className="px-4 py-3">
-                    {col.cell(event)}
+                    {col.cell(event, index)}
                   </td>
                 ))}
               </tr>
@@ -62,7 +62,7 @@ export function ResponsiveEventList({
 
       {/* 手機：卡片版型，每欄一行標籤對值，不再橫向捲動 */}
       <ul className="flex flex-col gap-3 md:hidden">
-        {events.map((event) => (
+        {events.map((event, index) => (
           <li key={event.id}>
             <button
               type="button"
@@ -73,7 +73,7 @@ export function ResponsiveEventList({
                 {columns.map((col) => (
                   <div key={col.key} className="flex items-start justify-between gap-3">
                     <dt className="shrink-0 text-xs text-[var(--text-muted)]">{col.header}</dt>
-                    <dd className="min-w-0 break-words text-right">{col.cell(event)}</dd>
+                    <dd className="min-w-0 break-words text-right">{col.cell(event, index)}</dd>
                   </div>
                 ))}
               </dl>
