@@ -7,6 +7,7 @@ import { EventCenter } from './pages/EventCenter';
 import { EventDetail } from './pages/EventDetail';
 import { HazardDetail } from './pages/HazardDetail';
 import { History } from './pages/History';
+import { HistoryEventDetail } from './pages/HistoryEventDetail';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { Monitoring } from './pages/Monitoring';
@@ -39,6 +40,7 @@ function App() {
         <Route path="/reports/:id" element={<ReportFormPage />} />
         <Route path="/reports/:id/preview" element={<ReportPreview />} />
         <Route path="/history" element={<History />} />
+        <Route path="/history/:id" element={<HistoryEventDetail />} />
         <Route
           path="/users"
           element={
