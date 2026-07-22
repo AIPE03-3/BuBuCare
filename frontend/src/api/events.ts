@@ -43,6 +43,10 @@ export interface RawEventPayload {
  * 欄位對應已對照後端 serialize_event（backend/events/service.py）確認，
  * SSE 廣播與 GET /events 兩條路徑用的是同一份 payload，故共用本函式。
  */
+// 結案時限：自事發起算 24 小時。用 detected_at（後端欄位）而非接手時間——
+// 後端沒存判定時間，且從事發起算才不會「沒人接手就不開始倒數」。
+const RESOLVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export function parseRawEvent(raw: RawEventPayload): CareEvent {
   const camera: Camera = {
     id: raw.device_id,
@@ -87,16 +91,15 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     false_alarm_note: null,
     clip_path: raw.clip_path,
     snapshot_path: raw.snapshot_path,
-    // assignee＝「接手處理的人」，直接取後端的 verdict_by（員編字串，如 "staff01"）。
-    // 本案「接手」就是打判定端點 true_alarm（見下方 claimEvent），按鈕按下去的人會被後端從 JWT
-    // 記進 verdict_by——判定者即接手者，是同一個人，故可直接對應。
-    // 這樣接手人是從 DB 讀回來的，重整頁面不會消失（先前寫死 null，接手人只活在前端記憶體裡）。
+    // assignee 取後端 verdict_by：本案「接手」就是打判定端點（見 claimEvent），判定者即接手者
     assignee: raw.verdict_by,
     // 以下欄位後端 MVP 階段尚無對應來源，固定 null（非漏接，後端補齊後再帶入）：
     notified_to: null,
     ack_deadline: null,
-    // 尚未接手，故無 24 小時結案時限；接手（acknowledgeEvent）當下才寫入。
-    resolve_deadline: null,
+    // 每次從後端資料現算，故重整後倒數仍在（先前是接手當下才寫入、只活在記憶體）
+    resolve_deadline: new Date(
+      new Date(normalizeBackendTime(raw.detected_at)).getTime() + RESOLVE_WINDOW_MS,
+    ).toISOString(),
     // 續報期限於初報（updateReportStage stage='initial'）時才計算，此前為 null。
     follow_up_deadline: null,
     escalated_to: null,

@@ -109,13 +109,11 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     }
     preAckSnapshotRef.current.set(event.id, event);
     const assignee = session?.display_name ?? null;
-    // 接手當下啟動該筆專屬的 24 小時結案倒數（存絕對到期時間戳，各事件互不共用）。
-    const resolveDeadline = new Date(Date.now() + RESOLVE_WINDOW_MS).toISOString();
+    // resolve_deadline 不在此設定：已改由 parseRawEvent 從事發時間現算（api/events.ts）
     const acknowledged: CareEvent = {
       ...event,
       status: 'in_progress',
       ack_deadline: null,
-      resolve_deadline: resolveDeadline,
       assignee,
     };
     setEvents((prev) => {
