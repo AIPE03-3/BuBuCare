@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { AlertLogEntry, CareEvent, FalseReportLabel, ReportStage } from '../types';
+import type { AlertLogEntry, CareEvent, FalseReportLabel } from '../types';
 
 export interface EventsContextValue {
   events: CareEvent[];
@@ -19,8 +19,8 @@ export interface EventsContextValue {
   handleResolveViaFeedback: (event: CareEvent, label: FalseReportLabel, note: string) => Promise<void>;
   lastAckedEvent: CareEvent | null;
   undoAcknowledge: (event: CareEvent) => void;
-  // 更新通報狀態（初報/續報/結報）；demo 前端記憶體維護，後端補齊端點後改為呼叫 API。
-  updateReportStage: (eventId: string, stage: ReportStage) => void;
+  // 重新向後端取事件清單（存完通報單／結案後呼叫，通報階段與狀態以後端為準）。
+  refreshEvents: () => Promise<void>;
   // 恢復事件：誤報紀錄中的事件拉回事件中心（處理中），清誤報判定與類型並重啟時限。
   restoreEvent: (eventId: string) => void;
   // DEV-TEST：測試按鈕用，模擬後端推來一筆事件（走與真後端相同的 handleIncomingEvent）。移除測試功能時連同實作一併刪除。

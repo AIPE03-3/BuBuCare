@@ -18,6 +18,11 @@ class DeviceNotFoundError(Exception):
 def serialize_event(event: DetectEvent, device: Device) -> dict:
     # 事件的統一 JSON 結構：SSE 廣播和 GET /events 都用這一個函式，
     # 前端只需寫一套顯示邏輯。裝置名稱/位置直接夾帶，前端不用再查
+    #
+    # ⚠ event.reports 會觸發延遲載入（多發一次 SQL）。一次序列化多筆事件時，
+    #   查詢端要先 selectinload(DetectEvent.reports)，否則每筆各查一次（N+1）
+    latest_report = event.reports[-1] if event.reports else None
+
     return {
         "event_id": event.event_id,
         "device_id": event.device_id,
@@ -34,6 +39,9 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "notified_at": event.notified_at.isoformat() if event.notified_at else None,
         "verdict_by": event.verdict_by,
         "resolved_by": event.resolved_by,
+        # 通報階段＝最新一筆通報單的類型；兩者皆 None 代表這個事件還沒有任何通報單
+        "report_stage": latest_report.report_type if latest_report else None,
+        "last_report_at": latest_report.created_at.isoformat() if latest_report else None,
         "company_id": event.company_id,
         "yolo_score": event.yolo_score,
         "vlm_summary": event.vlm_summary,

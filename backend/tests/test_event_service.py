@@ -3,7 +3,7 @@ from datetime import datetime
 import pytest
 
 from backend.events.service import handle_incoming_event, DeviceNotFoundError, serialize_event
-from backend.core.models import DetectEvent, Device, Location
+from backend.core.models import DetectEvent, DetectEventReport, Device, Location
 from backend.events.sse import pool
 
 VALID_DATA = {
@@ -68,3 +68,31 @@ def test_serialize包含notified_at預設None(db_session, make_event):
     data = serialize_event(event, device)
     assert "notified_at" in data
     assert data["notified_at"] is None
+
+
+def test_serialize尚無通報單時通報階段為None(db_session, make_event):
+    event = make_event()
+    device = db_session.query(Device).filter(Device.device_id == 1).first()
+    data = serialize_event(event, device)
+    assert data["report_stage"] is None
+    assert data["last_report_at"] is None
+
+
+def test_serialize帶最新一筆通報單的階段與時間(db_session, make_event):
+    # 初報 → 續報，通報階段要跟著走到最新那筆（不是第一筆、也不是筆數）
+    event = make_event()
+    db_session.add(DetectEventReport(
+        event_id=event.event_id, report_type="initial", form={},
+        created_by="alice", created_at=datetime(2026, 7, 2, 15, 0),
+    ))
+    db_session.add(DetectEventReport(
+        event_id=event.event_id, report_type="follow_up", form={},
+        created_by="alice", created_at=datetime(2026, 7, 3, 9, 0),
+    ))
+    db_session.commit()
+    db_session.refresh(event)
+
+    device = db_session.query(Device).filter(Device.device_id == 1).first()
+    data = serialize_event(event, device)
+    assert data["report_stage"] == "follow_up"
+    assert data["last_report_at"] == "2026-07-03T09:00:00"

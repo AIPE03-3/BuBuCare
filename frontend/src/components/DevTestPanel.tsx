@@ -54,6 +54,9 @@ function buildRawPayload(
     company_id: 0,
     yolo_score: 0.94,
     vlm_summary: preset.description,
+    // 測試事件是全新事件，尚無通報單
+    report_stage: null,
+    last_report_at: null,
     // 潛在危險才帶物品類型（demo 隨機挑一種），跌倒事件為 null。
     hazard_object:
       kind === 'hazard' ? HAZARD_OBJECTS[Math.floor(Math.random() * HAZARD_OBJECTS.length)] : null,

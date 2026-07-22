@@ -4,6 +4,7 @@ import { BackButton } from '../components/BackButton';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { useEvents } from '../hooks/eventsContext';
 import { getLatestReport, saveReport } from '../api/reports';
+import { resolveEvent } from '../api/events';
 import {
   REPORT_TYPES,
   REPORT_TYPE_TO_STAGE,
@@ -188,7 +189,7 @@ export function ReportFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { events, updateReportStage } = useEvents();
+  const { events, refreshEvents } = useEvents();
   const event = events.find((e) => e.id === id);
   const formRef = useRef<HTMLFormElement>(null);
   // 多選（核取方塊）群組的「至少選一項」錯誤；文字／數字／單選由原生 required 驗證，不進此集合。
@@ -269,12 +270,16 @@ export function ReportFormPage() {
       <p className="text-xs text-[var(--danger)]">請至少選擇一項</p>
     ) : null;
 
-  // 儲存通報單並依通報別更新事件通報狀態（初報→已初報…），完成後回事件詳情。
-  // 先 await 儲存再導頁：換成真後端時才不會「頁面已走、儲存失敗」。reportType 由原生 required 保證非空。
+  // 儲存通報單後回事件詳情。通報階段不再由前端自行標記，改為存完重新向後端取事件。
+  // 結報＝結案，但後端存通報單不會順帶結案（兩支端點），故另外呼叫 resolveEvent。
+  // 先 await 再導頁：頁面已走、儲存卻失敗會騙到使用者。reportType 由原生 required 保證非空。
   async function persistAndReturn() {
     if (!currentForm.reportType) return;
     await saveReport(currentEvent.id, currentForm);
-    updateReportStage(currentEvent.id, REPORT_TYPE_TO_STAGE[currentForm.reportType]);
+    if (REPORT_TYPE_TO_STAGE[currentForm.reportType] === 'final') {
+      await resolveEvent(currentEvent.id);
+    }
+    await refreshEvents();
     navigate(`/events/${currentEvent.id}`);
   }
 
