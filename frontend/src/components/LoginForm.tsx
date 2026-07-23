@@ -108,7 +108,7 @@ export function LoginForm() {
   const codeComplete = code.every((digit) => digit !== '');
 
   return (
-    <div className="w-[380px] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-8">
+    <div className="w-full max-w-[380px] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-6 sm:p-8">
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">Fulilian 中控台</h1>
       <p className="mt-1 text-sm text-[var(--text-secondary)]">照護監控系統</p>
 
@@ -143,7 +143,7 @@ export function LoginForm() {
       ) : (
         <div className="mt-6">
           <p className="text-sm text-[var(--text-primary)]">驗證碼</p>
-          <div className="mt-1 flex justify-between gap-2">
+          <div className="mt-1 flex justify-between gap-1 sm:gap-2">
             {code.map((digit, index) => (
               <input
                 key={index}
@@ -155,7 +155,7 @@ export function LoginForm() {
                 onKeyDown={(e) => handleCodeKeyDown(index, e)}
                 inputMode="numeric"
                 maxLength={1}
-                className="h-11 w-10 rounded-md border border-[var(--border)] text-center text-base text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--brand)]"
+                className="h-11 w-8 rounded-md border border-[var(--border)] text-center text-base text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--brand)] sm:w-10"
               />
             ))}
           </div>
@@ -202,8 +202,8 @@ export function LoginForm() {
       )}
 
       {showForgotModal && (
-        <div className="fixed inset-0 flex items-center justify-center bg-[var(--text-primary)]/50">
-          <div className="w-[320px] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-6 text-center">
+        <div className="fixed inset-0 flex items-center justify-center bg-[var(--text-primary)]/50 p-4">
+          <div className="w-full max-w-[320px] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-6 text-center">
             <p className="text-sm text-[var(--text-primary)]">
               密碼協助功能規劃中，請聯絡系統管理員
             </p>
@@ -243,7 +243,7 @@ function PasswordLoginForm() {
   }
 
   return (
-    <div className="w-[380px] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-8">
+    <div className="w-full max-w-[380px] rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-6 sm:p-8">
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">Fulilian 中控台</h1>
       <p className="mt-1 text-sm text-[var(--text-secondary)]">照護監控系統</p>
 

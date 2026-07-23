@@ -2,7 +2,8 @@ import { useNavigate } from 'react-router-dom';
 import type { CareEvent } from '../types';
 import { StatusTag } from './StatusTag';
 import { formatElapsedMinutes, formatTime } from '../utils/time';
-import { hasEscalatedFlag } from '../utils/eventFlags';
+import { getEventTypeLabel, hasEscalatedFlag } from '../utils/eventFlags';
+import { FlagIcon } from './icons';
 
 function getNotificationNote(event: CareEvent): { text: string; className: string } | null {
   if (event.escalated_to) {
@@ -41,11 +42,11 @@ export function EventCard({ event, now, highlighted, onAcknowledge }: EventCardP
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-[var(--text-primary)]">
-          地點：{event.camera.zone}（{event.camera.name}）　類型：跌倒　通報時間：{formatTime(event.occurred_at)}
+          地點：{event.camera.zone}（{event.camera.name}）　類型：{getEventTypeLabel(event)}　通報時間：{formatTime(event.occurred_at)}
         </p>
         {escalated && (
-          <span aria-hidden="true" title="事件曾升級並通知當日值班組長" className="shrink-0">
-            🚩
+          <span title="事件曾升級並通知當日值班組長" className="shrink-0">
+            <FlagIcon aria-hidden="true" className="h-4 w-4 text-[var(--danger)]" />
           </span>
         )}
       </div>

@@ -1,31 +1,29 @@
 import { apiClient } from './client';
+import { addBusinessDays, normalizeBackendTime } from '../utils/time';
 import type {
   CareEvent,
   Camera,
-  EventHistoryQuery,
-  EventHistoryStatPoint,
   EventStatus,
   EventVerdict,
   FalseReportLabel,
-  PagedResult,
+  ReportStage,
   VlmResult,
 } from '../types';
-import { hasEscalatedFlag } from '../utils/eventFlags';
-import eventsMock from './mock/events.json';
+import { HAZARD_OBJECTS } from '../types';
 
 /**
- * 後端 fulilian-backend 事件推播（SSE）的原始 payload 欄位命名。
- * 命名一律照後端實際欄位，非前端 CareEvent 命名，也非現有 mock 命名。
- * mock 與未來真實 SSE 皆須先過 parseRawEvent 才能轉成 CareEvent，
+ * 後端 fulilian-backend 事件的原始 payload 欄位命名（SSE 推播與 GET /events 共用同一格式）。
+ * 命名一律照後端實際欄位，非前端 CareEvent 命名。
+ * 三個來源（SSE、GET /events、DevTestPanel 測試事件）都須先過 parseRawEvent 才能轉成 CareEvent，
  * 全案只保留這一套轉換邏輯。
  */
 export interface RawEventPayload {
   event_id: string;
   device_id: number;
   device_name: string;
-  // ⚠ location、vlm_summary 兩欄後端實際格式尚未確認（字串 or 物件皆可能），
-  //   parseRawEvent 內以 runtime typeof 判斷兩種格式都吃，實際格式確認後可簡化。
-  location: string | { zone?: string; floor?: string };
+  // 位置名稱（後端 locations.location_name），事件發生當下凍結；事件沒凍到位置時為 null。
+  // ⚠ 後端不帶樓層（floor 只在 GET /devices 有），事件端一律無樓層資訊。
+  location: string | null;
   event_type: string;
   status: string;               // 已對齊三態 pending/in_progress/resolved，值不需轉換
   verdict: string | null;       // 已對齊 true_alarm/false_alarm/null，值不需轉換
@@ -33,167 +31,96 @@ export interface RawEventPayload {
   snapshot_path: string | null;
   detected_at: string;          // ISO
   notified_at: string | null;
-  staff_id: number | null;
+  verdict_by: string | null;    // 判定者員編（後端從 JWT 記，前端不帶）
+  resolved_by: string | null;   // 結案者員編（同上）
   company_id: number;
   yolo_score: number;
-  yolo_threshold: number;
-  vlm_summary: string | { confidence?: number; description?: string; suggestion?: string } | null;
-  severity: string | null;
+  vlm_summary: string | null;   // VLM 情境描述純文字（後端 DB 為 Text 欄位）
+  report_stage: string | null;  // 最新一筆通報單的類型（initial/follow_up/final），無通報單為 null
+  last_report_at: string | null; // 最新一筆通報單的儲存時間，續報期限由此起算
+  hazard_object?: string | null; // 潛在危險事件才有；後端實際欄位未定，先預留（見 DevTestPanel）
 }
 
 /**
  * 後端原始事件 payload → 前端 CareEvent。
- * 格式已確認的欄位直接照 RawEventPayload 型別寫死轉換；
- * 格式未確認的 location、vlm_summary 以 typeof 防呆，兩種格式都能吃。
+ * 欄位對應已對照後端 serialize_event（backend/events/service.py）確認，
+ * SSE 廣播與 GET /events 兩條路徑用的是同一份 payload，故共用本函式。
  */
-export function parseRawEvent(raw: RawEventPayload): CareEvent {
-  // location：格式未確認 —— 可能是純字串（當作 zone），也可能是 { zone, floor } 物件。
-  // 實際格式確認後可簡化為單一分支。
-  let zone: string;
-  let floor: string | null;
-  if (typeof raw.location === 'string') {
-    zone = raw.location;
-    floor = null;
-  } else {
-    zone = raw.location?.zone ?? '';
-    floor = raw.location?.floor ?? null;
-  }
+// 結案時限：自事發起算 24 小時。用 detected_at（後端欄位）而非接手時間——
+// 後端沒存判定時間，且從事發起算才不會「沒人接手就不開始倒數」。
+const RESOLVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
+export function parseRawEvent(raw: RawEventPayload): CareEvent {
   const camera: Camera = {
     id: raw.device_id,
     name: raw.device_name,
-    zone,
-    floor,
-    // 後端目前無 /devices 端點可查串流網址與在線狀態，先固定值，非程式邏輯遺漏。
+    zone: raw.location ?? '',
+    // 後端事件 payload 不帶樓層（僅 GET /devices 有），故固定 null。
+    floor: null,
+    // 後端事件 payload 無串流網址與在線狀態（僅 GET /devices 有），先固定值，非程式邏輯遺漏。
     stream_url: null,
     stream_source: null,
     status: 'online',
   };
 
-  // vlm_summary：格式未確認 —— 可能是純字串（當作 description），也可能是完整物件。
-  // 為 null 時整個 vlm_result 回傳 null（YOLO 高信心直通）。實際格式確認後可簡化。
-  let vlm_result: VlmResult | null;
-  if (raw.vlm_summary === null) {
-    vlm_result = null;
-  } else if (typeof raw.vlm_summary === 'string') {
-    vlm_result = {
-      confidence: raw.yolo_score,
-      severity: normalizeSeverity(raw.severity),
-      description: raw.vlm_summary,
-      suggestion: '',
-    };
-  } else {
-    vlm_result = {
-      confidence: raw.vlm_summary.confidence ?? raw.yolo_score,
-      severity: normalizeSeverity(raw.severity),
-      description: raw.vlm_summary.description ?? '',
-      suggestion: raw.vlm_summary.suggestion ?? '',
-    };
-  }
+  // vlm_summary 為純文字描述，null＝YOLO 高信心直通（整個 vlm_result 回 null）。
+  // severity／suggestion 後端無對應欄位：severity 固定「中」（避免 UI 誤標高危），suggestion 留空。
+  const vlm_result: VlmResult | null =
+    raw.vlm_summary === null
+      ? null
+      : {
+          confidence: raw.yolo_score,
+          severity: '中',
+          description: raw.vlm_summary,
+          suggestion: '',
+        };
 
   return {
     id: raw.event_id,
-    event_type: 'fall',
+    // hazard＝物件偵測（危險物品）；其餘一律當跌倒。後端 hazard 實際字串未定，先以 'hazard' 對應（見 DevTestPanel）。
+    event_type: raw.event_type === 'hazard' ? 'hazard' : 'fall',
+    // 危險物品類型：僅取後端有效值，其餘一律 null（跌倒事件亦為 null）。
+    hazard_object: HAZARD_OBJECTS.find((o) => o === raw.hazard_object) ?? null,
     camera,
     occurred_at: normalizeBackendTime(raw.detected_at),
     status: raw.status as EventStatus,   // 後端已對齊三態，僅換欄位名，值不轉換
+    // 通報階段由後端從通報單表算出（值與前端 ReportStage 相同），前端不再自行維護
+    report_stage: raw.report_stage as ReportStage | null,
     confidence: raw.yolo_score,
     vlm_result,
     verdict: raw.verdict as EventVerdict, // 後端已對齊 true_alarm/false_alarm/null
+    // 誤報類型與備註後端尚無對應欄位，一律 null；由前端標記誤報（resolveViaFeedback）時寫入。
+    false_alarm_label: null,
+    false_alarm_note: null,
     clip_path: raw.clip_path,
     snapshot_path: raw.snapshot_path,
-    // staff_id → assignee：後端尚無 GET /staff 名單可對姓名，先以「員工 #<id>」過渡呈現，
-    // 讓孤立數字有語意；名單就緒後改帶真實姓名即可。
-    assignee: raw.staff_id === null ? null : `員工 #${raw.staff_id}`,
+    // assignee 取後端 verdict_by：本案「接手」就是打判定端點（見 claimEvent），判定者即接手者
+    assignee: raw.verdict_by,
     // 以下欄位後端 MVP 階段尚無對應來源，固定 null（非漏接，後端補齊後再帶入）：
     notified_to: null,
     ack_deadline: null,
+    // 每次從後端資料現算，故重整後倒數仍在（先前是接手當下才寫入、只活在記憶體）
+    // 已進入通報階段就不再倒數（已通報即視為已處理）
+    resolve_deadline: raw.report_stage
+      ? null
+      : new Date(
+          new Date(normalizeBackendTime(raw.detected_at)).getTime() + RESOLVE_WINDOW_MS,
+        ).toISOString(),
+    // 續報期限＝最新一筆通報單起算 5 個工作日；結報無此期限
+    follow_up_deadline:
+      raw.last_report_at && (raw.report_stage === 'initial' || raw.report_stage === 'follow_up')
+        ? addBusinessDays(normalizeBackendTime(raw.last_report_at), 5)
+        : null,
     escalated_to: null,
     alerted_at: null,
   };
 }
 
-// severity 後端實際格式尚未確認（可能中文「高/中/低」、英文 high/mid/low，甚至別的字串），
-// 比照 location/vlm_summary 用 runtime 對照兩種語系都接住，實際格式確認後可簡化對照表。
-// 無法辨識的值 fallback 到「中」，並 console.warn 讓第一次遇到不吻合的值會浮上檯面，
-// 而非默默 fallback 掉、自己都不知道對錯。
-function normalizeSeverity(severity: string | null): VlmResult['severity'] {
-  switch (severity?.toLowerCase()) {
-    case '高':
-    case 'high':
-      return '高';
-    case '中':
-    case 'mid':
-    case 'medium':
-      return '中';
-    case '低':
-    case 'low':
-      return '低';
-    default:
-      console.warn('[parseRawEvent] 未知的 severity 值：', severity);
-      return '中';
-  }
-}
-
-// 後端 detected_at 記的是台灣本地時間（UTC+8）但漏帶時區標記（例：'2026-07-11T18:51:34.300114'）。
-// JS 的 new Date() 對「不帶時區」的 ISO 字串會當 UTC 解讀，導致顯示時間平白差 8 小時（如「已經過 28818 秒」）。
-// 這裡對「無時區標記」的字串補上 +08:00；已帶 Z 或 ±hh:mm 者原樣返回，
-// 待後端改回帶時區 ISO 後此函式自動不再加工。全案時間顯示／排序都吃 occurred_at，故只需在此正規化一次。
-function normalizeBackendTime(iso: string): string {
-  const hasTimezone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(iso);
-  return hasTimezone ? iso : `${iso}+08:00`;
-}
-
-const PAGE_LOAD_TIME = Date.now();
-const ACK_DEADLINE_OFFSET_MS = 90000;
-
-/**
- * demo 專用：後端 RawEventPayload 目前無 escalated_to / alerted_at 欄位，parseRawEvent 固定回 null，
- * 但 demo（含日後串接前）仍靠 mock 呈現「曾升級」🚩 徽章與歷史頁「只顯示曾升級」切換，
- * 故在此於 parseRawEvent 之外補一層 demo 加工，把哪些事件曾升級的資訊套回。
- * ⚠ 後端補齊 escalation 欄位後，連同 mock 的 __demo_escalation 整段刪除即可，不影響 parseRawEvent 本身。
- */
-interface DemoEscalation {
-  event_id: string;
-  escalated_to: string;
-  alerted_at: string | null;
-}
-
-function applyDemoEscalation(event: CareEvent, demo: DemoEscalation | undefined): CareEvent {
-  if (!demo) return event;
-  return { ...event, escalated_to: demo.escalated_to, alerted_at: demo.alerted_at };
-}
-
-const rawEvents = eventsMock as unknown as (RawEventPayload & { __demo_escalation?: DemoEscalation })[];
-const demoEscalationById = new Map(
-  rawEvents.filter((r) => r.__demo_escalation).map((r) => [r.event_id, r.__demo_escalation!]),
-);
-
-const EVENTS: CareEvent[] = rawEvents.map((raw) => {
-  const event = applyDemoEscalation(parseRawEvent(raw), demoEscalationById.get(raw.event_id));
-  // pending 事件若尚無接手時限，種一個給逾時倒數 demo 用（正式版時限由後端下發）。
-  return event.status === 'pending' && event.ack_deadline === null
-    ? { ...event, ack_deadline: new Date(PAGE_LOAD_TIME + ACK_DEADLINE_OFFSET_MS).toISOString() }
-    : event;
-});
-
+// 初始清單／載入更多：後端 GET /events 回全部事件（新→舊），與 SSE 同一份 payload 格式。
+// ⚠ 後端無 offset/limit 參數，分頁由前端自行切片；事件量大到不堪負荷時再請後端加 query 參數。
 export async function getEvents(offset: number, limit: number): Promise<CareEvent[]> {
-  return EVENTS.slice(offset, offset + limit);
-}
-
-export async function getEventById(id: string): Promise<CareEvent | null> {
-  return EVENTS.find((e) => e.id === id) ?? null;
-}
-
-export async function updateStatus(id: string, status: EventStatus, assignee?: string | null): Promise<void> {
-  const event = EVENTS.find((e) => e.id === id);
-  if (event) {
-    event.status = status;
-    if (status === 'in_progress') {
-      event.ack_deadline = null;
-      if (assignee !== undefined) event.assignee = assignee;
-    }
-  }
+  const raw = await apiClient.get<RawEventPayload[]>('/events');
+  return raw.slice(offset, offset + limit).map(parseRawEvent);
 }
 
 // 送達確認：後端 POST /events/{id}/ack，無 request body，回 { status: 'ok' }。
@@ -201,6 +128,20 @@ export async function updateStatus(id: string, status: EventStatus, assignee?: s
 // ⚠ 非「接手」——接手是護理人員動作（見 EventsProvider），後端目前無對應端點。
 export async function acknowledgeEvent(id: string): Promise<void> {
   await apiClient.post(`/events/${id}/ack`);
+}
+
+// 接手（「確認前往處理」）：後端沒有獨立的接手端點，改打判定端點 verdict=true_alarm——
+// 後端收到 true_alarm 會把 status 從 pending 轉成 in_progress，正是接手要的效果，
+// 且會自動把按鈕的人（JWT 員編）記進 verdict_by，「誰接手的」一併留痕。
+// ⚠ 語意上判定與接手仍是兩件事（見 04 檔 C#19）；日後後端補獨立的 acknowledge 端點時改打那支即可。
+export async function claimEvent(id: string): Promise<void> {
+  await apiClient.patch(`/events/${id}/verdict`, { verdict: 'true_alarm' });
+}
+
+// 結案：後端 PATCH /events/{id}/resolve，只收處理中的事件，結案者由後端從 JWT 記入。
+// 結報（final）時呼叫——存通報單本身不會結案，兩件事後端是分開的。
+export async function resolveEvent(id: string): Promise<void> {
+  await apiClient.patch(`/events/${id}/resolve`);
 }
 
 // 標記誤報＝先下 verdict=false_alarm，再 resolve 結案（後端兩支端點）。
@@ -215,50 +156,8 @@ export async function submitEventFeedback(
   await apiClient.patch(`/events/${id}/resolve`);
 }
 
-// 歷史查詢終態一律 resolved；真跌倒／誤報改由 verdict 區分，不再用舊 RESOLVED／SUPPRESSED 兩態。
-export async function queryEventHistory(query: EventHistoryQuery): Promise<PagedResult<CareEvent>> {
-  const fromMs = query.from ? new Date(query.from).getTime() : null;
-  const toMs = query.to ? new Date(query.to).getTime() : null;
-
-  const filtered = EVENTS.filter((event) => {
-    if (event.status !== 'resolved') return false;
-    if (query.verdict && event.verdict !== query.verdict) return false;
-    if (query.escalatedOnly && !hasEscalatedFlag(event)) return false;
-    const occurredMs = new Date(event.occurred_at).getTime();
-    if (fromMs !== null && occurredMs < fromMs) return false;
-    if (toMs !== null && occurredMs > toMs) return false;
-    return true;
-  }).sort((a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime());
-
-  const start = (query.page - 1) * query.pageSize;
-  return {
-    items: filtered.slice(start, start + query.pageSize),
-    total: filtered.length,
-  };
-}
-
-export async function getEventHistoryStats(days: number): Promise<EventHistoryStatPoint[]> {
-  const now = Date.now();
-  const dayMs = 24 * 60 * 60 * 1000;
-  const points: EventHistoryStatPoint[] = [];
-
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(now - i * dayMs);
-    const dateKey = date.toISOString().slice(0, 10);
-    points.push({ date: dateKey, true_alarm: 0, false_alarm: 0 });
-  }
-
-  const indexByDate = new Map(points.map((p, idx) => [p.date, idx]));
-
-  EVENTS.forEach((event) => {
-    if (event.status !== 'resolved') return;
-    const dateKey = event.occurred_at.slice(0, 10);
-    const idx = indexByDate.get(dateKey);
-    if (idx === undefined) return;
-    // 依 verdict 分桶：false_alarm 計誤報，其餘（true_alarm／null）計已結案（真跌倒）。
-    if (event.verdict === 'false_alarm') points[idx].false_alarm += 1;
-    else points[idx].true_alarm += 1;
-  });
-
-  return points;
+// 潛在危險「已排除」：後端 hazard 事件規格未定、尚無對應端點，先只記 log 佔位。
+// 端點就緒後改為實際呼叫（候選：PATCH /events/{id}/resolve，與誤報共用 resolve）。
+export async function clearHazardEvent(id: string): Promise<void> {
+  console.info('[clearHazardEvent] 後端端點未定，僅前端狀態更新', id);
 }

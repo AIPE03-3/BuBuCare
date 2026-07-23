@@ -1,30 +1,29 @@
 import { useState } from 'react';
-import { useAuth } from '../hooks/useAuth';
-import { EnvScoreHistory } from './EnvScoreHistory';
-import { MediaDownloads } from './MediaDownloads';
-import { NotificationHistory } from './NotificationHistory';
+import { EventHistoryList } from './EventHistoryList';
+import { FalseAlarmHistoryList } from './FalseAlarmHistoryList';
+import { HazardList } from '../components/HazardList';
+import { useEvents } from '../hooks/eventsContext';
 
-type HistoryTab = 'envScore' | 'notifications' | 'videoClips';
+type HistoryTab = 'events' | 'falseAlarms' | 'clearedHazards';
 
 const TABS: { value: HistoryTab; label: string }[] = [
-  { value: 'envScore', label: '環境安全評分歷史' },
-  { value: 'notifications', label: '通報紀錄' },
-  { value: 'videoClips', label: '影像片段下載' },
+  { value: 'events', label: '已結報事件' },
+  { value: 'falseAlarms', label: '誤報紀錄' },
+  { value: 'clearedHazards', label: '已排除危險' },
 ];
 
 export function History() {
-  const { role } = useAuth();
-  const [tab, setTab] = useState<HistoryTab>('envScore');
-
-  // 通報紀錄 7-3 為 admin 專用；staff 頁籤按鈕本身完全不渲染（非灰階不可點）。
-  const visibleTabs = TABS.filter((t) => t.value !== 'notifications' || role === 'admin');
+  const [tab, setTab] = useState<HistoryTab>('events');
+  const { hazardEvents } = useEvents();
+  // 已排除危險：hazard 事件中已標記 resolved 者。
+  const clearedHazards = hazardEvents.filter((e) => e.status === 'resolved');
 
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold text-[var(--text-primary)]">歷史紀錄</h1>
 
       <div className="flex gap-1 border-b border-[var(--border)]">
-        {visibleTabs.map((t) => (
+        {TABS.map((t) => (
           <button
             key={t.value}
             type="button"
@@ -40,9 +39,11 @@ export function History() {
         ))}
       </div>
 
-      {tab === 'videoClips' && <MediaDownloads />}
-      {tab === 'notifications' && <NotificationHistory />}
-      {tab === 'envScore' && <EnvScoreHistory />}
+      {tab === 'events' && <EventHistoryList />}
+      {tab === 'falseAlarms' && <FalseAlarmHistoryList />}
+      {tab === 'clearedHazards' && (
+        <HazardList hazards={clearedHazards} emptyMessage="尚無已排除危險" />
+      )}
     </div>
   );
 }

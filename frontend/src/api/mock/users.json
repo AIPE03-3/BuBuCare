@@ -1,0 +1,7 @@
+[
+  { "id": "u-001", "name": "王志明", "employee_code": "A1001", "role": "admin" },
+  { "id": "u-002", "name": "陳美惠", "employee_code": "N2001", "role": "staff" },
+  { "id": "u-003", "name": "林淑芬", "employee_code": "N2002", "role": "staff" },
+  { "id": "u-004", "name": "黃俊傑", "employee_code": "N2003", "role": "staff" },
+  { "id": "u-005", "name": "張雅婷", "employee_code": "N2004", "role": "staff" }
+]
