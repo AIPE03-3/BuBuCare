@@ -48,3 +48,12 @@ KAFKA_TOPIC = "processed-reports"
 KAFKA_GROUP_ID = "fulilian-backend"
 EVENTS_URL = os.getenv("EVENTS_URL", "http://localhost:8000/events")
 RETRY_SLEEP_SECONDS = 5
+
+
+# ── S3（事件影片/截圖，換發限時網址用）──
+# albert 傳來的是 s3://aipe03-3/... 的物件位置；後端拿它換發限時可播放網址給前端。
+# bucket 名稱藏在 s3:// 字串裡，這裡只需要 region 與存取金鑰。
+S3_REGION = os.getenv("S3_REGION", "us-east-1")
+S3_ACCESS_KEY_ID = os.getenv("ACCESS_KEY_ID", "")
+S3_SECRET_ACCESS_KEY = os.getenv("SECRET_ACCESS_KEY", "")
+S3_URL_TTL = int(os.getenv("S3_URL_TTL", "3600"))  # 限時網址存活秒數，預設 1 小時

@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, selectinload
 
+from backend.core import s3
 from backend.core.auth import decode_access_token
 from backend.core.config import EVENT_API_KEY
 from backend.core.database import get_db
@@ -170,6 +171,25 @@ async def resolve_event(
     payload = serialize_event(event, device)
     pool.broadcast("event_updated", payload)
     return payload
+
+
+# ════════════════════════════════════════════════════════
+# GET /events/{event_id}/media（登入即可）：換發S3影片/截圖限時網址
+# ════════════════════════════════════════════════════════
+@router.get("/events/{event_id}/media")
+def get_event_media(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = db.query(DetectEvent).filter(DetectEvent.event_id == event_id).first()
+    if event is None:
+        raise HTTPException(status_code=404, detail="事件不存在")
+    # 點開當下才現發，保證新鮮不過期；非 s3:// 的欄位（含空 snapshot）自然回 null
+    return {
+        "clip_url": s3.generate_presigned_url(event.clip_path),
+        "snapshot_url": s3.generate_presigned_url(event.snapshot_path),
+    }
 
 
 # ── SSE 專用驗證：EventSource 不能自訂 header，token 改放網址參數 ──
