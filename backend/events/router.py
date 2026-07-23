@@ -7,15 +7,15 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from backend.core import s3
 from backend.core.auth import decode_access_token
 from backend.core.config import EVENT_API_KEY
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user
-from backend.core.models import DetectEvent, Device
-from backend.events.service import handle_incoming_event, serialize_event, watch_delivery, DeviceNotFoundError
+from backend.core.models import DetectEvent, Device, User
+from backend.events.service import handle_incoming_event, operator_names, serialize_event, watch_delivery, DeviceNotFoundError
 from backend.events.sse import pool, format_sse
 
 router = APIRouter()
@@ -87,16 +87,24 @@ def list_events(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # JOIN 裝置表，一次查好裝置名稱/位置，跟 SSE 廣播用同一個序列化函式
+    # JOIN 裝置表拿裝置名稱/位置；再 LEFT JOIN 兩份 user_account（判定者、結案者）夾帶處理人姓名，
+    # 全部一次查好、不逐筆補查（避免 N+1）。verdict_by/resolved_by 可能為空，故用 outerjoin 不濾掉事件。
     # selectinload：所有事件的通報單一次撈完，避免 serialize_event 每筆各查一次（N+1）
+    verdict_user = aliased(User)
+    resolved_user = aliased(User)
     rows = (
-        db.query(DetectEvent, Device)
+        db.query(DetectEvent, Device, verdict_user.full_name, resolved_user.full_name)
         .join(Device, DetectEvent.device_id == Device.device_id)
+        .outerjoin(verdict_user, DetectEvent.verdict_by == verdict_user.employee_id)
+        .outerjoin(resolved_user, DetectEvent.resolved_by == resolved_user.employee_id)
         .options(selectinload(DetectEvent.reports))
         .order_by(DetectEvent.detected_at.desc())
         .all()
     )
-    return [serialize_event(event, device) for event, device in rows]
+    return [
+        serialize_event(event, device, verdict_by_name, resolved_by_name)
+        for event, device, verdict_by_name, resolved_by_name in rows
+    ]
 
 
 # ── PATCH /events/{id}/verdict 收到的 JSON 格式 ──
@@ -140,7 +148,8 @@ async def verdict_event(
 
     # 先存後播：commit 成功才廣播，讓所有中控站畫面同步
     device = db.query(Device).filter(Device.device_id == event.device_id).first()
-    payload = serialize_event(event, device)
+    verdict_by_name, resolved_by_name = operator_names(db, event)
+    payload = serialize_event(event, device, verdict_by_name, resolved_by_name)
     pool.broadcast("event_updated", payload)
     return payload
 
@@ -168,7 +177,8 @@ async def resolve_event(
     db.refresh(event)
 
     device = db.query(Device).filter(Device.device_id == event.device_id).first()
-    payload = serialize_event(event, device)
+    verdict_by_name, resolved_by_name = operator_names(db, event)
+    payload = serialize_event(event, device, verdict_by_name, resolved_by_name)
     pool.broadcast("event_updated", payload)
     return payload
 

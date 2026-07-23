@@ -6,7 +6,7 @@ import asyncio
 from sqlalchemy.orm import Session
 
 from backend.core.database import SessionLocal
-from backend.core.models import DetectEvent, Device
+from backend.core.models import DetectEvent, Device, User
 from backend.events.sse import pool
 
 
@@ -15,9 +15,17 @@ class DeviceNotFoundError(Exception):
     pass
 
 
-def serialize_event(event: DetectEvent, device: Device) -> dict:
+def serialize_event(
+    event: DetectEvent,
+    device: Device,
+    verdict_by_name: str | None = None,
+    resolved_by_name: str | None = None,
+) -> dict:
     # 事件的統一 JSON 結構：SSE 廣播和 GET /events 都用這一個函式，
-    # 前端只需寫一套顯示邏輯。裝置名稱/位置直接夾帶，前端不用再查
+    # 前端只需寫一套顯示邏輯。裝置名稱/位置直接夾帶，前端不用再查。
+    #
+    # 處理人顯示名（verdict_by_name / resolved_by_name）跟 device 一樣「由呼叫端事先查好再傳進來」，
+    # 本函式只負責組裝、不碰資料庫：列表端用 JOIN 一次撈、單筆端用 operator_names() 取（見下方）。
     #
     # ⚠ event.reports 會觸發延遲載入（多發一次 SQL）。一次序列化多筆事件時，
     #   查詢端要先 selectinload(DetectEvent.reports)，否則每筆各查一次（N+1）
@@ -38,7 +46,9 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         # 讓前端/除錯看得到送達狀態：None = 還沒被 ack
         "notified_at": event.notified_at.isoformat() if event.notified_at else None,
         "verdict_by": event.verdict_by,
+        "verdict_by_name": verdict_by_name,
         "resolved_by": event.resolved_by,
+        "resolved_by_name": resolved_by_name,
         # 通報階段＝最新一筆通報單的類型；兩者皆 None 代表這個事件還沒有任何通報單
         "report_stage": latest_report.report_type if latest_report else None,
         "last_report_at": latest_report.created_at.isoformat() if latest_report else None,
@@ -46,6 +56,21 @@ def serialize_event(event: DetectEvent, device: Device) -> dict:
         "yolo_score": event.yolo_score,
         "vlm_summary": event.vlm_summary,
     }
+
+
+def operator_names(db: Session, event: DetectEvent) -> tuple[str | None, str | None]:
+    # 依單筆 event 的 verdict_by / resolved_by 員編，查 user_account 的 full_name。
+    # 給「只動一筆事件」的呼叫端用（判定 / 結案）；列表端自己用 JOIN 一次撈好、不走這裡。
+    # 回傳 (判定者名, 結案者名)，查不到的為 None（前端會自動退回顯示員編）。
+    ids = {eid for eid in (event.verdict_by, event.resolved_by) if eid}
+    if not ids:
+        return None, None
+    names = dict(
+        db.query(User.employee_id, User.full_name)
+        .filter(User.employee_id.in_(ids))
+        .all()
+    )
+    return names.get(event.verdict_by), names.get(event.resolved_by)
 
 
 def is_delivered(db: Session, event_id: str) -> bool:
