@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SuppressConfirmModal } from './SuppressConfirmModal';
+import { useEventClipUrl } from '../hooks/useEventClipUrl';
 import { EVENT_TYPE_LABEL } from '../types';
 import type { CareEvent, EventType, FalseReportLabel } from '../types';
 
@@ -46,10 +47,11 @@ export function FullScreenAlert({ alerts, now, onAcknowledge, onSuppress }: Full
   const [suppressModalOpen, setSuppressModalOpen] = useState(false);
 
   const activeAlert = alerts.find((a) => a.id === activeId) ?? alerts[0];
+  const { clipUrl, loading: clipLoading } = useEventClipUrl(activeAlert?.id);
 
   if (!activeAlert) return null;
 
-  const videoSrc = activeAlert.camera.stream_url ?? DEMO_VIDEO_SRC;
+  const videoSrc = clipUrl ?? DEMO_VIDEO_SRC;
   const videoError = failedVideoIds.has(activeAlert.id);
 
   async function handleSuppressConfirm(label: FalseReportLabel, note: string) {
@@ -82,7 +84,11 @@ export function FullScreenAlert({ alerts, now, onAcknowledge, onSuppress }: Full
 
         {/* 影片：整寬置中 */}
         <div className="mt-4 aspect-video max-h-[55vh] w-full overflow-hidden rounded-xl bg-[var(--bg-surface-2)]">
-          {videoError ? (
+          {clipLoading ? (
+            <div className="flex h-full items-center justify-center">
+              <span className="text-[var(--text-muted)]">載入中</span>
+            </div>
+          ) : videoError ? (
             <div className="flex h-full items-center justify-center">
               <span className="text-[var(--text-muted)]">案件片段影像</span>
             </div>

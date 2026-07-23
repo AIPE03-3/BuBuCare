@@ -9,6 +9,7 @@ import { setStoredSession, clearStoredSession } from './session';
 interface LoginResponse {
   access_token: string;
   token_type: string;
+  must_change_password: boolean; // 後端在回應最外層帶回，供強制改密碼流程判斷
 }
 
 interface JwtPayload {
@@ -57,6 +58,7 @@ export const employeePasswordProvider: AuthProvider = {
       token: data.access_token,
       role: normalizeRole(payload.role),
       display_name: payload.full_name ?? payload.sub ?? employeeId,
+      must_change_password: data.must_change_password ?? false,
     };
     setStoredSession(session);
     return session;

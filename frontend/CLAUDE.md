@@ -192,6 +192,7 @@ export interface AuthSession {
   token: string;
   role: Role;
   display_name: string;
+  must_change_password: boolean; // 新帳號首次登入／被 admin 重設密碼者為 true，觸發強制改密碼流程
   // employee_code: string | null — 待凱莉確認後端欄位與 /me 端點後新增，未確認前不得實作
 }
 export interface AuthProvider {

@@ -321,7 +321,7 @@ export interface DownloadableMedia {
 }
 
 export type Role = 'admin' | 'staff';
-export interface AuthSession { token: string; role: Role; display_name: string; }
+export interface AuthSession { token: string; role: Role; display_name: string; must_change_password: boolean; }
 export interface AuthProvider {
   requestCode?(email: string): Promise<void>;
   verifyCode?(email: string, code: string): Promise<AuthSession>;

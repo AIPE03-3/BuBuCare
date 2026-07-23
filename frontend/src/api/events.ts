@@ -32,7 +32,9 @@ export interface RawEventPayload {
   detected_at: string;          // ISO
   notified_at: string | null;
   verdict_by: string | null;    // 判定者員編（後端從 JWT 記，前端不帶）
+  verdict_by_name: string | null;   // 判定者姓名（後端 JOIN user_account 夾帶，供顯示；查不到為 null）
   resolved_by: string | null;   // 結案者員編（同上）
+  resolved_by_name: string | null;  // 結案者姓名（同上）
   company_id: number;
   yolo_score: number;
   vlm_summary: string | null;   // VLM 情境描述純文字（後端 DB 為 Text 欄位）
@@ -94,8 +96,9 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     false_alarm_note: null,
     clip_path: raw.clip_path,
     snapshot_path: raw.snapshot_path,
-    // assignee 取後端 verdict_by：本案「接手」就是打判定端點（見 claimEvent），判定者即接手者
-    assignee: raw.verdict_by,
+    // assignee 取後端判定者：本案「接手」就是打判定端點（見 claimEvent），判定者即接手者。
+    // 優先顯示姓名（verdict_by_name），後端查不到姓名時退回員編（verdict_by），不會空白。
+    assignee: raw.verdict_by_name ?? raw.verdict_by,
     // 以下欄位後端 MVP 階段尚無對應來源，固定 null（非漏接，後端補齊後再帶入）：
     notified_to: null,
     ack_deadline: null,
@@ -160,4 +163,15 @@ export async function submitEventFeedback(
 // 端點就緒後改為實際呼叫（候選：PATCH /events/{id}/resolve，與誤報共用 resolve）。
 export async function clearHazardEvent(id: string): Promise<void> {
   console.info('[clearHazardEvent] 後端端點未定，僅前端狀態更新', id);
+}
+
+// 事發影片／截圖限時網址：後端把 clip_path/snapshot_path 的 s3:// 現轉成約 1 小時有效的網址。
+// ⚠ 兩者皆可能為 null（舊事件無雲端影片）；網址會過期，不快取、不存進 redux，每次開啟畫面重新呼叫。
+export interface EventMedia {
+  clip_url: string | null;
+  snapshot_url: string | null;
+}
+
+export async function getEventMedia(id: string): Promise<EventMedia> {
+  return apiClient.get<EventMedia>(`/events/${id}/media`);
 }

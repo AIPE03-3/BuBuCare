@@ -5,6 +5,7 @@ import { DEMO_VIDEO_SRC } from '../components/FullScreenAlert';
 import { EventStatusBadge } from '../components/EventStatusBadge';
 import { ReportContent } from '../components/ReportContent';
 import { useEvents } from '../hooks/eventsContext';
+import { useEventClipUrl } from '../hooks/useEventClipUrl';
 import { getStoredReports } from '../api/reports';
 import { formatDateTime, formatFullDate } from '../utils/time';
 import { getEventTypeLabel } from '../utils/eventFlags';
@@ -50,6 +51,7 @@ export function HistoryEventDetail() {
   const navigate = useNavigate();
   const { events, now } = useEvents();
   const [videoError, setVideoError] = useState(false);
+  const { clipUrl, loading: clipLoading } = useEventClipUrl(id);
   // 通報歷程走 async api（好換成後端 fetch），進場載一次；後端排序契約為舊→新（初報→續報→結報）。
   const [storedReports, setStoredReports] = useState<SavedReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(() => Boolean(id));
@@ -73,7 +75,7 @@ export function HistoryEventDetail() {
     );
   }
 
-  const videoSrc = event.camera.stream_url ?? DEMO_VIDEO_SRC;
+  const videoSrc = clipUrl ?? DEMO_VIDEO_SRC;
   const isFalseAlarm = event.verdict === 'false_alarm';
   const eventTypeLabel = getEventTypeLabel(event);
   const followUpCount = storedReports.filter((r) => r.form.reportType === '續報').length;
@@ -87,7 +89,11 @@ export function HistoryEventDetail() {
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
         {/* 事發影片片段：維持 16:9 填滿（無灰邊）。 */}
         <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-[var(--bg-surface-2)]">
-          {videoError ? (
+          {clipLoading ? (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-sm text-[var(--text-muted)]">載入中</span>
+            </div>
+          ) : videoError ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <span className="text-sm text-[var(--text-muted)]">案件片段影像</span>
             </div>

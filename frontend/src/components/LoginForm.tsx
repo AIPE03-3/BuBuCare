@@ -233,8 +233,9 @@ function PasswordLoginForm() {
     setError(null);
     setSubmitting(true);
     try {
-      await authProvider.loginWithPassword?.(account, password);
-      navigate('/');
+      const session = await authProvider.loginWithPassword?.(account, password);
+      // 被 admin 重設密碼／新帳號首次登入：先去強制改密碼頁，改完才放行進系統
+      navigate(session?.must_change_password ? '/force-change-password' : '/');
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -258,7 +259,7 @@ function PasswordLoginForm() {
           value={account}
           onChange={(e) => setAccount(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--brand)]"
-          placeholder="staff01"
+          placeholder="E001"
         />
       </div>
 

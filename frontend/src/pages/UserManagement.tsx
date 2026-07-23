@@ -14,7 +14,16 @@ export function UserManagement() {
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-[var(--text-primary)]">管理使用者</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold text-[var(--text-primary)]">管理使用者</h1>
+        <button
+          type="button"
+          onClick={() => navigate('/users/new')}
+          className="shrink-0 rounded-md bg-[var(--brand)] px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:opacity-90"
+        >
+          ＋ 新增使用者
+        </button>
+      </div>
       <p className="text-sm text-[var(--text-secondary)]">點選任一位使用者可修改名稱與密碼。</p>
 
       {/* 桌機：表格 */}

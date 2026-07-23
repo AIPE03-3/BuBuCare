@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { DEMO_VIDEO_SRC } from './FullScreenAlert';
+import { useEventClipUrl } from '../hooks/useEventClipUrl';
 import type { CareEvent, FalseReportLabel } from '../types';
 
 const FALSE_REPORT_LABELS: FalseReportLabel[] = ['坐地', '伸展', '彎腰', '攙扶', '其他'];
@@ -18,7 +19,8 @@ export function SuppressConfirmModal({ event, onConfirm, onBack }: SuppressConfi
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const videoSrc = event.camera.stream_url ?? DEMO_VIDEO_SRC;
+  const { clipUrl, loading: clipLoading } = useEventClipUrl(event.id);
+  const videoSrc = clipUrl ?? DEMO_VIDEO_SRC;
   const canConfirm = (videoEnded || videoError) && label !== null && !submitting;
 
   async function handleConfirm() {
@@ -33,7 +35,11 @@ export function SuppressConfirmModal({ event, onConfirm, onBack }: SuppressConfi
         <h2 className="text-lg font-semibold text-[var(--text-primary)]">確認誤報</h2>
 
         <div className="aspect-video min-h-0 w-full shrink overflow-hidden rounded-xl bg-[var(--bg-surface-2)]">
-          {videoError ? (
+          {clipLoading ? (
+            <div className="flex h-full items-center justify-center">
+              <span className="text-[var(--text-muted)]">載入中</span>
+            </div>
+          ) : videoError ? (
             <div className="flex h-full items-center justify-center">
               <span className="text-[var(--text-muted)]">案件片段影像</span>
             </div>
@@ -96,7 +102,7 @@ export function SuppressConfirmModal({ event, onConfirm, onBack }: SuppressConfi
           </button>
         </div>
 
-        {!videoEnded && !videoError && (
+        {!clipLoading && !videoEnded && !videoError && (
           <p className="text-xs text-[var(--text-muted)]">請完整播放影片一次以解鎖「確認誤報並關閉」。</p>
         )}
       </div>

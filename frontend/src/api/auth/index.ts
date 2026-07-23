@@ -10,3 +10,4 @@ const providers: Record<typeof AUTH_MODE, AuthProvider> = {
 
 export const authProvider: AuthProvider = providers[AUTH_MODE];
 export { getStoredSession } from './session';
+export { changeMyPassword } from './changePassword';

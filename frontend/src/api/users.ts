@@ -1,63 +1,114 @@
+import { apiClient, BASE_URL, NGROK_HEADERS } from './client';
+import { getStoredSession } from './auth';
 import type { ManagedUser } from '../types';
-import usersMock from './mock/users.json';
 
-// 管理使用者：後端目前無 /users 端點，demo 以 localStorage 承載（首次由假資料 seed），
-// 讓改名／改密碼在本機持久呈現。未來接後端時只需改寫本檔各函式實作，呼叫端不動。
-const USERS_KEY = 'fulilian_users';
+/**
+ * 使用者管理走真後端（皆為 admin-only 端點，token 由 apiClient 自動帶）：
+ *   GET   /users               → 名單（後端只回未停用帳號）
+ *   PATCH /users/{id}          → 改姓名（後端只收 full_name）
+ *   PATCH /users/{id}/password → 重設密碼（後端只收 new_password，最少 6 碼）
+ * 後端無「查單筆」端點，getUserById 內部撈名單再挑出該筆。
+ * 後端的 POST /register、DELETE /users/{id} 本輪不接（前端無對應 UI 入口）。
+ */
 
-// 內部儲存型別：比對外的 ManagedUser 多一個 demo 密碼欄（write-only，不對外曝光）。
-// ⚠ demo 才把密碼存 localStorage；正式後端一律雜湊、前端不得留存明文。
-interface StoredUser extends ManagedUser {
-  password?: string;
+// 後端 GET /users 每筆回傳格式（backend/users/router.py list_users）。
+// 欄位對照 ManagedUser：employee_id→employee_code、full_name→name；
+// id 後端是整數流水號，前端統一存字串（打路徑 /users/{id} 時後端會轉回 int）。
+interface RawUser {
+  id: number;
+  employee_id: string;
+  full_name: string;
+  role: ManagedUser['role']; // 'staff' | 'admin'，兩邊同值
 }
 
-function seedUsers(): StoredUser[] {
-  return (usersMock as ManagedUser[]).map((u) => ({ ...u }));
-}
-
-function readAll(): StoredUser[] {
-  const raw = localStorage.getItem(USERS_KEY);
-  if (!raw) {
-    const seeded = seedUsers();
-    localStorage.setItem(USERS_KEY, JSON.stringify(seeded));
-    return seeded;
-  }
-  try {
-    return JSON.parse(raw) as StoredUser[];
-  } catch {
-    return seedUsers();
-  }
-}
-
-function writeAll(list: StoredUser[]): void {
-  localStorage.setItem(USERS_KEY, JSON.stringify(list));
-}
-
-// 對外一律只吐 ManagedUser（不含密碼），避免密碼外流到畫面。
-function toManagedUser(u: StoredUser): ManagedUser {
-  return { id: u.id, name: u.name, employee_code: u.employee_code, role: u.role };
+function parseRawUser(raw: RawUser): ManagedUser {
+  return {
+    id: String(raw.id),
+    name: raw.full_name,
+    employee_code: raw.employee_id,
+    role: raw.role,
+  };
 }
 
 export async function getUsers(): Promise<ManagedUser[]> {
-  return readAll().map(toManagedUser);
+  const raw = await apiClient.get<RawUser[]>('/users');
+  return raw.map(parseRawUser);
 }
 
+// 後端無查單筆端點，改撈名單再挑出（demo 資料量小，無效能顧慮）；找不到回 null。
 export async function getUserById(id: string): Promise<ManagedUser | null> {
-  const found = readAll().find((u) => u.id === id);
-  return found ? toManagedUser(found) : null;
+  const all = await getUsers();
+  return all.find((u) => u.id === id) ?? null;
 }
 
-// 更新名稱與／或密碼；欄位未提供者維持原值。密碼為空字串視為不變更。
+export interface CreateUserInput {
+  employee_id: string;
+  full_name: string;
+  password: string;      // admin 給的臨時密碼（≥6 碼），新帳號後端自動設 must_change_password=true
+  role: ManagedUser['role'];
+  email?: string;        // 選填
+}
+
+// 新增使用者（admin-only POST /register）。員編／email 重複後端回 400，
+// 走原生 fetch 讀後端回的 detail 訊息（中文，如「員編已存在」）直接呈現，
+// 因通用 apiClient 只丟籠統的 status 錯誤、分不出是哪個欄位重複。
+export async function createUser(input: CreateUserInput): Promise<void> {
+  const token = getStoredSession()?.token;
+  const res = await fetch(`${BASE_URL}/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...NGROK_HEADERS,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      employee_id: input.employee_id,
+      full_name: input.full_name,
+      password: input.password,
+      role: input.role,
+      email: input.email || null, // 空字串轉 null，後端才不會把空字串當 email 存
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string }) => d?.detail)
+      .catch(() => null);
+    throw new Error(detail ?? `建立失敗（${res.status}）`);
+  }
+}
+
+// 改名與（選填）改密碼。後端拆成兩支端點，故內部視情況打 1~2 次請求，
+// 呼叫端仍只呼叫本函式一次。密碼為 undefined／空字串視為不變更。
 export async function updateUser(
   id: string,
   patch: { name?: string; password?: string },
 ): Promise<void> {
-  const list = readAll();
-  const idx = list.findIndex((u) => u.id === id);
-  if (idx === -1) return;
-  const next: StoredUser = { ...list[idx] };
-  if (patch.name !== undefined) next.name = patch.name;
-  if (patch.password) next.password = patch.password; // demo：明文暫存，正式須改後端雜湊
-  list[idx] = next;
-  writeAll(list);
+  if (patch.name !== undefined) {
+    await apiClient.patch(`/users/${id}`, { full_name: patch.name });
+  }
+  if (patch.password) {
+    await apiClient.patch(`/users/${id}/password`, { new_password: patch.password });
+  }
+}
+
+// 停用使用者（軟刪除，admin-only DELETE /users/{id}）：後端把 is_active 設 false，
+// 資料保留、員編不重用，該帳號從 GET /users 名單消失。
+// 後端擋「停用自己」回 400、找不到回 404；走原生 fetch 讀後端 detail 訊息直接呈現。
+export async function deleteUser(id: string): Promise<void> {
+  const token = getStoredSession()?.token;
+  const res = await fetch(`${BASE_URL}/users/${id}`, {
+    method: 'DELETE',
+    headers: {
+      ...NGROK_HEADERS,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string }) => d?.detail)
+      .catch(() => null);
+    throw new Error(detail ?? `停用失敗（${res.status}）`);
+  }
 }

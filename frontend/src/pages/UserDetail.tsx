@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { BackButton } from '../components/BackButton';
-import { getUserById, updateUser } from '../api/users';
+import { getUserById, updateUser, deleteUser } from '../api/users';
 import { ROLE_LABEL, type ManagedUser } from '../types';
 
-const PASSWORD_MIN_LENGTH = 4;
+const PASSWORD_MIN_LENGTH = 6; // 對齊後端 PATCH /users/{id}/password 的 min_length=6
 
 const inputClass =
   'w-full rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-soft)]';
@@ -29,6 +29,9 @@ export function UserDetail() {
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -81,6 +84,20 @@ export function UserDetail() {
       password: password || undefined,
     });
     navigate('/users');
+  }
+
+  async function handleDelete() {
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await deleteUser(currentUser.id);
+      navigate('/users'); // 停用成功，回列表（該帳號已從名單消失）
+    } catch (err) {
+      // deleteUser 已把後端 detail（如「不能停用自己的帳號」）當 Error message 拋出
+      setDeleteError(err instanceof Error ? err.message : '停用失敗');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -149,6 +166,55 @@ export function UserDetail() {
           >
             儲存
           </button>
+        </div>
+
+        {/* 停用帳號（後端軟刪除＝is_active=false，資料保留可回溯） */}
+        <div className="flex flex-col gap-2">
+          {!confirmingDelete ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                className="self-start rounded-md border border-[var(--danger)] px-4 py-2 text-sm font-medium text-[var(--danger)] transition-colors duration-150 hover:bg-[var(--danger-bg)]"
+              >
+                停用帳號
+              </button>
+              <p className="text-xs text-[var(--text-secondary)]">
+                停用後此帳號無法登入、並從使用者名單消失；資料保留可回溯。
+              </p>
+            </>
+          ) : (
+            <div className="flex flex-col gap-3 rounded-md border border-[var(--danger)] bg-[var(--danger-bg)] p-4">
+              <p className="text-sm text-[var(--text-primary)]">
+                確定要停用{' '}
+                <span className="font-semibold">
+                  {currentUser.name}（{currentUser.employee_code}）
+                </span>{' '}
+                嗎？帳號將被停用、資料保留可回溯。
+              </p>
+              {deleteError && <p className="text-xs text-[var(--danger)]">{deleteError}</p>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="rounded-md bg-[var(--danger)] px-4 py-2 text-sm font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:opacity-50"
+                >
+                  {deleting ? '停用中…' : '確定停用'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    setDeleteError(null);
+                  }}
+                  className="rounded-md border border-[var(--text-secondary)] bg-transparent px-4 py-2 text-sm text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--brand-soft)]"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

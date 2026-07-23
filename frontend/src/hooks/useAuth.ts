@@ -17,6 +17,7 @@ export function useAuth() {
     session,
     role: session?.role ?? null,
     isAuthenticated: session !== null,
+    mustChangePassword: session?.must_change_password === true,
     logout,
   };
 }
