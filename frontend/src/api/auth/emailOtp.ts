@@ -30,6 +30,7 @@ export const emailOtpProvider: AuthProvider = {
         token: `mock-token-${email}-${Date.now()}`,
         role: user.role,
         display_name: user.display_name,
+        must_change_password: false, // OTP 登入無此概念，恆為 false
       };
       setStoredSession(session);
       resolve(session);

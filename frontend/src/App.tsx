@@ -2,9 +2,11 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from './components/AppLayout';
 import { RequireAdmin } from './components/RequireAdmin';
 import { RequireAuth } from './components/RequireAuth';
+import { RequirePasswordChanged } from './components/RequirePasswordChanged';
 import { EventsProvider } from './hooks/EventsProvider';
 import { EventCenter } from './pages/EventCenter';
 import { EventDetail } from './pages/EventDetail';
+import { ForceChangePassword } from './pages/ForceChangePassword';
 import { HazardDetail } from './pages/HazardDetail';
 import { History } from './pages/History';
 import { HistoryEventDetail } from './pages/HistoryEventDetail';
@@ -22,12 +24,24 @@ function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
 
+      {/* 強制改密碼頁：需登入，但不套 RequirePasswordChanged（否則旗標 True 會自我跳轉成無限迴圈） */}
+      <Route
+        path="/force-change-password"
+        element={
+          <RequireAuth>
+            <ForceChangePassword />
+          </RequireAuth>
+        }
+      />
+
       <Route
         element={
           <RequireAuth>
-            <EventsProvider>
-              <AppLayout />
-            </EventsProvider>
+            <RequirePasswordChanged>
+              <EventsProvider>
+                <AppLayout />
+              </EventsProvider>
+            </RequirePasswordChanged>
           </RequireAuth>
         }
       >

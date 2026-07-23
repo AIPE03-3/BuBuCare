@@ -233,8 +233,9 @@ function PasswordLoginForm() {
     setError(null);
     setSubmitting(true);
     try {
-      await authProvider.loginWithPassword?.(account, password);
-      navigate('/');
+      const session = await authProvider.loginWithPassword?.(account, password);
+      // 被 admin 重設密碼／新帳號首次登入：先去強制改密碼頁，改完才放行進系統
+      navigate(session?.must_change_password ? '/force-change-password' : '/');
     } catch (err) {
       setError(errorMessage(err));
     } finally {
