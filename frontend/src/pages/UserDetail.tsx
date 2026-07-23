@@ -4,7 +4,7 @@ import { BackButton } from '../components/BackButton';
 import { getUserById, updateUser } from '../api/users';
 import { ROLE_LABEL, type ManagedUser } from '../types';
 
-const PASSWORD_MIN_LENGTH = 4;
+const PASSWORD_MIN_LENGTH = 6; // 對齊後端 PATCH /users/{id}/password 的 min_length=6
 
 const inputClass =
   'w-full rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-3 py-2 text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-soft)]';

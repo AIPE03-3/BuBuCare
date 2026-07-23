@@ -57,16 +57,16 @@ def seed_demo_data(db):
 
 
 def seed_accounts(db):
-    """建立可以登入中控站的初始帳號（admin / staff01，密碼皆 123456）。
+    """建立可以登入中控站的初始帳號（A001 管理員 / E001 陳雅文，密碼皆 123456）。
 
     密碼一定要經過 bcrypt 雜湊才能存，所以不能直接用 SQL INSERT 明文。
     種子帳號手動設 must_change_password=False，登入時不會被要求改密碼。
     """
     accounts = [
-        {"employee_id": "admin", "full_name": "系統管理員",
-         "email": "admin@fulilian.com", "role": "admin"},
-        {"employee_id": "staff01", "full_name": "示範員工",
-         "email": "staff01@fulilian.com", "role": "staff"},
+        {"employee_id": "A001", "full_name": "系統管理員",
+         "email": "a001@fulilian.com", "role": "admin"},
+        {"employee_id": "E001", "full_name": "陳雅文",
+         "email": "e001@fulilian.com", "role": "staff"},
     ]
     for account in accounts:
         if db.query(User).filter(User.employee_id == account["employee_id"]).first():

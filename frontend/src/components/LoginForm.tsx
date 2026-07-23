@@ -258,7 +258,7 @@ function PasswordLoginForm() {
           value={account}
           onChange={(e) => setAccount(e.target.value)}
           className="mt-1 w-full rounded-md border border-[var(--border)] px-3 py-2 text-sm text-[var(--text-primary)] outline-none transition-colors duration-150 focus:border-[var(--brand)]"
-          placeholder="staff01"
+          placeholder="E001"
         />
       </div>
 
