@@ -3,6 +3,18 @@ GCP 須設定 Firewall (http, ssh, kafka)
 project 資料夾: /var/project  
 python tool:uv  
 
+安裝:  
+<b>升級到 Node.js 20.x 或 22.x</b>;  <b>rsync</b>;  <b>uv</b>
+```
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt update
+sudo apt-get install -y nodejs
+sudo apt install -y rsync
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env 
+```
+
 (2) VM 路徑配置和對應掛載
 <pre>
 	/var/project/  
