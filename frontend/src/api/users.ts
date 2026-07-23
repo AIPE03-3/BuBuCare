@@ -1,4 +1,5 @@
-import { apiClient } from './client';
+import { apiClient, BASE_URL, NGROK_HEADERS } from './client';
+import { getStoredSession } from './auth';
 import type { ManagedUser } from '../types';
 
 /**
@@ -38,6 +39,43 @@ export async function getUsers(): Promise<ManagedUser[]> {
 export async function getUserById(id: string): Promise<ManagedUser | null> {
   const all = await getUsers();
   return all.find((u) => u.id === id) ?? null;
+}
+
+export interface CreateUserInput {
+  employee_id: string;
+  full_name: string;
+  password: string;      // admin 給的臨時密碼（≥6 碼），新帳號後端自動設 must_change_password=true
+  role: ManagedUser['role'];
+  email?: string;        // 選填
+}
+
+// 新增使用者（admin-only POST /register）。員編／email 重複後端回 400，
+// 走原生 fetch 讀後端回的 detail 訊息（中文，如「員編已存在」）直接呈現，
+// 因通用 apiClient 只丟籠統的 status 錯誤、分不出是哪個欄位重複。
+export async function createUser(input: CreateUserInput): Promise<void> {
+  const token = getStoredSession()?.token;
+  const res = await fetch(`${BASE_URL}/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...NGROK_HEADERS,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({
+      employee_id: input.employee_id,
+      full_name: input.full_name,
+      password: input.password,
+      role: input.role,
+      email: input.email || null, // 空字串轉 null，後端才不會把空字串當 email 存
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string }) => d?.detail)
+      .catch(() => null);
+    throw new Error(detail ?? `建立失敗（${res.status}）`);
+  }
 }
 
 // 改名與（選填）改密碼。後端拆成兩支端點，故內部視情況打 1~2 次請求，

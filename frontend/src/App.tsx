@@ -17,6 +17,7 @@ import { ReportFormPage } from './pages/ReportFormPage';
 import { ReportPreview } from './pages/ReportPreview';
 import { ReportGeneration } from './pages/ReportGeneration';
 import { UserManagement } from './pages/UserManagement';
+import { UserCreate } from './pages/UserCreate';
 import { UserDetail } from './pages/UserDetail';
 
 function App() {
@@ -60,6 +61,14 @@ function App() {
           element={
             <RequireAdmin>
               <UserManagement />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/users/new"
+          element={
+            <RequireAdmin>
+              <UserCreate />
             </RequireAdmin>
           }
         />
