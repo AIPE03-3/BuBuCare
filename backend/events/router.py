@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from backend.core.auth import decode_access_token
 from backend.core.config import EVENT_API_KEY
@@ -87,9 +87,11 @@ def list_events(
     db: Session = Depends(get_db),
 ):
     # JOIN 裝置表，一次查好裝置名稱/位置，跟 SSE 廣播用同一個序列化函式
+    # selectinload：所有事件的通報單一次撈完，避免 serialize_event 每筆各查一次（N+1）
     rows = (
         db.query(DetectEvent, Device)
         .join(Device, DetectEvent.device_id == Device.device_id)
+        .options(selectinload(DetectEvent.reports))
         .order_by(DetectEvent.detected_at.desc())
         .all()
     )

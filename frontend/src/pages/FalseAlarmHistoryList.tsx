@@ -6,7 +6,14 @@ export function FalseAlarmHistoryList() {
   const { events } = useEvents();
   const falseAlarms = events.filter((event) => event.verdict === 'false_alarm');
 
-  return <EventTable events={falseAlarms} emptyMessage="尚無誤報紀錄" />;
+  // 誤報詳情同樣導向唯讀歷史詳情 /history/:id（誤報通常無通報單，歷程區塊顯示空狀態）。
+  return (
+    <EventTable
+      events={falseAlarms}
+      emptyMessage="尚無誤報紀錄"
+      getRowHref={(event) => `/history/${event.id}`}
+    />
+  );
 }
 
 export default FalseAlarmHistoryList;

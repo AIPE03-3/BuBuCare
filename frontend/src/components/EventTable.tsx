@@ -7,7 +7,16 @@ import type { CareEvent } from '../types';
 
 // 事件表格：事件編號/事件/事發地點/事發時間/事件狀態。已結報事件、誤報紀錄等清單共用。
 // 版型（桌機表格／手機卡片）交由 ResponsiveEventList 處理，本檔只定義欄位內容。
-export function EventTable({ events, emptyMessage }: { events: CareEvent[]; emptyMessage: string }) {
+// getRowHref：點列去向，預設 /events/:id（事件中心詳情）。歷史紀錄清單傳 /history/:id 導向唯讀歷史詳情。
+export function EventTable({
+  events,
+  emptyMessage,
+  getRowHref = (event) => `/events/${event.id}`,
+}: {
+  events: CareEvent[];
+  emptyMessage: string;
+  getRowHref?: (event: CareEvent) => string;
+}) {
   const { now } = useEvents();
 
   const columns: EventListColumn[] = [
@@ -48,7 +57,7 @@ export function EventTable({ events, emptyMessage }: { events: CareEvent[]; empt
     <ResponsiveEventList
       events={events}
       columns={columns}
-      getRowHref={(event) => `/events/${event.id}`}
+      getRowHref={getRowHref}
       emptyMessage={emptyMessage}
     />
   );

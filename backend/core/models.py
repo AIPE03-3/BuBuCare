@@ -131,6 +131,11 @@ class DetectEvent(Base):  # 跌倒事件主表
     # 顯示事件位置走這個關聯（凍住的 location_id），不要繞去 device.location（那是裝置現況）
     location: Mapped[Optional["Location"]] = relationship("Location")
 
+    # 該事件的所有通報單，舊→新排序（取最後一筆即最新通報階段）
+    reports: Mapped[list["DetectEventReport"]] = relationship(
+        "DetectEventReport", order_by="DetectEventReport.created_at"
+    )
+
 
 class DetectEventReport(Base):  # 事件通報單：每次儲存獨立一筆（初報/續報/結報累積，不覆蓋）
     __tablename__ = "detect_event_reports"

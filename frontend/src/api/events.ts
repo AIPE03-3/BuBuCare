@@ -1,11 +1,12 @@
 import { apiClient } from './client';
-import { normalizeBackendTime } from '../utils/time';
+import { addBusinessDays, normalizeBackendTime } from '../utils/time';
 import type {
   CareEvent,
   Camera,
   EventStatus,
   EventVerdict,
   FalseReportLabel,
+  ReportStage,
   VlmResult,
 } from '../types';
 import { HAZARD_OBJECTS } from '../types';
@@ -35,6 +36,8 @@ export interface RawEventPayload {
   company_id: number;
   yolo_score: number;
   vlm_summary: string | null;   // VLM 情境描述純文字（後端 DB 為 Text 欄位）
+  report_stage: string | null;  // 最新一筆通報單的類型（initial/follow_up/final），無通報單為 null
+  last_report_at: string | null; // 最新一筆通報單的儲存時間，續報期限由此起算
   hazard_object?: string | null; // 潛在危險事件才有；後端實際欄位未定，先預留（見 DevTestPanel）
 }
 
@@ -43,6 +46,10 @@ export interface RawEventPayload {
  * 欄位對應已對照後端 serialize_event（backend/events/service.py）確認，
  * SSE 廣播與 GET /events 兩條路徑用的是同一份 payload，故共用本函式。
  */
+// 結案時限：自事發起算 24 小時。用 detected_at（後端欄位）而非接手時間——
+// 後端沒存判定時間，且從事發起算才不會「沒人接手就不開始倒數」。
+const RESOLVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export function parseRawEvent(raw: RawEventPayload): CareEvent {
   const camera: Camera = {
     id: raw.device_id,
@@ -77,8 +84,8 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     camera,
     occurred_at: normalizeBackendTime(raw.detected_at),
     status: raw.status as EventStatus,   // 後端已對齊三態，僅換欄位名，值不轉換
-    // 通報狀態後端尚無對應欄位，一律 null（尚未通報），由前端詳情頁按鈕更新。後端補齊後改由 raw 帶入。
-    report_stage: null,
+    // 通報階段由後端從通報單表算出（值與前端 ReportStage 相同），前端不再自行維護
+    report_stage: raw.report_stage as ReportStage | null,
     confidence: raw.yolo_score,
     vlm_result,
     verdict: raw.verdict as EventVerdict, // 後端已對齊 true_alarm/false_alarm/null
@@ -87,16 +94,23 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     false_alarm_note: null,
     clip_path: raw.clip_path,
     snapshot_path: raw.snapshot_path,
-    // assignee＝「接手處理的人」，後端無此概念（沒有接手端點），故一律 null，由前端接手動作寫入。
-    // ⚠ 後端的 verdict_by／resolved_by 是「判定者／結案者員編」，語意不同，不可拿來當 assignee。
-    assignee: null,
+    // assignee 取後端 verdict_by：本案「接手」就是打判定端點（見 claimEvent），判定者即接手者
+    assignee: raw.verdict_by,
     // 以下欄位後端 MVP 階段尚無對應來源，固定 null（非漏接，後端補齊後再帶入）：
     notified_to: null,
     ack_deadline: null,
-    // 尚未接手，故無 24 小時結案時限；接手（acknowledgeEvent）當下才寫入。
-    resolve_deadline: null,
-    // 續報期限於初報（updateReportStage stage='initial'）時才計算，此前為 null。
-    follow_up_deadline: null,
+    // 每次從後端資料現算，故重整後倒數仍在（先前是接手當下才寫入、只活在記憶體）
+    // 已進入通報階段就不再倒數（已通報即視為已處理）
+    resolve_deadline: raw.report_stage
+      ? null
+      : new Date(
+          new Date(normalizeBackendTime(raw.detected_at)).getTime() + RESOLVE_WINDOW_MS,
+        ).toISOString(),
+    // 續報期限＝最新一筆通報單起算 5 個工作日；結報無此期限
+    follow_up_deadline:
+      raw.last_report_at && (raw.report_stage === 'initial' || raw.report_stage === 'follow_up')
+        ? addBusinessDays(normalizeBackendTime(raw.last_report_at), 5)
+        : null,
     escalated_to: null,
     alerted_at: null,
   };
@@ -122,6 +136,12 @@ export async function acknowledgeEvent(id: string): Promise<void> {
 // ⚠ 語意上判定與接手仍是兩件事（見 04 檔 C#19）；日後後端補獨立的 acknowledge 端點時改打那支即可。
 export async function claimEvent(id: string): Promise<void> {
   await apiClient.patch(`/events/${id}/verdict`, { verdict: 'true_alarm' });
+}
+
+// 結案：後端 PATCH /events/{id}/resolve，只收處理中的事件，結案者由後端從 JWT 記入。
+// 結報（final）時呼叫——存通報單本身不會結案，兩件事後端是分開的。
+export async function resolveEvent(id: string): Promise<void> {
+  await apiClient.patch(`/events/${id}/resolve`);
 }
 
 // 標記誤報＝先下 verdict=false_alarm，再 resolve 結案（後端兩支端點）。

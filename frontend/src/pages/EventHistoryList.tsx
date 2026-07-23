@@ -9,7 +9,14 @@ export function EventHistoryList() {
     (event) => event.status === 'resolved' && event.verdict !== 'false_alarm',
   );
 
-  return <EventTable events={resolved} emptyMessage="尚無已結案事件" />;
+  // 導向唯讀歷史詳情 /history/:id，不進事件中心的操作頁，避免點歷史事件跳回事件中心。
+  return (
+    <EventTable
+      events={resolved}
+      emptyMessage="尚無已結案事件"
+      getRowHref={(event) => `/history/${event.id}`}
+    />
+  );
 }
 
 export default EventHistoryList;

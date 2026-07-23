@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { claimEvent, clearHazardEvent, getEvents, submitEventFeedback } from '../api/events';
-import { addBusinessDays } from '../utils/time';
 import { FullScreenAlert } from '../components/FullScreenAlert';
-import type { AlertLogAction, AlertLogEntry, CareEvent, FalseReportLabel, ReportStage } from '../types';
+import type { AlertLogAction, AlertLogEntry, CareEvent, FalseReportLabel } from '../types';
 
 // 警示處理紀錄項目：由被處理的事件與動作組出一筆 log（首頁右側 log 用）。
 function buildAlertLogEntry(event: CareEvent, action: AlertLogAction): AlertLogEntry {
@@ -109,13 +108,11 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     }
     preAckSnapshotRef.current.set(event.id, event);
     const assignee = session?.display_name ?? null;
-    // 接手當下啟動該筆專屬的 24 小時結案倒數（存絕對到期時間戳，各事件互不共用）。
-    const resolveDeadline = new Date(Date.now() + RESOLVE_WINDOW_MS).toISOString();
+    // resolve_deadline 不在此設定：已改由 parseRawEvent 從事發時間現算（api/events.ts）
     const acknowledged: CareEvent = {
       ...event,
       status: 'in_progress',
       ack_deadline: null,
-      resolve_deadline: resolveDeadline,
       assignee,
     };
     setEvents((prev) => {
@@ -200,30 +197,12 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     setLastAckedId(null);
   }
 
-  // 更新通報狀態：就地更新 context 內該筆事件，讓詳情頁與清單同步。後端補齊端點後於此改為呼叫 API。
-  // 「已結報」(final) 視為結案 → status 轉 resolved，事件離開事件中心（未結案）並進入歷史紀錄；
-  // 其餘階段（初報/續報）維持處理中，仍留在事件中心。
-  // 一旦進入通報階段（已初報起），24 小時處理時限的倒數即清除（resolve_deadline 設 null，
-  // CountdownTimer 遇 null 顯示「—」）——已通報即視為已處理，不再逼倒數。
-  // 續報期限：初報與每次續報都重算，自當下起算 5 個工作日（排除週末），以日期顯示；結報無此期限。
-  function updateReportStage(eventId: string, stage: ReportStage) {
-    const followUpDeadline =
-      stage === 'initial' || stage === 'follow_up'
-        ? addBusinessDays(new Date().toISOString(), 5)
-        : null;
-    setEvents((prev) =>
-      prev.map((e) =>
-        e.id === eventId
-          ? {
-              ...e,
-              report_stage: stage,
-              status: stage === 'final' ? 'resolved' : 'in_progress',
-              resolve_deadline: null,
-              follow_up_deadline: followUpDeadline,
-            }
-          : e,
-      ),
-    );
+  // 重新向後端取事件清單。存完通報單／結案後呼叫，讓通報階段與狀態改由後端資料決定，
+  // 前端不再自行推測（後端已回 report_stage／last_report_at，見 api/events.ts）。
+  async function refreshEvents() {
+    const latest = await getEvents(0, INITIAL_LOAD_SIZE);
+    setEvents(latest);
+    setOffset(latest.length);
   }
 
   // 潛在危險「已排除」：就地把該筆 hazard 標為 resolved，使其離開事件中心「潛在危險」頁、進入歷史「已排除危險」頁。
@@ -263,7 +242,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     handleResolveViaFeedback: resolveViaFeedback,
     lastAckedEvent,
     undoAcknowledge,
-    updateReportStage,
+    refreshEvents,
     restoreEvent,
     // DEV-TEST：測試按鈕注入事件，直接複用真後端事件進場邏輯。移除測試功能時刪掉這兩行即可。
     injectTestEvent: handleIncomingEvent,
