@@ -161,3 +161,14 @@ export async function submitEventFeedback(
 export async function clearHazardEvent(id: string): Promise<void> {
   console.info('[clearHazardEvent] 後端端點未定，僅前端狀態更新', id);
 }
+
+// 事發影片／截圖限時網址：後端把 clip_path/snapshot_path 的 s3:// 現轉成約 1 小時有效的網址。
+// ⚠ 兩者皆可能為 null（舊事件無雲端影片）；網址會過期，不快取、不存進 redux，每次開啟畫面重新呼叫。
+export interface EventMedia {
+  clip_url: string | null;
+  snapshot_url: string | null;
+}
+
+export async function getEventMedia(id: string): Promise<EventMedia> {
+  return apiClient.get<EventMedia>(`/events/${id}/media`);
+}

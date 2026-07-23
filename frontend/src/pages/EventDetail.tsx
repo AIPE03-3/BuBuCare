@@ -5,6 +5,7 @@ import { CountdownTimer } from '../components/CountdownTimer';
 import { DEMO_VIDEO_SRC } from '../components/FullScreenAlert';
 import { EventStatusBadge } from '../components/EventStatusBadge';
 import { useEvents } from '../hooks/eventsContext';
+import { useEventClipUrl } from '../hooks/useEventClipUrl';
 import { getStoredReports } from '../api/reports';
 import { formatDateTime, formatFullDate } from '../utils/time';
 import { getEventTypeLabel } from '../utils/eventFlags';
@@ -24,6 +25,7 @@ export function EventDetail() {
   const navigate = useNavigate();
   const { events, now, restoreEvent } = useEvents();
   const [videoError, setVideoError] = useState(false);
+  const { clipUrl, loading: clipLoading } = useEventClipUrl(id);
   // 通報單紀錄走 async api（好換成後端 fetch），effect 載入；本頁進場時載一次即可。
   const [storedReports, setStoredReports] = useState<SavedReport[]>([]);
 
@@ -43,7 +45,7 @@ export function EventDetail() {
     );
   }
 
-  const videoSrc = event.camera.stream_url ?? DEMO_VIDEO_SRC;
+  const videoSrc = clipUrl ?? DEMO_VIDEO_SRC;
   // 誤報紀錄的事件：事件類型顯示誤報時選的類型，隱藏製作通報單，改提供「恢復事件」。
   const isFalseAlarm = event.verdict === 'false_alarm';
   const eventTypeLabel = getEventTypeLabel(event);
@@ -60,7 +62,11 @@ export function EventDetail() {
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
         {/* 事發影片片段：維持 16:9 填滿（無灰邊）。 */}
         <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-[var(--bg-surface-2)]">
-          {videoError ? (
+          {clipLoading ? (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-sm text-[var(--text-muted)]">載入中</span>
+            </div>
+          ) : videoError ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <span className="text-sm text-[var(--text-muted)]">案件片段影像</span>
             </div>
