@@ -91,3 +91,24 @@ export async function updateUser(
     await apiClient.patch(`/users/${id}/password`, { new_password: patch.password });
   }
 }
+
+// 停用使用者（軟刪除，admin-only DELETE /users/{id}）：後端把 is_active 設 false，
+// 資料保留、員編不重用，該帳號從 GET /users 名單消失。
+// 後端擋「停用自己」回 400、找不到回 404；走原生 fetch 讀後端 detail 訊息直接呈現。
+export async function deleteUser(id: string): Promise<void> {
+  const token = getStoredSession()?.token;
+  const res = await fetch(`${BASE_URL}/users/${id}`, {
+    method: 'DELETE',
+    headers: {
+      ...NGROK_HEADERS,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string }) => d?.detail)
+      .catch(() => null);
+    throw new Error(detail ?? `停用失敗（${res.status}）`);
+  }
+}
