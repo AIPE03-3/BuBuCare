@@ -15,7 +15,7 @@
 ``` yaml
 paths:
   my_camera_tapo:
-    source: rtsp://<帳號>:<密碼>@192.168.1.115:554/stream2
+    source: rtsp://<帳號>:<密碼>@<攝影機IP>:554/stream2
     rtspTransport: tcp
 
 webrtc: true
@@ -52,10 +52,10 @@ UDP 8189： - Inbound - UDP - Port 8189 - Allow - Domain/Private/Public
 ## 4. 遇到的問題
 
 -   電腦可開：
-    -   http://192.168.1.108:8889/my_camera_tapo/
+    -   http://<電腦IP>:8889/my_camera_tapo/
 -   手機無法開。
 -   手機可開：
-    -   http://192.168.1.108:8000/
+    -   http://<電腦IP>:8000/
 
 MediaMTX 日誌沒有新增任何 HTTP/WebRTC 紀錄。
 
