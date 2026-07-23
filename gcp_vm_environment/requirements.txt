@@ -5,3 +5,4 @@ prometheus-client
 prometheus-fastapi-instrumentator
 httpx
 boto3
+gunicorn
