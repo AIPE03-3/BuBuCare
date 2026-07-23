@@ -41,7 +41,7 @@ py -m http.server 8000 --bind 0.0.0.0
 py -m http.server 8000 --bind 0.0.0.0 --directory C:\AIPE_PROJECT\RTSP
 ```
 
-測試： - http://127.0.0.1:8000/ - http://192.168.1.108:8000/
+測試： - http://127.0.0.1:8000/ - http://192.168.xxx.xxx:8000/
 
 ## 3. 防火牆規則
 
