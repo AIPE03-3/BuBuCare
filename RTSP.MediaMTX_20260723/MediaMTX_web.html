@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>MediaMTX 即時監控與截圖</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 30px;
+      background: #151515;
+      color: #ffffff;
+      font-family: Arial, "Microsoft JhengHei", sans-serif;
+    }
+
+    .container {
+      width: min(1100px, 100%);
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin-top: 0;
+      text-align: center;
+    }
+
+    .status {
+      margin-bottom: 15px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      background: #292929;
+    }
+
+    .video-container {
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      background: #000000;
+      border: 1px solid #444444;
+      border-radius: 12px;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      max-height: 70vh;
+      background: #000000;
+      object-fit: contain;
+    }
+
+    .camera-name {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      padding: 7px 11px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.65);
+      font-size: 14px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    button,
+    select {
+      min-height: 42px;
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 7px;
+      font-size: 16px;
+    }
+
+    button {
+      cursor: pointer;
+      background: #eeeeee;
+      color: #111111;
+    }
+
+    button:hover {
+      background: #d8d8d8;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .snapshot-section {
+      margin-top: 28px;
+    }
+
+    .snapshot-section h2 {
+      margin-bottom: 12px;
+    }
+
+    #snapshotPreview {
+      display: none;
+      width: 100%;
+      max-height: 70vh;
+      border: 1px solid #444444;
+      border-radius: 12px;
+      background: #000000;
+      object-fit: contain;
+    }
+
+    .snapshot-info {
+      margin-top: 10px;
+      color: #bbbbbb;
+    }
+
+    /*
+         * Canvas 不必直接顯示。
+         * 它只負責把 video 的目前影格轉成圖片。
+         */
+    #snapshotCanvas {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="container">
+    <h1>MediaMTX 即時監控</h1>
+
+    <div id="status" class="status">
+      正在連接攝影機……
+    </div>
+
+    <section class="video-container">
+      <video id="video" autoplay muted playsinline></video>
+
+      <div class="camera-name">
+        Tapo Camera
+      </div>
+    </section>
+
+    <div class="controls">
+      <button id="reconnectButton" type="button">
+        重新連線
+      </button>
+
+      <button id="snapshotButton" type="button" disabled>
+        截取目前畫面
+      </button>
+
+      <select id="imageFormat" aria-label="截圖格式">
+        <option value="image/jpeg">JPG</option>
+        <option value="image/png">PNG</option>
+      </select>
+    </div>
+
+    <section class="snapshot-section">
+      <h2>截圖預覽</h2>
+
+      <img id="snapshotPreview" alt="攝影機截圖預覽">
+
+      <div id="snapshotInfo" class="snapshot-info">
+        尚未截圖
+      </div>
+    </section>
+
+    <canvas id="snapshotCanvas"></canvas>
+  </main>
+
+  <script>
+    /*
+     * 你的 MediaMTX WebRTC/WHEP 網址。
+     *
+     * 可直接播放的頁面：
+     * http://127.0.0.1:8889/my_camera_tapo/
+     *
+     * 自訂播放器使用的 WHEP API：
+     * http://127.0.0.1:8889/my_camera_tapo/whep
+     */
+    const WHEP_URL =
+      "http://<電腦IP>:8889/my_camera_tapo/whep";
+
+    const video = document.getElementById("video");
+    const statusElement = document.getElementById("status");
+
+    const reconnectButton =
+      document.getElementById("reconnectButton");
+
+    const snapshotButton =
+      document.getElementById("snapshotButton");
+
+    const imageFormat =
+      document.getElementById("imageFormat");
+
+    const snapshotCanvas =
+      document.getElementById("snapshotCanvas");
+
+    const snapshotPreview =
+      document.getElementById("snapshotPreview");
+
+    const snapshotInfo =
+      document.getElementById("snapshotInfo");
+
+    let peerConnection = null;
+    let currentObjectUrl = null;
+
+    function setStatus(message) {
+      statusElement.textContent = message;
+      console.log(message);
+    }
+
+    function waitForIceGatheringComplete(pc) {
+      return new Promise((resolve) => {
+        if (pc.iceGatheringState === "complete") {
+          resolve();
+          return;
+        }
+
+        const handleStateChange = () => {
+          if (pc.iceGatheringState === "complete") {
+            pc.removeEventListener(
+              "icegatheringstatechange",
+              handleStateChange
+            );
+
+            resolve();
+          }
+        };
+
+        pc.addEventListener(
+          "icegatheringstatechange",
+          handleStateChange
+        );
+      });
+    }
+
+    function closeConnection() {
+      snapshotButton.disabled = true;
+
+      if (peerConnection) {
+        peerConnection.ontrack = null;
+        peerConnection.onconnectionstatechange = null;
+        peerConnection.oniceconnectionstatechange = null;
+
+        peerConnection.close();
+        peerConnection = null;
+      }
+
+      video.srcObject = null;
+    }
+
+    async function connectWebRTC() {
+      closeConnection();
+
+      setStatus("正在連接 MediaMTX……");
+
+      try {
+        peerConnection = new RTCPeerConnection({
+          iceServers: []
+        });
+
+        /*
+         * 這個網頁只接收影片，不傳送影片。
+         */
+        peerConnection.addTransceiver("video", {
+          direction: "recvonly"
+        });
+
+        peerConnection.ontrack = (event) => {
+          let stream = event.streams[0];
+
+          /*
+           * 某些情況下 event.streams 可能是空的，
+           * 因此另外建立 MediaStream。
+           */
+          if (!stream) {
+            stream = new MediaStream([event.track]);
+          }
+
+          video.srcObject = stream;
+
+          video.play().catch((error) => {
+            console.warn("自動播放失敗：", error);
+          });
+        };
+
+        peerConnection.onconnectionstatechange = () => {
+          const state = peerConnection.connectionState;
+
+          console.log("WebRTC connectionState:", state);
+
+          switch (state) {
+            case "connected":
+              setStatus("攝影機已連線");
+              break;
+
+            case "connecting":
+              setStatus("正在建立 WebRTC 連線……");
+              break;
+
+            case "disconnected":
+              setStatus("攝影機連線中斷");
+              snapshotButton.disabled = true;
+              break;
+
+            case "failed":
+              setStatus("WebRTC 連線失敗");
+              snapshotButton.disabled = true;
+              break;
+
+            case "closed":
+              setStatus("WebRTC 連線已關閉");
+              snapshotButton.disabled = true;
+              break;
+          }
+        };
+
+        const offer =
+          await peerConnection.createOffer();
+
+        await peerConnection.setLocalDescription(offer);
+
+        /*
+         * 等待 ICE candidate 收集完成，
+         * 再一次將完整 SDP 傳給 MediaMTX。
+         */
+        await waitForIceGatheringComplete(peerConnection);
+
+        const response = await fetch(WHEP_URL, {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/sdp"
+          },
+
+          body: peerConnection.localDescription.sdp
+        });
+
+        if (!response.ok) {
+          const responseText = await response.text();
+
+          throw new Error(
+            `MediaMTX 回傳 ${response.status}：` +
+            responseText
+          );
+        }
+
+        const answerSdp = await response.text();
+
+        await peerConnection.setRemoteDescription({
+          type: "answer",
+          sdp: answerSdp
+        });
+
+        setStatus("WebRTC 協商完成，等待影片畫面……");
+      } catch (error) {
+        console.error(error);
+
+        setStatus(`連線失敗：${error.message}`);
+
+        closeConnection();
+      }
+    }
+
+    function getFileTimestamp() {
+      const now = new Date();
+
+      const pad = (value) =>
+        String(value).padStart(2, "0");
+
+      return [
+        now.getFullYear(),
+        pad(now.getMonth() + 1),
+        pad(now.getDate())
+      ].join("") +
+        "_" +
+        [
+          pad(now.getHours()),
+          pad(now.getMinutes()),
+          pad(now.getSeconds())
+        ].join("");
+    }
+
+    function takeSnapshot() {
+      /*
+       * videoWidth / videoHeight 是攝影機影像的原始解析度，
+       * 不是網頁上顯示的 CSS 大小。
+       */
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+
+      if (!width || !height || video.readyState < 2) {
+        alert("影片尚未載入完成，暫時不能截圖。");
+        return;
+      }
+
+      snapshotCanvas.width = width;
+      snapshotCanvas.height = height;
+
+      const context = snapshotCanvas.getContext("2d");
+
+      if (!context) {
+        alert("瀏覽器無法建立 Canvas。");
+        return;
+      }
+
+      /*
+       * 將目前 video 畫面畫進 canvas。
+       */
+      context.drawImage(
+        video,
+        0,
+        0,
+        width,
+        height
+      );
+
+      const mimeType = imageFormat.value;
+
+      /*
+       * JPG 使用 0.92 畫質。
+       * PNG 不會使用 quality 參數。
+       */
+      const quality =
+        mimeType === "image/jpeg" ? 0.92 : undefined;
+
+      snapshotCanvas.toBlob(
+        (blob) => {
+          if (!blob) {
+            alert("截圖建立失敗。");
+            return;
+          }
+
+          if (currentObjectUrl) {
+            URL.revokeObjectURL(currentObjectUrl);
+          }
+
+          currentObjectUrl =
+            URL.createObjectURL(blob);
+
+          snapshotPreview.src = currentObjectUrl;
+          snapshotPreview.style.display = "block";
+
+          const extension =
+            mimeType === "image/png"
+              ? "png"
+              : "jpg";
+
+          const fileName =
+            `my_camera_tapo_${getFileTimestamp()}.${extension}`;
+
+          snapshotInfo.textContent =
+            `截圖解析度：${width} × ${height}，` +
+            `檔名：${fileName}`;
+
+          /*
+           * 建立臨時下載連結，自動儲存圖片。
+           */
+          const downloadLink =
+            document.createElement("a");
+
+          downloadLink.href = currentObjectUrl;
+          downloadLink.download = fileName;
+
+          document.body.appendChild(downloadLink);
+          downloadLink.click();
+          downloadLink.remove();
+        },
+        mimeType,
+        quality
+      );
+    }
+
+    /*
+     * loadeddata 代表 video 已有足夠資料，
+     * 可以顯示並擷取目前影格。
+     */
+    video.addEventListener("loadeddata", () => {
+      snapshotButton.disabled = false;
+
+      setStatus(
+        `攝影機畫面已載入：` +
+        `${video.videoWidth} × ${video.videoHeight}`
+      );
+    });
+
+    video.addEventListener("playing", () => {
+      snapshotButton.disabled = false;
+      setStatus("攝影機正在即時播放");
+    });
+
+    video.addEventListener("error", () => {
+      snapshotButton.disabled = true;
+      setStatus("影片播放器發生錯誤");
+    });
+
+    reconnectButton.addEventListener(
+      "click",
+      connectWebRTC
+    );
+
+    snapshotButton.addEventListener(
+      "click",
+      takeSnapshot
+    );
+
+    window.addEventListener("beforeunload", () => {
+      closeConnection();
+
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+      }
+    });
+
+    /*
+     * 網頁開啟時自動連線。
+     */
+    connectWebRTC();
+  </script>
+</body>
+
+</html>
