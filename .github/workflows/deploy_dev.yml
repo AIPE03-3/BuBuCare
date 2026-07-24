@@ -1,0 +1,58 @@
+name: Deploy Development VM
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy:
+    name: Deploy to Development VM
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # -----------------------------
+      # Checkout Repository
+      # -----------------------------
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      # -----------------------------
+      # Install SSH Key
+      # -----------------------------
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+
+          chmod 600 ~/.ssh/id_ed25519
+
+          ssh-keyscan -H ${{ vars.VM_HOST }} >> ~/.ssh/known_hosts
+
+      # -----------------------------
+      # Execute deploy script 
+      # -----------------------------
+      - name: Deploy
+        env:
+          VM_HOST: ${{ vars.VM_HOST }}
+          VM_USER: ${{ vars.VM_USER }}
+          PROJECT_DIR: ${{ vars.PROJECT_DIR }}
+          GIT_NAME: ${{ github.event.repository.name }}
+
+        run: |
+          ssh \
+            ${VM_USER}@${VM_HOST} \
+            "./deploy_dev.sh '${GIT_NAME}'"
+
+      # 上面是傳引數, 這是存成ssh 內的環境變數的寫法: "GIT_NAME='${GIT_NAME}' deploy_dev.sh"
+      # 這裡的單引號是防空格, git action 早就已經把GIT_NAME 轉成真正字串, 所以這裡是針對字串的防空格, 例如"my project"
+      # run 2nd cd ${PROJECT_DIR} && \
+
+      # -----------------------------
+      # Finish
+      # -----------------------------
+      - name: Finished
+        run: echo "Deploy Success."
