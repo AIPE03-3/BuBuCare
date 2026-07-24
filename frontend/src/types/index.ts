@@ -187,10 +187,11 @@ export interface SavedReport {
   savedAt: string; // ISO，儲存當下時間
 }
 
-// 警示處理紀錄（首頁右側 log）：每則全螢幕警示被「接手」／標記「誤報」，或偵測到潛在危險，轉成一筆 log。
-export type AlertLogAction = 'acknowledged' | 'false_alarm' | 'hazard_detected';
+// 首頁右側「未回應事件」：還沒人處理過的東西才留在這裡，已接手／已標誤報的不記錄。
+// hazard_detected：偵測到潛在危險時記一筆；pending：事件還是待處理狀態時現算出來（見 pages/Home.tsx）。
+export type AlertLogAction = 'hazard_detected' | 'pending';
 export const ALERT_LOG_ACTION_LABEL: Record<AlertLogAction, string> = {
-  acknowledged: '接手', false_alarm: '誤報', hazard_detected: '潛在危險',
+  hazard_detected: '潛在危險', pending: '待處理',
 };
 
 export interface AlertLogEntry {
@@ -199,7 +200,7 @@ export interface AlertLogEntry {
   cameraName: string;   // 事發鏡頭：區域（名稱）
   action: AlertLogAction;
   hazardObject: HazardObject | null; // hazard_detected 才有值，其餘 null
-  at: string;           // ISO，處理當下時間
+  at: string;           // ISO；hazard_detected＝偵測到的時間，pending＝事件發生時間
 }
 
 // 鏡頭串流來源：目前 mock 資料僅有 null（無串流來源）這一種情境。

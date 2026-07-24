@@ -23,7 +23,8 @@ export function EventTable({
     {
       key: 'id',
       header: '事件編號',
-      cell: (event) => <span className="text-[var(--text-secondary)]">{event.id}</span>,
+      // 純展示用排序編號，非後端欄位：跟著目前列表順序現算，換頁/新事件進來會跟著變動（比照事件中心）
+      cell: (_event, index) => <span className="text-[var(--text-secondary)]">{index + 1}</span>,
     },
     {
       key: 'type',
