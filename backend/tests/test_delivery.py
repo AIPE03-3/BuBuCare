@@ -1,7 +1,7 @@
 # 測送達判斷 + 重推邏輯
 from datetime import datetime
 
-from backend.events.service import is_delivered
+from events.service import is_delivered
 
 
 def test_is_delivered_notified有值即已送達(db_session, make_event):
@@ -24,8 +24,8 @@ def test_is_delivered_事件不存在視為已送達不重推(db_session):
 
 
 def test_rebroadcast_廣播同一筆event_created(db_session, make_event):
-    from backend.events.service import rebroadcast_event
-    from backend.events.sse import pool
+    from events.service import rebroadcast_event
+    from events.sse import pool
     event = make_event()
     q = pool.register()
     try:
@@ -38,8 +38,8 @@ def test_rebroadcast_廣播同一筆event_created(db_session, make_event):
 
 
 def test_rebroadcast_事件不存在_不廣播(db_session):
-    from backend.events.service import rebroadcast_event
-    from backend.events.sse import pool
+    from events.service import rebroadcast_event
+    from events.sse import pool
     q = pool.register()
     try:
         rebroadcast_event(db_session, "no-such-id")
@@ -50,8 +50,8 @@ def test_rebroadcast_事件不存在_不廣播(db_session):
 
 def test_watch_delivery_未ack_重推到上限(make_event, session_factory):
     import asyncio
-    from backend.events.service import watch_delivery
-    from backend.events.sse import pool
+    from events.service import watch_delivery
+    from events.sse import pool
     event = make_event()  # pending、notified_at None
     q = pool.register()
     try:
@@ -69,8 +69,8 @@ def test_watch_delivery_未ack_重推到上限(make_event, session_factory):
 
 def test_watch_delivery_已ack_不重推(make_event, session_factory):
     import asyncio
-    from backend.events.service import watch_delivery
-    from backend.events.sse import pool
+    from events.service import watch_delivery
+    from events.sse import pool
     event = make_event(notified_at=datetime(2026, 7, 2, 14, 31))
     q = pool.register()
     try:
@@ -84,8 +84,8 @@ def test_watch_delivery_已ack_不重推(make_event, session_factory):
 
 def test_watch_delivery_已被處理_不重推(make_event, session_factory):
     import asyncio
-    from backend.events.service import watch_delivery
-    from backend.events.sse import pool
+    from events.service import watch_delivery
+    from events.sse import pool
     event = make_event(status="in_progress", verdict="true_alarm", verdict_by="alice")
     q = pool.register()
     try:

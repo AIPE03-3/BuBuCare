@@ -1,7 +1,7 @@
 # 測 POST /events/{id}/ack：前端自動回報收到
 from datetime import datetime
 
-from backend.core.models import DetectEvent
+from core.models import DetectEvent
 
 
 def test_未登入_401(client, make_event):

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 
-from backend.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_DAYS
+from core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_DAYS
 # SECRET_KEY：簽名用的密鑰（從 .env 來）
 # ALGORITHM：簽名演算法　ACCESS_TOKEN_EXPIRE_DAYS：token 有效天數
 

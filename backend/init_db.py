@@ -3,12 +3,12 @@
 可重複執行：已存在的一律略過，不會報錯。
 新環境（組員的機器、驗收主機、未來部署）第一次跑這支就能讓事件流程動起來。
 
-用法：
-    python -m backend.init_db
+用法（先 cd backend）：
+    python -m init_db
 """
-from backend.core.database import SessionLocal, Base, engine
-from backend.core.models import Company, Location, Device, Staff, User
-from backend.core.security import hash_password
+from core.database import SessionLocal, Base, engine
+from core.models import Company, Location, Device, Staff, User
+from core.security import hash_password
 
 
 def create_tables():

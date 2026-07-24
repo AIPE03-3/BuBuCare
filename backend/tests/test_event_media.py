@@ -4,7 +4,7 @@
 
 import pytest
 
-from backend.core import s3
+from core import s3
 
 
 # ── 假的 S3 client：不連網，回一個看得懂的假網址，方便斷言 key 有帶對 ──

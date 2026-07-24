@@ -1,7 +1,7 @@
 # test_devices_rename.py
 # 測試 PATCH /devices/{device_id}：admin 改鏡頭名稱
 
-from backend.core.models import Device
+from core.models import Device
 
 
 def _admin_token(client):

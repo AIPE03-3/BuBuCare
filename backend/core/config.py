@@ -3,7 +3,7 @@
 
 原本 database.py / auth.py / kafka_consumer.py 各自 load_dotenv() 一次，
 「這個服務到底吃哪些環境變數」要翻三個檔案才知道，預設值也散落各處。
-收攏到這裡後：想加/改設定只看這支；其他檔案一律 from backend.core.config import XXX。
+收攏到這裡後：想加/改設定只看這支；其他檔案一律 from core.config import XXX。
 """
 import os
 from pathlib import Path

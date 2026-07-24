@@ -2,9 +2,9 @@
 from datetime import datetime
 import pytest
 
-from backend.events.service import handle_incoming_event, DeviceNotFoundError, serialize_event
-from backend.core.models import DetectEvent, DetectEventReport, Device, Location
-from backend.events.sse import pool
+from events.service import handle_incoming_event, DeviceNotFoundError, serialize_event
+from core.models import DetectEvent, DetectEventReport, Device, Location
+from events.sse import pool
 
 VALID_DATA = {
     "device_id": 1,

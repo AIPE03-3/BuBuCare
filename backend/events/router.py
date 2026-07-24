@@ -9,14 +9,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from backend.core import s3
-from backend.core.auth import decode_access_token
-from backend.core.config import EVENT_API_KEY
-from backend.core.database import get_db
-from backend.core.dependencies import get_current_user
-from backend.core.models import DetectEvent, Device, User
-from backend.events.service import handle_incoming_event, operator_names, serialize_event, watch_delivery, DeviceNotFoundError
-from backend.events.sse import pool, format_sse
+from core import s3
+from core.auth import decode_access_token
+from core.config import EVENT_API_KEY
+from core.database import get_db
+from core.dependencies import get_current_user
+from core.models import DetectEvent, Device, User
+from events.service import handle_incoming_event, operator_names, serialize_event, watch_delivery, DeviceNotFoundError
+from events.sse import pool, format_sse
 
 router = APIRouter()
 

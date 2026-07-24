@@ -3,18 +3,18 @@
 # 這裡刻意不放任何路由本體——路由住在自己的功能資料夾（users/、events/），
 # 想看某個功能怎麼運作，就只要打開那一個資料夾。
 #
-# 啟動：uvicorn backend.main:app --reload
+# 啟動（先 cd backend）：uvicorn main:app --reload
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 # CORS：允許瀏覽器從其他網址呼叫這個 API（開發測試用）
 
-from backend.core.config import SKIP_DB_INIT
-from backend.core.database import Base, engine
-from backend.devices.router import router as device_router
-from backend.events.router import router as event_router
-from backend.reports.router import router as report_router
-from backend.users.router import router as user_router
+from core.config import SKIP_DB_INIT
+from core.database import Base, engine
+from devices.router import router as device_router
+from events.router import router as event_router
+from reports.router import router as report_router
+from users.router import router as user_router
 
 # 程式啟動時建立所有還不存在的資料表（表名見 core/models.py，例如 user_account）
 # CI／測試環境設 SKIP_DB_INIT=1 時跳過：避免 import 當下就去連正式資料庫

@@ -1,6 +1,6 @@
 # 測 PATCH /events/{id}/verdict：值班人員判定真跌倒/誤報
 # 2026-07-19 改版：誰點的誰負責——操作員由後端從 JWT 記錄，body 不再帶人
-from backend.events.sse import pool
+from events.sse import pool
 
 
 def test_未登入_401(client, make_event):

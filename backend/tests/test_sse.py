@@ -1,5 +1,5 @@
 # 測 SSE 連線池：不開真的網路連線，直接考「信箱投遞」的邏輯
-from backend.events.sse import ConnectionPool, format_sse
+from events.sse import ConnectionPool, format_sse
 
 
 def test_廣播_每個連線都收到():
@@ -41,7 +41,7 @@ def test_format_sse_輸出符合SSE格式():
 # ── /stream 端點的驗證測試 ──
 # 長連線本身難在測試裡「等」，所以只考驗證擋不擋；
 # 廣播邏輯上面已經直接考過連線池了
-from backend.events.router import get_user_from_query_token
+from events.router import get_user_from_query_token
 import pytest
 from fastapi import HTTPException
 

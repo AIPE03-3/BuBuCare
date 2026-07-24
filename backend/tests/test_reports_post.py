@@ -2,7 +2,7 @@
 # 測試 POST /events/{event_id}/reports：存通報單
 # form 整包 JSON 原樣保管；created_by 由後端從 JWT 記（誰存的誰負責）
 
-from backend.core.models import DetectEventReport
+from core.models import DetectEventReport
 
 FORM = {"caseName": "王小明", "reportType": "初報", "handling": ["送醫治療"]}
 

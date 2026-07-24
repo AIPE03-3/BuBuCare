@@ -1,7 +1,7 @@
 # test_users_list.py
 # 測試 GET /users：admin 查使用者名單（只回未停用帳號、永不回傳 password）
 
-from backend.core.models import User
+from core.models import User
 
 
 def _admin_token(client):
