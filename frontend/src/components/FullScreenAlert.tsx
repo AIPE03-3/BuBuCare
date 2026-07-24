@@ -99,8 +99,8 @@ export function FullScreenAlert({ alerts, now, onAcknowledge, onSuppress }: Full
               src={videoSrc}
               autoPlay
               muted
-              loop
               playsInline
+              controls
               onError={() => setFailedVideoIds((prev) => new Set(prev).add(activeAlert.id))}
             />
           )}
