@@ -1,47 +1,74 @@
 name: Deploy Development VM
 
 on:
-  push:
-    branches:
-      - develop
+  # 1. 自動觸發：Push 到 develop 分支時
+  # push:
+  #  branches:
+  #    - main
+
+  # 2. 手動觸發：可以在 GitHub Actions 頁面點按鈕手動執行
+  workflow_dispatch:
+
+  # 3. 排程觸發：台灣時間半夜 02:00（等於 UTC 18:00）
+  schedule:
+    - cron: '0 18 * * *'
 
 jobs:
   deploy:
     name: Deploy to Development VM
-
     runs-on: ubuntu-latest
-
     steps:
-
       # -----------------------------
       # Checkout Repository
       # -----------------------------
       - name: Checkout Source
         uses: actions/checkout@v4
+        with:
+          # 取出過去 24 小時內的 commit 紀錄，以便後續判斷
+          fetch-depth: 0
+
+      # -----------------------------
+      # 檢查是否有新 Commit (僅在排程觸發時執行)
+      # -----------------------------
+      - name: Check for recent commits (Schedule only)
+        id: check_commits
+        if: github.event_name == 'schedule'
+        run: |
+          # 取得最新一筆 commit 的 Unix 時間戳記
+          LAST_COMMIT_TIME=$(git log -1 --format=%ct)
+          NOW=$(date +%s)
+          DIFF=$((NOW - LAST_COMMIT_TIME))
+          
+          # 檢查最近 24 小時 (86400 秒) 內是否有新 commit
+          if [ $DIFF -gt 86400 ]; then
+            echo "最近 24 小時內無新 commit，跳過部署。"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "發現 24 小時內有新 commit，繼續執行部署。"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
       # -----------------------------
       # Install SSH Key
       # -----------------------------
       - name: Setup SSH
+        if: steps.check_commits.outputs.skip != 'true'
         run: |
           mkdir -p ~/.ssh
-
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
-
           chmod 600 ~/.ssh/id_ed25519
-
           ssh-keyscan -H ${{ vars.VM_HOST }} >> ~/.ssh/known_hosts
 
       # -----------------------------
       # Execute deploy script 
       # -----------------------------
       - name: Deploy
+        if: steps.check_commits.outputs.skip != 'true'
         env:
           VM_HOST: ${{ vars.VM_HOST }}
           VM_USER: ${{ vars.VM_USER }}
           PROJECT_DIR: ${{ vars.PROJECT_DIR }}
           GIT_NAME: ${{ github.event.repository.name }}
-
         run: |
           ssh \
             ${VM_USER}@${VM_HOST} \
@@ -55,4 +82,5 @@ jobs:
       # Finish
       # -----------------------------
       - name: Finished
+        if: steps.check_commits.outputs.skip != 'true'
         run: echo "Deploy Success."
