@@ -103,7 +103,7 @@ export function CameraDetailModal({ camera, isDetecting, onClose, onNameChange }
         </div>
 
         <div className="flex aspect-video w-full items-center justify-center rounded-xl bg-[var(--bg-surface-2)] text-center text-base text-[var(--text-muted)]">
-          {CAMERA_LABEL.SNAPSHOT_PLACEHOLDER}
+          {CAMERA_LABEL.LIVE_PLACEHOLDER}
         </div>
 
         <div className="flex flex-col">

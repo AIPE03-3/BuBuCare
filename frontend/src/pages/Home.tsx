@@ -147,7 +147,7 @@ export function Home() {
                 {selectedCamera.zone}（{selectedCamera.name}）
               </span>
             )}
-            {CAMERA_LABEL.SNAPSHOT_PLACEHOLDER}
+            {CAMERA_LABEL.LIVE_PLACEHOLDER}
           </div>
 
           {/* 手機：切換選單緊接鏡頭下方（桌機隱藏，改由右欄頂端顯示） */}

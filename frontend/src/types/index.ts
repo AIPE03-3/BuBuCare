@@ -36,9 +36,12 @@ export const DETECTING_LABEL = '偵測中';
 // 即時監控頁：離線鏡頭縮圖標籤
 export const OFFLINE_LABEL = '離線';
 
-// 鏡頭縮圖／事件快照灰色占位框文字，全案共用一份，禁止散落各自硬編碼
+// 灰色占位框文字，全案共用一份，禁止散落各自硬編碼。
+// SNAPSHOT_PLACEHOLDER：特定事件／偵測紀錄的畫面截圖（有明確指向哪一筆事件）。
+// LIVE_PLACEHOLDER：鏡頭即時畫面（可切換鏡頭、沒有指向特定事件），不接真串流。
 export const CAMERA_LABEL = {
   SNAPSHOT_PLACEHOLDER: '事件快照（影像片段）',
+  LIVE_PLACEHOLDER: '鏡頭即時影像',
 } as const;
 
 // 誤報非獨立狀態，改由 verdict 判斷（後端：誤報＝verdict false_alarm 且直接 resolved）

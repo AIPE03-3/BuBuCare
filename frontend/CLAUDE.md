@@ -273,7 +273,7 @@ export interface FixedTestSet {
 
 - 事件有兩條產生路徑：YOLO 高信心直通（`vlm_result: null`）與 VLM 複判後產生。所有顯示 VLM 資訊的地方都必須處理 null。
 - 即時推播經 `useEventSocket` hook（demo 用計時器模擬），介面比照 WebSocket，日後直接替換連線實作。
-- 即時影像一律灰色占位框＋「事件快照（影像片段）」文字，不接真串流。
+- 即時影像一律灰色占位框＋「鏡頭即時影像」文字，不接真串流；事件／偵測紀錄的截圖才用「事件快照（影像片段）」，兩者語意不同、不共用文字（`CAMERA_LABEL.LIVE_PLACEHOLDER` vs `SNAPSHOT_PLACEHOLDER`）。
 
 ## Definition of Done（每個任務完成前自查）
 
