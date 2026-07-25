@@ -1,0 +1,39 @@
+# GitHub Actions：每次 push 或開 PR，雲端自動跑一遍 pytest
+# 綠燈＝backend/tests/ 下所有測試全過；紅燈＝有測試壞了，會標在 commit / PR 上
+name: backend-tests
+
+on:
+  push:
+    paths: ["backend/**", "pyproject.toml", ".github/workflows/backend-tests.yml"]
+  pull_request:
+    paths: ["backend/**", "pyproject.toml", ".github/workflows/backend-tests.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest  # 用 GitHub 提供的乾淨 Linux 電腦
+
+    env:
+      # 雲端沒有你本機的 .env，這裡補上測試需要的環境變數：
+      SECRET_KEY: ci-dummy-secret-key-not-for-production-32chars  # 測試只需要「有值」，不驗證內容
+      SKIP_DB_INIT: "1"  # 跳過 main.py 的建表（雲端連不到 AWS RDS）；測試自己用記憶體 SQLite
+      # 下面 5 個是「假」的 DB 資料：只為了讓 database.py 組出格式合法的連線字串
+      # （SKIP_DB_INIT=1 已擋掉真正連線，這組假資料永遠不會被拿去連 DB）
+      DB_USER: ci
+      DB_PASSWORD: ci
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: ci
+
+    steps:
+      - uses: actions/checkout@v4          # 把你的程式碼抓到雲端電腦上
+
+      - name: 安裝 uv
+        uses: astral-sh/setup-uv@v5        # 裝好 uv（雲端 Linux 沒有本機的 trampoline bug）
+        with:
+          python-version: "3.12"
+
+      - name: 安裝套件
+        run: uv sync                        # 照 uv.lock 裝好套件（含 dev 群組的 pytest / httpx）
+
+      - name: 跑測試
+        run: uv run pytest backend/tests -v  # 雲端跑 uv run 沒問題，只有你本機才有 trampoline bug

@@ -1,0 +1,15 @@
+# Phase 2：雲端 MediaMTX。請用 TLS 反向代理保護 WHEP 與後端 API。
+authMethod: http
+authHTTPAddress: https://your-backend.example.com/streams/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAdditionalHosts: ["YOUR_PUBLIC_IP_OR_DNS"]
+webrtcAllowOrigins: ["https://your-frontend.example.com"]
+
+paths:
+  my_camera_tapo: {}

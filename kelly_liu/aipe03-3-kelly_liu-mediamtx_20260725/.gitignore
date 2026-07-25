@@ -1,0 +1,66 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+fulilian.db
+.pytest_cache/
+*.pyc
+
+# Virtual environments
+.venv
+
+# Environment variables (contains secrets)
+.env
+.env.*
+!.env.example
+!**/.env.example
+!**/.env.*_example
+
+# 執行時產生的 log（ClearML agent、訓練紀錄等機器產物）
+*.log
+.clearml-logs-final/
+
+# 忽略作業系統暫存雜訊
+.DS_Store
+Thumbs.db
+
+# 個人工具檔（skill / 專案說明 / 設定）
+.claude/
+CLAUDE.md
+.vscode/
+
+# 本機 Docker 版本覆蓋（只為了繞開個人環境的相容性問題，不影響 docker-compose.yml 主檔）
+docker-compose.override.yml
+
+gcp_vm_environment/.env
+
+# MediaMTX 真實設定含攝影機／推流機密，只提交 *.example
+mediamtx.yml
+mediamtx-local.yml
+mediamtx-cloud.yml
+
+# 私鑰與憑證
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+credentials.json
+service-account*.json
+
+# 資料庫及其備份
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+
+# 相依套件與快取（模型及專案執行檔刻意保留）
+node_modules/
+.pnpm-store/

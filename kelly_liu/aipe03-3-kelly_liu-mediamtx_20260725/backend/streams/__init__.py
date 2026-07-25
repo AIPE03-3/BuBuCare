@@ -1,0 +1,1 @@
+"""MediaMTX stream authorization feature."""

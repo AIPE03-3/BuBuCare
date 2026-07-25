@@ -1,0 +1,17 @@
+# Phase 1：後端、瀏覽器與 MediaMTX 都在同一台機器
+authMethod: http
+authHTTPAddress: http://host.docker.internal:8000/streams/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigins: ["http://localhost:5173"]
+
+paths:
+  my_camera_tapo:
+    # 攝影機帳號、密碼、主機位置、連接埠與路徑均由未提交 Git 的 .env 提供
+    source: rtsp://${CAMERA_USER}:${CAMERA_PASS}@${CAMERA_HOST}:${CAMERA_RTSP_PORT}/${CAMERA_STREAM_PATH}
+    rtspTransport: tcp
