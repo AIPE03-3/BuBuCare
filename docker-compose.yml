@@ -6,7 +6,7 @@ services:
     ports:
       - "9092:9092"
     environment:
-      # ── 兩扇門：對外給 host/AI，對內給同網路容器（維持舊值，albert 與 consumer 零改碼）──
+      # ── 兩扇門：對外給 host/AI，對內給同網路容器（維持舊值，AI 端與 consumer 零改碼）──
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
       KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_INTERNAL://:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
@@ -43,7 +43,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./.env:/app/.env:ro     # 掛入 .env，讓容器內 python-dotenv 自己讀（與本機一致，避免 env_file 解析差異）
+      - ./.env:/app/.env:ro     # 掛入 .env 讓容器內 python-dotenv 讀取。不用 compose env_file：
+                                # env_file 會把密碼裡的 $ 當變數展開而挖空密碼（python-dotenv 不會）
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092        # 容器內走內線找 Kafka（覆蓋 .env）
       EVENTS_URL: http://localhost:8000/events    # 收件人打自家網站（同容器內 localhost 即自己）
