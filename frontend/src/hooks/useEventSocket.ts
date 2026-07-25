@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
-import { BASE_URL, NGROK_HEADERS } from '../api/client';
+import { BASE_URL } from '../api/client';
 import { acknowledgeEvent, parseRawEvent, type RawEventPayload } from '../api/events';
 import type { CareEvent } from '../types';
 
@@ -12,10 +12,8 @@ const EVENT_TYPES = new Set(['event_created', 'event_updated']);
 /**
  * 連 fulilian-backend 的事件推播（SSE：GET /stream?token=...）。
  *
- * 用 @microsoft/fetch-event-source 而非原生 EventSource：原生 EventSource 無法帶自訂 header，
- * 會被 ngrok 免費版的訪客攔截頁擋下（跨來源請求 EventSource 也不帶 cookie，點過 Visit Site 亦無效）。
- * fetch-event-source 底層走 fetch，可帶 `ngrok-skip-browser-warning: true` 繞過。此問題僅 ngrok 測試環境有，
- * 正式部署不會遇到。token 仍走 query（後端設計）。
+ * 用 @microsoft/fetch-event-source 而非原生 EventSource：可控制 openWhenHidden（分頁切到背景不斷線）
+ * 與自訂重連行為，原生 EventSource 兩者都做不到。token 走 query（後端設計）。
  *
  * 送達確認（ack）：後端有「保證送達」機制——每 10 秒檢查未 ack 的事件會重推同一 event_id，
  * 最多 3 次。前端一收到事件就自動打 POST /events/{id}/ack（純送達確認，不改狀態、不理回應），
@@ -38,7 +36,6 @@ export function useEventSocket(token: string | null, onEvent: (event: CareEvent)
 
     fetchEventSource(`${BASE_URL}/stream?token=${encodeURIComponent(token)}`, {
       signal: controller.signal,
-      headers: { ...NGROK_HEADERS },
       openWhenHidden: true, // 分頁切到背景時保持連線，值班畫面不應斷線
       onopen: async () => {
         setStatus('open');

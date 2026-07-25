@@ -1,9 +1,6 @@
 // baseURL 吃環境變數 VITE_API_BASE，未設定時預設同源 /api（由 nginx 反向代理轉給後端）。
-// 本機非 docker 開發可設 VITE_API_BASE=http://localhost:8000 直連後端、繞過 nginx。
+// 本機非 docker 開發可設 VITE_API_BASE=http://localhost:8000 直連後端、繞過 nginx；本機要測雲端才設 VITE_API_BASE=http://35.221.135.197/api。
 export const BASE_URL = import.meta.env.VITE_API_BASE ?? '/api';
-
-// ngrok 免費版預設會回攔截頁而非 API 回應，須帶此 header 略過。所有經此 client 的請求共用。
-export const NGROK_HEADERS = { 'ngrok-skip-browser-warning': 'true' } as const;
 
 // 直接讀 localStorage 的登入 token（session.ts 存入時的 key），塞進 Authorization。
 // 不 import auth/session 以避開循環相依；欄位對照 auth/session.ts 的 SESSION_KEY 與 AuthSession.token。
@@ -23,7 +20,7 @@ function authHeader(): Record<string, string> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...NGROK_HEADERS, ...authHeader(), ...init?.headers },
+    headers: { 'Content-Type': 'application/json', ...authHeader(), ...init?.headers },
   });
   if (!res.ok) {
     throw new Error(`API error ${res.status}: ${res.statusText}`);

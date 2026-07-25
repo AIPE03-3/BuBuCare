@@ -2,7 +2,7 @@
 // 後端 POST /login 是 OAuth2 form 格式（非 JSON），成功回 { access_token, token_type }，
 // access_token 為 JWT，payload 內含 sub（員編）／full_name（真名）／role。
 // display_name 直接取 JWT 的 full_name（後端登入時已包入），毋須額外打 /me。
-import { BASE_URL, NGROK_HEADERS } from '../client';
+import { BASE_URL } from '../client';
 import type { AuthProvider, AuthSession, Role } from '../../types';
 import { setStoredSession, clearStoredSession } from './session';
 
@@ -46,7 +46,7 @@ export const employeePasswordProvider: AuthProvider = {
     const body = new URLSearchParams({ username: employeeId, password });
     const res = await fetch(`${BASE_URL}/login`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...NGROK_HEADERS },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
     });
     if (!res.ok) {

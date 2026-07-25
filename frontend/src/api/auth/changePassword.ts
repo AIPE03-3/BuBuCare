@@ -1,7 +1,7 @@
 // 改自己的密碼（fulilian-backend PATCH /me/password）。
 // 後端會先驗舊密碼：舊密碼錯回 400、新密碼不足 6 碼回 422。
 // 比照 employeePassword 走原生 fetch（而非通用 apiClient），以便把狀態碼對應成友善中文訊息。
-import { BASE_URL, NGROK_HEADERS } from '../client';
+import { BASE_URL } from '../client';
 import { getStoredSession, setStoredSession } from './session';
 
 export async function changeMyPassword(oldPassword: string, newPassword: string): Promise<void> {
@@ -10,7 +10,6 @@ export async function changeMyPassword(oldPassword: string, newPassword: string)
     method: 'PATCH',
     headers: {
       'Content-Type': 'application/json',
-      ...NGROK_HEADERS,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
