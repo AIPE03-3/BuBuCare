@@ -3,6 +3,7 @@ services:
   kafka:
     image: apache/kafka:3.9.0
     container_name: nh-kafka
+    restart: unless-stopped
     ports:
       - "9092:9092"
     environment:
@@ -19,11 +20,21 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    # ── 探活：真的能列出 topic 才算「開好了」──────────────────────
+    # 冷啟動時 Kafka 要十幾秒才聽得到，backend 的 consumer 只等 2 秒就放棄。
+    # 有這段，下面的 backend 才能等到 Kafka 真的能用了再啟動。
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s   # 開機頭 20 秒失敗不計次（JVM 起步本來就慢）
 
   # 2. kafka-ui（透明監控窗：用瀏覽器看 topic 與訊息，除錯用，可移除）
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: nh-kafka-ui
+    restart: unless-stopped
     depends_on:
       - kafka
     ports:
@@ -38,8 +49,19 @@ services:
       context: ./backend      # 廚房範圍＝backend/
       dockerfile: Dockerfile
     container_name: nh-backend
+    restart: unless-stopped
+    # ── 開機前的守門員 ────────────────────────────────────────
+    # compose 讀到 ${DB_PORT:?...} 時會去翻專案根目錄的 .env，翻不到就帶著冒號後面那句話中止。
+    # 為什麼需要這關：底下 volumes 是用「掛檔案」的方式把 .env 送進容器，而 Docker 遇到來源檔案
+    # 不存在時不會報錯，會自作主張在根目錄建一個名為 .env 的空「資料夾」——之後連真的 .env 檔都
+    # 放不進去（會說 Is a directory）。這關趕在那之前擋下來，此時 host 上還沒建任何東西。
+    # 挑 DB_PORT 是因為它一定存在、而且值就是 5432，不是機密（標籤內容 docker inspect 看得到）。
+    labels:
+      env_check: ${DB_PORT:?找不到專案根目錄的 .env，請先放好再執行 docker compose up（範本見 .env.example）}
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy   # 等 Kafka 真的能用（見上面 healthcheck）才啟動，
+                                     # 否則 consumer 會在冷啟動當下 NoBrokersAvailable 直接收工
     ports:
       - "8000:8000"
     volumes:
@@ -48,6 +70,8 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092        # 容器內走內線找 Kafka（覆蓋 .env）
       EVENTS_URL: http://localhost:8000/events    # 收件人打自家網站（同容器內 localhost 即自己）
+      TZ: Asia/Taipei                             # 容器預設是 UTC，不設的話 datetime.now() 存進 DB
+                                                  # 的時間會比台灣時間少 8 小時（通報單時間會不對）
 
   # 4. 前端（React 經 nginx 服務 + 反向代理到後端）
   frontend:
@@ -55,7 +79,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: nh-frontend
+    restart: unless-stopped
     depends_on:
       - backend
     ports:
-      - "80:80"
+      - "80:80"     # 埠號被佔的話改左邊那個就好（例如 "8081:80"）：
+                    # 前端打 API 走同源相對路徑 /api，不含主機位址，改埠號不必重 build
