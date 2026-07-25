@@ -1,0 +1,11 @@
+# Dockerfile 的 COPY . . 會把整個 frontend/ 搬進映像檔，在此排除不該進去的。
+# 註：.dockerignore 不支援行尾註解，說明一律獨立成行。
+
+# dev 專用位址（127.0.0.1:8000）。進得去會蓋掉 .env.production 的 /api，成品位址就錯了
+.env.local
+
+# 本機（Windows）裝的，容器內 npm ci 會重裝，搬進去純浪費時間
+node_modules/
+
+# 本機 build 的舊成品，容器內 npm run build 會重產
+dist/

@@ -1,5 +1,10 @@
-// baseURL 吃環境變數 VITE_API_BASE，未設定時預設同源 /api（由 nginx 反向代理轉給後端）。
-// 本機非 docker 開發可設 VITE_API_BASE=http://localhost:8000 直連後端、繞過 nginx；本機要測雲端才設 VITE_API_BASE=http://35.221.135.197/api。
+// 後端位址吃環境變數 VITE_API_BASE，未設定時退回同源 /api。
+//
+// ── 三種情境該用哪個值、寫在哪個檔 ─────────────────────────────
+// | 情境                          | VITE_API_BASE              | 寫在            |
+// | 本機 npm run dev（無 nginx）  | http://127.0.0.1:8000      | .env.local      |
+// | docker compose（有 nginx）    | /api                       | .env.production |
+// | 本機 dev 但要打雲端後端        | http://35.221.135.197/api  | .env.local 暫改 |
 export const BASE_URL = import.meta.env.VITE_API_BASE ?? '/api';
 
 // 直接讀 localStorage 的登入 token（session.ts 存入時的 key），塞進 Authorization。
