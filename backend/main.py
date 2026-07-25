@@ -39,3 +39,12 @@ app.include_router(user_router)   # 帳號：register / login / me / delete
 app.include_router(event_router)  # 事件：POST /events、SSE、判定 / 結案
 app.include_router(device_router)  # 裝置：鏡頭清單 / 改名
 app.include_router(report_router)  # 通報單：存 / 查
+
+
+
+# ── 健康檢查（雲端探針用）────────────────────────────────────
+# 打 GET /health 有回 {"status":"ok"} 就代表後端活著、能正常收請求。
+# 雲端的監控／nginx 會定期戳這條確認服務沒掛，不查資料庫、不需登入，回得越快越好。
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
