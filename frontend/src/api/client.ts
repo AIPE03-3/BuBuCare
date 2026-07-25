@@ -1,5 +1,6 @@
-// baseURL 吃環境變數 VITE_API_BASE，未設定時預設連 fulilian-backend（ngrok）。
-export const BASE_URL = import.meta.env.VITE_API_BASE ?? 'https://caravan-uninsured-doily.ngrok-free.dev';
+// baseURL 吃環境變數 VITE_API_BASE，未設定時預設同源 /api（由 nginx 反向代理轉給後端）。
+// 本機非 docker 開發可設 VITE_API_BASE=http://localhost:8000 直連後端、繞過 nginx。
+export const BASE_URL = import.meta.env.VITE_API_BASE ?? '/api';
 
 // ngrok 免費版預設會回攔截頁而非 API 回應，須帶此 header 略過。所有經此 client 的請求共用。
 export const NGROK_HEADERS = { 'ngrok-skip-browser-warning': 'true' } as const;

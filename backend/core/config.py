@@ -7,6 +7,7 @@
 """
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from dotenv import load_dotenv
 
@@ -19,9 +20,11 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 # ── 資料庫（PostgreSQL / AWS RDS）────────────────────────
 # 格式是 SQLAlchemy 規定的：驅動程式://帳號:密碼@主機:埠號/資料庫名稱
+# 帳號/密碼先做網址編碼（quote_plus）：密碼含 @ # : / 等特殊字元時，直接塞進網址會破壞結構
+# （@ 會被當成主機分隔、# 會被當成錨點截斷），編碼後 SQLAlchemy 連線時自動還原。
 DATABASE_URL = (
     f"postgresql+psycopg2://"
-    f"{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+    f"{quote_plus(os.getenv('DB_USER', ''))}:{quote_plus(os.getenv('DB_PASSWORD', ''))}"
     f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
 )
 
