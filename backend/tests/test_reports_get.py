@@ -4,7 +4,7 @@
 
 from datetime import datetime
 
-from backend.core.models import DetectEventReport
+from core.models import DetectEventReport
 
 
 def _insert_report(db_session, event_id, report_type, created_at):

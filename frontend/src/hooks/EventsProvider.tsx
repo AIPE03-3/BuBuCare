@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { claimEvent, clearHazardEvent, getEvents, submitEventFeedback } from '../api/events';
 import { FullScreenAlert } from '../components/FullScreenAlert';
-import type { AlertLogAction, AlertLogEntry, CareEvent, FalseReportLabel } from '../types';
+import type { AlertLogEntry, CareEvent, FalseReportLabel } from '../types';
 
-// 警示處理紀錄項目：由被處理的事件與動作組出一筆 log（首頁右側 log 用）。
-function buildAlertLogEntry(event: CareEvent, action: AlertLogAction): AlertLogEntry {
+// 潛在危險（物件偵測）通知：組一筆「未回應事件」log（首頁右側用）。
+function buildHazardLogEntry(event: CareEvent): AlertLogEntry {
   return {
-    id: `${event.id}-${action}-${Date.now()}`,
+    id: `${event.id}-hazard_detected-${Date.now()}`,
     eventId: event.id,
     cameraName: `${event.camera.zone}（${event.camera.name}）`,
-    action,
-    hazardObject: action === 'hazard_detected' ? event.hazard_object : null,
+    action: 'hazard_detected',
+    hazardObject: event.hazard_object,
     at: new Date().toISOString(),
   };
 }
@@ -36,7 +36,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
   const [lastAckedId, setLastAckedId] = useState<string | null>(null);
   const [ackToastEvent, setAckToastEvent] = useState<CareEvent | null>(null);
   const [lastAckedEvent, setLastAckedEvent] = useState<CareEvent | null>(null);
-  // 首頁右側 log：警示被接手／標記誤報後累積的處理紀錄，最新在前。
+  // 首頁右側「未回應事件」：目前只有潛在危險偵測會累積在這裡，最新在前（待處理事件由 Home.tsx 現算合併）。
   const [alertLog, setAlertLog] = useState<AlertLogEntry[]>([]);
   // 潛在危險（物件偵測）：不寫通報單、不與跌倒混流，獨立累積供首頁計數，最新在前。
   const [hazardEvents, setHazardEvents] = useState<CareEvent[]>([]);
@@ -63,7 +63,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       setAlertLog((prev) =>
         prev.some((l) => l.eventId === event.id && l.action === 'hazard_detected')
           ? prev
-          : [buildAlertLogEntry(event, 'hazard_detected'), ...prev],
+          : [buildHazardLogEntry(event), ...prev],
       );
       return;
     }
@@ -86,6 +86,11 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   function dismissConfirmedAlert(id: string) {
     setConfirmedAlerts((prev) => prev.filter((event) => event.id !== id));
+  }
+
+  // 點擊首頁 log 的「待處理」行：重新跳出全螢幕警示彈窗；只是把彈窗叫回來，事件 status 不受影響。
+  function reopenAlert(event: CareEvent) {
+    setConfirmedAlerts((prev) => (prev.some((e) => e.id === event.id) ? prev : [...prev, event]));
   }
 
   async function handleLoadMore() {
@@ -120,8 +125,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       return exists ? prev.map((e) => (e.id === event.id ? acknowledged : e)) : [acknowledged, ...prev];
     });
     dismissConfirmedAlert(event.id);
-    // 記一筆處理紀錄（接手）到首頁 log，最新在前。
-    setAlertLog((prev) => [buildAlertLogEntry(event, 'acknowledged'), ...prev]);
     setLastAckedId(event.id);
     setLastAckedEvent(acknowledged);
     setAckToastEvent(acknowledged);
@@ -141,11 +144,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     preAckSnapshotRef.current.delete(event.id);
     setEvents((prev) => prev.map((e) => (e.id === event.id ? original : e)));
     setConfirmedAlerts((prev) => (prev.some((e) => e.id === event.id) ? prev : [...prev, original]));
-    // 復原接手＝撤回警示，連同 log 也移除該筆最新的「接手」紀錄，保持一致。
-    setAlertLog((prev) => {
-      const idx = prev.findIndex((l) => l.eventId === event.id && l.action === 'acknowledged');
-      return idx === -1 ? prev : prev.filter((_, i) => i !== idx);
-    });
     if (ackToastTimerRef.current) clearTimeout(ackToastTimerRef.current);
     setAckToastEvent(null);
     setLastAckedEvent(null);
@@ -170,8 +168,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       return exists ? prev.map((e) => (e.id === event.id ? resolved : e)) : [resolved, ...prev];
     });
     dismissConfirmedAlert(event.id);
-    // 記一筆處理紀錄（誤報）到首頁 log。
-    setAlertLog((prev) => [buildAlertLogEntry(event, 'false_alarm'), ...prev]);
   }
 
   // 恢復事件：誤報紀錄中的事件拉回事件中心（處理中），清掉誤報判定與類型並重啟 24 小時時限。
@@ -230,6 +226,8 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     events,
     now,
     alertLog,
+    confirmedAlerts,
+    reopenAlert,
     hazardEvents,
     clearHazard,
     // SSE 事件直接併入清單，不再走「新事件橫幅」暫存，故 incomingEvent 恆為 null（保留介面相容）。
@@ -259,6 +257,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
           now={now}
           onAcknowledge={acknowledgeEvent}
           onSuppress={resolveViaFeedback}
+          onDismiss={(event) => dismissConfirmedAlert(event.id)}
         />
       )}
 

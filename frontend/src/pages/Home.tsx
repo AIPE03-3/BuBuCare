@@ -5,7 +5,7 @@ import { DevTestPanel } from '../components/DevTestPanel'; // DEV-TEST：測試�
 import { MonitorIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
 import { formatTime } from '../utils/time';
-import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, type AlertLogEntry, type Camera } from '../types';
+import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, type AlertLogEntry, type Camera, type CareEvent } from '../types';
 
 // 切換鏡頭畫面選單。桌機置於右欄頂端、手機緊接鏡頭下方，故抽成元件於兩處各渲染一次
 // （以 lg:hidden／hidden lg:block 控制，同一時間僅一個可見，不會重複讀屏）。
@@ -38,18 +38,23 @@ function CameraSelect({
   );
 }
 
-// 徽章配色：接手＝實心綠（--highlight，同未結報事件卡）、潛在危險＝實心紅（--danger，同潛在危險卡示警色）、
-// 誤報＝offline 空心外框。兩者皆白字，與首頁卡片的實色底白字用法一致。
+// 徽章配色：潛在危險／待處理皆實心紅（--danger，兩者都算「還沒人回應」，需要搶眼提醒），白字。
 const ALERT_LOG_BADGE_CLASS: Record<AlertLogEntry['action'], string> = {
-  acknowledged: 'bg-[var(--highlight)] text-white',
   hazard_detected: 'bg-[var(--danger)] text-white',
-  false_alarm: 'border border-[var(--offline)] text-[var(--offline)]',
+  pending: 'bg-[var(--danger)] text-white',
 };
 
-// 單筆處理紀錄卡：接手／誤報／潛在危險偵測，三態徽章配色。潛在危險附物品類型。時間顯示到分。
-function AlertLogCard({ entry }: { entry: AlertLogEntry }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] px-4 py-3">
+// pending 卡片外框：多一層淺紅框線標出「沒人處理」，潛在危險沿用一般卡片灰框。
+const ALERT_LOG_CARD_BORDER_CLASS: Record<AlertLogEntry['action'], string> = {
+  hazard_detected: 'border-[var(--border)]',
+  pending: 'border-[var(--danger-bg)]',
+};
+
+// 單筆「未回應事件」卡：潛在危險偵測／待處理，兩態徽章配色。潛在危險附物品類型。時間顯示到分。
+// 「待處理」可點擊重開全螢幕警示彈窗（傳 onClick），潛在危險沒有對應彈窗，不給 onClick。
+function AlertLogCard({ entry, onClick }: { entry: AlertLogEntry; onClick?: () => void }) {
+  const content = (
+    <>
       <div className="flex min-w-0 items-center gap-2">
         <span
           className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${ALERT_LOG_BADGE_CLASS[entry.action]}`}
@@ -62,14 +67,56 @@ function AlertLogCard({ entry }: { entry: AlertLogEntry }) {
         </span>
       </div>
       <span className="shrink-0 text-xs text-[var(--text-muted)]">{formatTime(entry.at)}</span>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border bg-[var(--bg-surface)] px-4 py-3 text-left transition-colors duration-150 hover:bg-[var(--bg-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] ${ALERT_LOG_CARD_BORDER_CLASS[entry.action]}`}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-xl border bg-[var(--bg-surface)] px-4 py-3 ${ALERT_LOG_CARD_BORDER_CLASS[entry.action]}`}
+    >
+      {content}
     </div>
   );
+}
+
+// pending 那幾行 log 不額外存資料，直接從後端持久化的 events 現算：只要事件 status 還是
+// pending，重新整理後照樣算得出來，不會像原本存記憶體的 alertLog 一樣一刷新就不見。
+function toPendingLogEntry(event: CareEvent): AlertLogEntry {
+  return {
+    id: `${event.id}-pending`,
+    eventId: event.id,
+    cameraName: `${event.camera.zone}（${event.camera.name}）`,
+    action: 'pending',
+    hazardObject: null,
+    at: event.occurred_at,
+  };
 }
 
 export function Home() {
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
-  const { events, alertLog, hazardEvents } = useEvents();
+  const { events, alertLog, confirmedAlerts, reopenAlert, hazardEvents } = useEvents();
+
+  // 合併顯示：alertLog（潛在危險偵測）＋ 現算的「待處理」
+  // （events 裡還是 pending、且目前沒有全螢幕警示彈窗開著的，避免跟彈窗同時重複出現），依時間新到舊排序。
+  const pendingLogEntries = events
+    .filter((e) => e.status === 'pending' && !confirmedAlerts.some((a) => a.id === e.id))
+    .map(toPendingLogEntry);
+  const combinedLog = [...alertLog, ...pendingLogEntries].sort(
+    (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
+  );
 
   useEffect(() => {
     getCameras().then((list) => {
@@ -100,7 +147,7 @@ export function Home() {
                 {selectedCamera.zone}（{selectedCamera.name}）
               </span>
             )}
-            {CAMERA_LABEL.SNAPSHOT_PLACEHOLDER}
+            {CAMERA_LABEL.LIVE_PLACEHOLDER}
           </div>
 
           {/* 手機：切換選單緊接鏡頭下方（桌機隱藏，改由右欄頂端顯示） */}
@@ -193,19 +240,30 @@ export function Home() {
             <CameraSelect cameras={cameras} value={selectedCameraId} onChange={setSelectedCameraId} />
           </div>
 
-          {/* log 紀錄：警示被接手／誤報後的處理紀錄清單，最新在前。
+          {/* 未回應事件：潛在危險偵測＋待處理事件清單，最新在前；已接手／已誤報的不留在這裡。
               max-h 限制外框高度上限，超出改由內部清單捲動；沒有這個上限，CSS Grid 會讓
-              軌道高度隨內容（log 筆數）無限撐高，overflow-y-auto 永遠不會真正生效。 */}
+              軌道高度隨內容（筆數）無限撐高，overflow-y-auto 永遠不會真正生效。 */}
           <div className="flex min-h-[240px] max-h-[65vh] flex-1 flex-col gap-3 rounded-2xl border border-[var(--border)] bg-[var(--bg-surface-2)] p-4">
-            <p className="text-sm font-medium text-[var(--text-secondary)]">log 紀錄</p>
-            {alertLog.length === 0 ? (
+            <p className="text-sm font-medium text-[var(--text-secondary)]">未回應事件</p>
+            {combinedLog.length === 0 ? (
               <div className="flex flex-1 items-center justify-center text-center text-sm text-[var(--text-muted)]">
-                尚無處理紀錄
+                目前沒有未回應事件
               </div>
             ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
-                {alertLog.map((entry) => (
-                  <AlertLogCard key={entry.id} entry={entry} />
+                {combinedLog.map((entry) => (
+                  <AlertLogCard
+                    key={entry.id}
+                    entry={entry}
+                    onClick={
+                      entry.action === 'pending'
+                        ? () => {
+                            const event = events.find((e) => e.id === entry.eventId);
+                            if (event) reopenAlert(event);
+                          }
+                        : undefined
+                    }
+                  />
                 ))}
               </div>
             )}

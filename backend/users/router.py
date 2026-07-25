@@ -11,11 +11,11 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field  # 定義「前端送來的 JSON 長什麼樣子」，FastAPI 會自動驗證格式
 from sqlalchemy.orm import Session
 
-from backend.core.auth import create_access_token
-from backend.core.database import get_db
-from backend.core.dependencies import get_current_user, require_admin
-from backend.core.models import User
-from backend.core.security import verify_password, hash_password
+from core.auth import create_access_token
+from core.database import get_db
+from core.dependencies import get_current_user, require_admin
+from core.models import User
+from core.security import verify_password, hash_password
 
 router = APIRouter()
 

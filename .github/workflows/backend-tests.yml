@@ -4,13 +4,18 @@ name: backend-tests
 
 on:
   push:
-    paths: ["backend/**", "pyproject.toml", ".github/workflows/backend-tests.yml"]
+    paths: ["backend/**", ".github/workflows/backend-tests.yml"]
   pull_request:
-    paths: ["backend/**", "pyproject.toml", ".github/workflows/backend-tests.yml"]
+    paths: ["backend/**", ".github/workflows/backend-tests.yml"]
 
 jobs:
   test:
     runs-on: ubuntu-latest  # 用 GitHub 提供的乾淨 Linux 電腦
+
+    # 2026-07-24 重構後 pyproject.toml/uv.lock 移入 backend/，以下每個 run 都先進 backend/ 再執行
+    defaults:
+      run:
+        working-directory: backend
 
     env:
       # 雲端沒有你本機的 .env，這裡補上測試需要的環境變數：
@@ -36,4 +41,4 @@ jobs:
         run: uv sync                        # 照 uv.lock 裝好套件（含 dev 群組的 pytest / httpx）
 
       - name: 跑測試
-        run: uv run pytest backend/tests -v  # 雲端跑 uv run 沒問題，只有你本機才有 trampoline bug
+        run: uv run pytest -v  # 已在 backend/ 內，pyproject 的 testpaths=["tests"] 會自動找 backend/tests

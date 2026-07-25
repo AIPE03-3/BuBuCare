@@ -1,4 +1,4 @@
-import { apiClient, BASE_URL, NGROK_HEADERS } from './client';
+import { apiClient, BASE_URL } from './client';
 import { getStoredSession } from './auth';
 import type { ManagedUser } from '../types';
 
@@ -58,7 +58,6 @@ export async function createUser(input: CreateUserInput): Promise<void> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...NGROK_HEADERS,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
@@ -100,7 +99,6 @@ export async function deleteUser(id: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/users/${id}`, {
     method: 'DELETE',
     headers: {
-      ...NGROK_HEADERS,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   });

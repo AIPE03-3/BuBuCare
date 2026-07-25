@@ -1,6 +1,6 @@
 # 測資料模型：新表能建立、預設值正確、種子資料有進去
 from datetime import datetime
-from backend.core.models import Company, Location, Device, Staff, DetectEvent, User
+from core.models import Company, Location, Device, Staff, DetectEvent, User
 
 
 def test_建立事件_預設狀態是pending(db_session):
@@ -38,7 +38,7 @@ def test_既有帳號自動掛預設公司(db_session):
 
 def test_detect_event_report_roundtrip(db_session, make_event):
     # 通報單：form 整包 JSON 存進去，讀回來還是 dict、內容不變
-    from backend.core.models import DetectEventReport
+    from core.models import DetectEventReport
     from datetime import datetime
 
     event = make_event()

@@ -3,7 +3,7 @@
 # 這個路由只有 admin 角色才能使用
 # 共用設定（資料庫、測試帳號）都在 conftest.py，pytest 會自動載入
 
-from backend.core.models import User
+from core.models import User
 
 
 def _admin_token(client):

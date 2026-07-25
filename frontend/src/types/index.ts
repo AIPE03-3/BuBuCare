@@ -36,9 +36,12 @@ export const DETECTING_LABEL = '偵測中';
 // 即時監控頁：離線鏡頭縮圖標籤
 export const OFFLINE_LABEL = '離線';
 
-// 鏡頭縮圖／事件快照灰色占位框文字，全案共用一份，禁止散落各自硬編碼
+// 灰色占位框文字，全案共用一份，禁止散落各自硬編碼。
+// SNAPSHOT_PLACEHOLDER：特定事件／偵測紀錄的畫面截圖（有明確指向哪一筆事件）。
+// LIVE_PLACEHOLDER：鏡頭即時畫面（可切換鏡頭、沒有指向特定事件），不接真串流。
 export const CAMERA_LABEL = {
   SNAPSHOT_PLACEHOLDER: '事件快照（影像片段）',
+  LIVE_PLACEHOLDER: '鏡頭即時影像',
 } as const;
 
 // 誤報非獨立狀態，改由 verdict 判斷（後端：誤報＝verdict false_alarm 且直接 resolved）
@@ -187,10 +190,11 @@ export interface SavedReport {
   savedAt: string; // ISO，儲存當下時間
 }
 
-// 警示處理紀錄（首頁右側 log）：每則全螢幕警示被「接手」／標記「誤報」，或偵測到潛在危險，轉成一筆 log。
-export type AlertLogAction = 'acknowledged' | 'false_alarm' | 'hazard_detected';
+// 首頁右側「未回應事件」：還沒人處理過的東西才留在這裡，已接手／已標誤報的不記錄。
+// hazard_detected：偵測到潛在危險時記一筆；pending：事件還是待處理狀態時現算出來（見 pages/Home.tsx）。
+export type AlertLogAction = 'hazard_detected' | 'pending';
 export const ALERT_LOG_ACTION_LABEL: Record<AlertLogAction, string> = {
-  acknowledged: '接手', false_alarm: '誤報', hazard_detected: '潛在危險',
+  hazard_detected: '潛在危險', pending: '待處理',
 };
 
 export interface AlertLogEntry {
@@ -199,7 +203,7 @@ export interface AlertLogEntry {
   cameraName: string;   // 事發鏡頭：區域（名稱）
   action: AlertLogAction;
   hazardObject: HazardObject | null; // hazard_detected 才有值，其餘 null
-  at: string;           // ISO，處理當下時間
+  at: string;           // ISO；hazard_detected＝偵測到的時間，pending＝事件發生時間
 }
 
 // 鏡頭串流來源：目前 mock 資料僅有 null（無串流來源）這一種情境。

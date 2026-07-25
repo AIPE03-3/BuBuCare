@@ -1,0 +1,2 @@
+# .sh 一律用 Linux (LF) 換行，避免 Windows 寫出的 CRLF 讓容器內 sh 出錯（start.sh: not found）
+*.sh text eol=lf

@@ -2,9 +2,9 @@
 # 測試 POST /login 路由的所有情況
 # 共用設定（資料庫、測試帳號）都在 conftest.py，pytest 會自動載入
 
-from backend.core.auth import decode_access_token
-from backend.core.models import User
-from backend.core.security import hash_password
+from core.auth import decode_access_token
+from core.models import User
+from core.security import hash_password
 
 
 def test_login_correct_credentials_returns_token(client):

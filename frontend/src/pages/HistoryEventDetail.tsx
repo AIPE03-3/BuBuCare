@@ -104,8 +104,8 @@ export function HistoryEventDetail() {
               src={videoSrc}
               autoPlay
               muted
-              loop
               playsInline
+              controls
               onError={() => setVideoError(true)}
             />
           )}

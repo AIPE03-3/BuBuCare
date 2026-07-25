@@ -2,7 +2,7 @@
 # 測試 PATCH /users/{user_id}：admin 改使用者姓名（只收 full_name）
 # 密碼不從這支走：重設密碼已有專屬端點 /users/{id}/password（含 must_change_password 行為）
 
-from backend.core.models import User
+from core.models import User
 
 
 def _admin_token(client):

@@ -2,7 +2,7 @@
 # 測試 PATCH /me/password（登入者改自己的密碼）
 # 共用設定（資料庫、測試帳號）都在 conftest.py，pytest 會自動載入
 
-from backend.core.models import User
+from core.models import User
 
 
 def test_change_password_success_and_flag_reset(client, db_session):

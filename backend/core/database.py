@@ -2,7 +2,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-from backend.core.config import DATABASE_URL, SSL_ROOT_CERT
+from core.config import DATABASE_URL, SSL_ROOT_CERT
 
 # engine 實際負責跟資料庫溝通的引擎
 # psycopg2 是 Python 連 PostgreSQL 的驅動程式（連線字串在 config.py 組好）

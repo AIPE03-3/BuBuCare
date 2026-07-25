@@ -1,7 +1,7 @@
 # test_devices.py
 # 測試 GET /devices：鏡頭清單（JOIN locations 夾帶位置資訊）
 
-from backend.core.models import Device, Location
+from core.models import Device, Location
 
 
 def test_get_devices_returns_seed_device(client, auth_headers):
