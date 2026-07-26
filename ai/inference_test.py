@@ -178,6 +178,18 @@ def camera_worker(camera_id, video_source):
     frame_count = 0
     normal_h_reference = None
     triton_down_warned = False  # Triton 斷線降級提示只印一次，避免逐幀刷屏
+
+    # ── FPS 量測（只印 log，不影響推論邏輯）──────────────────────────────
+    # 每 FPS_LOG_EVERY 個「實際處理的幀」印一次區間實測 FPS。量的是「經過 Triton 三顆
+    # 推論＋六大防線的幀」的處理速率（processed FPS），對照 Mac 端數字用。
+    # FPS_NO_THROTTLE=1 時略過迴圈尾端的 time.sleep(frame_delay) 節流，量「純 GPU 吞吐上限」
+    #（不被 source fps 綁住）；不設則保留原節流、量「貼齊 source fps 的穩態處理速率」。
+    _fps_no_throttle = bool(os.environ.get("FPS_NO_THROTTLE"))
+    _fps_log_every = int(os.environ.get("FPS_LOG_EVERY", "60"))
+    _fps_t0 = time.time()
+    _fps_n = 0            # 本區間已處理幀數
+    _fps_proc_total = 0   # 累計已處理幀數
+    _fps_run_t0 = time.time()
     
     # 💡 狀態旗標
     ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標
@@ -220,6 +232,20 @@ def camera_worker(camera_id, video_source):
             continue
 
         img_h, img_w, _ = frame.shape
+
+        # ── FPS 量測：只數「真的進到推論」的幀（跳過的幀不算），每區間印一次 ──
+        _fps_n += 1
+        _fps_proc_total += 1
+        if _fps_n >= _fps_log_every:
+            _now = time.time()
+            _dt = _now - _fps_t0
+            _inst = _fps_n / _dt if _dt > 0 else 0.0
+            _avg = _fps_proc_total / (_now - _fps_run_t0) if (_now - _fps_run_t0) > 0 else 0.0
+            _mode = "GPU吞吐(無節流)" if _fps_no_throttle else "穩態(含節流)"
+            print(f"📊 [FPS/{_mode}] [{camera_id}] 區間 {_inst:5.1f} fps｜累計均 {_avg:5.1f} fps"
+                  f"（已處理 {_fps_proc_total} 幀）")
+            _fps_t0 = _now
+            _fps_n = 0
 
         # 核心推理：同時運行 Pose 與 Seg 模型
         # Triton 斷線降級：pose/detr 的連線是 thread-local 首次呼叫才建立，Triton 掛掉時會在
@@ -467,9 +493,11 @@ def camera_worker(camera_id, video_source):
         if is_current_frame_valid: last_valid_annotated_frame = annotated_frame.copy()
         with frames_lock: output_frames[camera_id] = annotated_frame.copy()
 
-        t_elapsed = time.time() - t_start
-        t_sleep = frame_delay - t_elapsed
-        if t_sleep > 0: time.sleep(t_sleep)
+        # FPS_NO_THROTTLE=1：量純 GPU 吞吐上限時，略過貼齊 source fps 的節流睡眠。
+        if not _fps_no_throttle:
+            t_elapsed = time.time() - t_start
+            t_sleep = frame_delay - t_elapsed
+            if t_sleep > 0: time.sleep(t_sleep)
 
     cap.release()
 
@@ -485,6 +513,20 @@ if __name__ == "__main__":
         "Room_302_Bed": os.path.join(_AI_DIR, "test_demo", "test2.mp4"),
         "Room_303_Bed": os.path.join(_AI_DIR, "test_demo", "test3.mp4"),
     }
+    # 單源量測開關（比照其他開關：未設 = 原三路行為，不留死改動）：
+    # SINGLE_SOURCE=<檔案路徑或 rtsp URL> 時，改成「只掛一路」指向該來源，量單路乾淨 FPS
+    #（避免三/四路併發共享 GPU 稀釋數字）。相機名固定 Room_301_Bed（device_id=301，已在後端註冊）。
+    # 例：SINGLE_SOURCE=ai/test_demo/test4.mp4 FPS_NO_THROTTLE=1 python ai/inference_test.py
+    _SINGLE = os.environ.get("SINGLE_SOURCE")
+    if _SINGLE:
+        if "://" in _SINGLE or os.path.isabs(_SINGLE):
+            _src = _SINGLE                                   # URL 或絕對路徑：原樣用
+        else:
+            # 相對路徑：以「repo 根」為基準（_AI_DIR 是 ai/，其上一層是 repo 根）。
+            _src = os.path.normpath(os.path.join(_AI_DIR, "..", _SINGLE))
+        camera_channels = {"Room_301_Bed": _src}
+        print(f"🎯 [單源量測] SINGLE_SOURCE → 只掛一路：Room_301_Bed = {_src}")
+
     # 即時串流（RTSP）測試開關：設了 RTSP_TEST_URL 就多掛一路即時流（open_source 走 PyAV 拉流），
     # mp4 三路照跑不受影響。例：RTSP_TEST_URL=rtsp://127.0.0.1:8554/test python ai/inference_test.py
     _RTSP_TEST = os.environ.get("RTSP_TEST_URL")
