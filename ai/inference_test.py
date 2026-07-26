@@ -186,6 +186,9 @@ def camera_worker(camera_id, video_source):
     #（不被 source fps 綁住）；不設則保留原節流、量「貼齊 source fps 的穩態處理速率」。
     _fps_no_throttle = bool(os.environ.get("FPS_NO_THROTTLE"))
     _fps_log_every = int(os.environ.get("FPS_LOG_EVERY", "60"))
+    # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/mask 疊圖/putText/copy），
+    # 這些只為 GUI 顯示，HEADLESS 壓測根本不看畫面卻每幀白燒 CPU。快照存檔仍保留（事件證據）。
+    _no_render = bool(os.environ.get("NO_RENDER"))
     _fps_t0 = time.time()
     _fps_n = 0            # 本區間已處理幀數
     _fps_proc_total = 0   # 累計已處理幀數
@@ -468,30 +471,32 @@ def camera_worker(camera_id, video_source):
                 vlm_report = "Fast-track Sent" if topic == TOPIC_PROCESSED_REPORTS else "VLM Queued..."
 
         # === Step D: 畫布渲染（✅ 自動半透明疊加不規則物件輪廓） ===
-        annotated_frame = results_pose[0].plot(boxes=True, labels=True, conf=0.45) 
-        
-        # 👈 核心修改：在畫布上動態疊加 YOLO-Seg 的彩色半透明不規則輪廓
-        if results_env and getattr(results_env[0], 'masks', None) is not None:
-            masks = results_env[0].masks.data.cpu().numpy()
-            for i, mask in enumerate(masks):
-                cls_id = int(results_env[0].boxes.cls[i].item())
-                lbl_name = yolo_env_model.names[cls_id]
-                
-                if lbl_name in ["wheelchair", "bed", "chair", "couch", "bottle", "cup"]:
-                    # 將 Mask 縮放回原始影像尺寸
-                    mask_resized = cv2.resize(mask, (img_w, img_h))
-                    # 建立綠色遮罩圖層
-                    color_mask = np.zeros_like(frame, dtype=np.uint8)
-                    color_mask[mask_resized > 0.5] = [0, 255, 0] # 綠色實例輪廓
-                    # 以 0.4 的透明度疊加到主畫面
-                    annotated_frame = cv2.addWeighted(annotated_frame, 1.0, color_mask, 0.4, 0)
+        # NO_RENDER=1（HEADLESS 壓測）：整段純畫圖只為 GUI 顯示，跳過以省 CPU；偵測/外發/快照不受影響。
+        if not _no_render:
+            annotated_frame = results_pose[0].plot(boxes=True, labels=True, conf=0.45)
 
-        if draw_border: cv2.rectangle(annotated_frame, (0, 0), (img_w, img_h), color, 12)
-        cv2.putText(annotated_frame, status_text, (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3, cv2.LINE_AA)
-        cv2.putText(annotated_frame, f"VLM Status: {vlm_report}", (40, img_h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
-        
-        if is_current_frame_valid: last_valid_annotated_frame = annotated_frame.copy()
-        with frames_lock: output_frames[camera_id] = annotated_frame.copy()
+            # 👈 核心修改：在畫布上動態疊加 YOLO-Seg 的彩色半透明不規則輪廓
+            if results_env and getattr(results_env[0], 'masks', None) is not None:
+                masks = results_env[0].masks.data.cpu().numpy()
+                for i, mask in enumerate(masks):
+                    cls_id = int(results_env[0].boxes.cls[i].item())
+                    lbl_name = yolo_env_model.names[cls_id]
+
+                    if lbl_name in ["wheelchair", "bed", "chair", "couch", "bottle", "cup"]:
+                        # 將 Mask 縮放回原始影像尺寸
+                        mask_resized = cv2.resize(mask, (img_w, img_h))
+                        # 建立綠色遮罩圖層
+                        color_mask = np.zeros_like(frame, dtype=np.uint8)
+                        color_mask[mask_resized > 0.5] = [0, 255, 0] # 綠色實例輪廓
+                        # 以 0.4 的透明度疊加到主畫面
+                        annotated_frame = cv2.addWeighted(annotated_frame, 1.0, color_mask, 0.4, 0)
+
+            if draw_border: cv2.rectangle(annotated_frame, (0, 0), (img_w, img_h), color, 12)
+            cv2.putText(annotated_frame, status_text, (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3, cv2.LINE_AA)
+            cv2.putText(annotated_frame, f"VLM Status: {vlm_report}", (40, img_h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+            if is_current_frame_valid: last_valid_annotated_frame = annotated_frame.copy()
+            with frames_lock: output_frames[camera_id] = annotated_frame.copy()
 
         # FPS_NO_THROTTLE=1：量純 GPU 吞吐上限時，略過貼齊 source fps 的節流睡眠。
         if not _fps_no_throttle:
