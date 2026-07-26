@@ -1,0 +1,27 @@
+name: "rt_detr"
+platform: "tensorrt_plan"
+default_model_filename: "model.plan"
+max_batch_size: 0
+
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    dims: [ 1, 3, 640, 640 ]
+  }
+]
+
+output [
+  {
+    name: "output0"
+    data_type: TYPE_FP32
+    dims: [ 1, 300, 6 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]

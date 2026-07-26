@@ -21,6 +21,12 @@ from modules.micro_motion import MicroMotionDetector   # 模組 F：非接觸式
 from modules.audio_fusion import AudioFusionEngine     # 模組 H：邊緣端聽覺多模態特徵融合
 from modules.chair_slip import ChairSlipDetector       # 模組 I：座椅/輪椅意外滑落偵測
 
+from triton_pose_client import TritonPoseModel          # Triton 版 yolo_pose client（人體姿態）
+from triton_detr_client import TritonDetrModel          # Triton 版 rt_detr client（環境物件偵測）
+from triton_act_client import TritonActModel            # Triton 版 action_transformer client（時序跌倒分類）
+
+from av_reader import open_source                        # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
+
 # =========================================================================
 # 🛠️ MLOps 基礎建設：Kafka 初始化
 # =========================================================================
@@ -38,6 +44,66 @@ except Exception as e:
 
 device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 print(f"🚀 推理引擎啟動，硬體加速裝置：{device}")
+
+# =========================================================================
+# 🚦 C 組信心分流（Uncertainty Router 的極簡前身）
+# =========================================================================
+# ≥ FAST_TRACK_CONF = 高信心快速道（直入 processed-reports → 後端落 PostgreSQL，不經 VLM 二審）；
+# < FAST_TRACK_CONF = 低信心走 nursing-home-alerts → vlm_worker 二審 → 回 processed-reports。
+FAST_TRACK_CONF = 0.90  # 規格：AcT 信心 ≥0.9 直入 PG、<0.9 走 VLM 二審
+
+# Kafka topic 名稱是不能動的契約邊界（後端/vlm_worker 共用），集中成常數避免各處手打拼錯。
+TOPIC_PROCESSED_REPORTS = "processed-reports"   # 高信心快速道 + 二審完成 → 後端 consumer 寫 PG
+TOPIC_NURSING_HOME_ALERTS = "nursing-home-alerts"  # 低信心 → VLM 二審佇列
+
+
+def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
+                        event_label, numeric_id, video_source, detected_at,
+                        snapshot_full_path, snapshot_name, final_score, yolo_thresh):
+    """依 AcT 信心把單一跌倒/滑落事件路由到對應 Kafka topic，回傳 (topic, payload)。
+
+    這是 C 組信心分流的乾淨抽離點（原本寫死在 camera_worker 裡的 if/else）：
+      - 高信心（act_confidence >= FAST_TRACK_CONF 或明確 chair_slip）且非遮擋不確定
+        → (processed-reports, 快速道 payload)：後端 consumer 直接落 PostgreSQL，不經 VLM。
+      - 其餘（信心不足 / 遮擋難判）
+        → (nursing-home-alerts, 待審 payload)：走 Kafka → vlm_worker 二審 → 回 processed-reports。
+
+    兩個 payload 的欄位名與型別（device_id(int)/event_type/detected_at(ISO)/snapshot_path/
+    vlm_summary/severity …）是後端契約，維持不動。第 2 層 LangGraph Uncertainty Router
+    之後可直接 import 本函式接管路由決策，介面不變（VLMModel.infer 已隔離、與此對齊）。
+    """
+    is_fast_track = (act_confidence >= FAST_TRACK_CONF or is_chair_slipped) and not is_occluded_fall
+
+    if is_fast_track:
+        # 🟢 分流 A：快速道路（Critical_Fast_Track）——高信心/明確滑落，直入後端落庫。
+        payload = {
+            "device_id": numeric_id,
+            "event_type": event_label,
+            "clip_path": str(video_source),
+            "detected_at": detected_at,
+            "snapshot_path": snapshot_full_path,
+            "image_filename": snapshot_name,
+            "yolo_score": final_score,
+            "yolo_threshold": yolo_thresh,
+            "vlm_summary": "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。",
+            "severity": "high",
+        }
+        return TOPIC_PROCESSED_REPORTS, payload
+
+    # 🔵 分流 B：慢速道路（Pending_VLM_Review）——信心不足/遮擋難判，送 VLM 二審。
+    payload = {
+        "device_id": numeric_id,
+        "event_type": event_label,
+        "clip_path": str(video_source),
+        "detected_at": detected_at,
+        "snapshot_path": snapshot_full_path,
+        "image_filename": snapshot_name,
+        "yolo_score": final_score,
+        "yolo_threshold": yolo_thresh,
+        "vlm_summary": "【AI 信心度不足】已觸發大模型二審，正在分析影像特徵並生成詳細報告...",
+        "severity": "medium",
+    }
+    return TOPIC_NURSING_HOME_ALERTS, payload
 
 # =========================================================================
 # 🌟 Action Transformer 模型架構
@@ -59,18 +125,27 @@ class ActionTransformer(nn.Module):
 # =========================================================================
 # 📦 全域載入官方模型與時序模型（✅ 已升級為 YOLO-Seg 實例分割）
 # =========================================================================
-print("📦 正在載入官方 YOLO11s 家族模型與自研 Action Transformer...")
-yolo_pose_model = YOLO("yolo11s-pose.pt") 
-yolo_env_model = YOLO("yolo11s-seg.pt")   # 👈 核心修改：正式切換為實例分割模型！
+print("📦 正在載入 Triton 三顆模型（yolo_pose / rt_detr / action_transformer）...")
+# 依最新系統流程：三顆模型都上 Triton。pose 打 yolo_pose、環境物件偵測打 rt_detr、
+# 時序跌倒分類（AcT）打 action_transformer。三個 client 呼叫介面都貼近原本本地呼叫：
+#   - TritonPoseModel / TritonDetrModel 回標準 ultralytics Results，下游 .keypoints/.plot()
+#     與 .boxes/.names 完全不用改；
+#   - TritonActModel 回原始 logits (1,2) ndarray，下游 torch.softmax/argmax 幾乎不用改。
+TRITON_POSE_URL = os.environ.get("TRITON_POSE_URL", "http://127.0.0.1:8000/yolo_pose")
+TRITON_DETR_URL = os.environ.get("TRITON_DETR_URL", "http://127.0.0.1:8000/rt_detr")
+TRITON_ACT_URL = os.environ.get("TRITON_ACT_URL", "http://127.0.0.1:8000/action_transformer")
+yolo_pose_model = TritonPoseModel(TRITON_POSE_URL)   # 人體姿態打 Triton yolo_pose
+yolo_env_model = TritonDetrModel(TRITON_DETR_URL)    # 環境物件偵測打 Triton rt_detr
 
-# 如果沒有權重檔，先模擬測試，避免程式崩潰
-if os.path.exists("action_transformer.pth"):
-    transformer_model = ActionTransformer().to(device)
-    transformer_model.load_state_dict(torch.load("action_transformer.pth", map_location=device))
-    transformer_model.eval()
-    print("🔥 所有模型載入成功，多任務平行化管線就緒！")
-else:
-    print("⚠️ 找不到 action_transformer.pth，將使用模擬機制運行時序推理。")
+# AcT 改打 Triton action_transformer。保留原本的降級語意：若 Triton 的 AcT 不可用
+# （client 建構失敗等），transformer_model 設 None，下游 len(frame_window)==30 的分支
+# 會退回「is_physically_lying 幾何模擬」機制，不讓整支 crash。實際的 Triton 連線是
+# thread-local 延遲建立（見 TritonActModel），這裡只是建 wrapper 物件、不會真的連線。
+try:
+    transformer_model = TritonActModel(TRITON_ACT_URL)
+    print("🔥 Triton 三顆 client 就緒，多任務平行化管線就緒！")
+except Exception as e:
+    print(f"⚠️ 建立 TritonActModel 失敗（{e}），將使用模擬機制運行時序推理。")
     transformer_model = None
 
 output_frames = {}
@@ -83,7 +158,8 @@ def camera_worker(camera_id, video_source):
     global producer, device, yolo_pose_model, yolo_env_model, transformer_model, output_frames, frames_lock
     
     print(f"🚀 鏡頭頻道 [{camera_id}] 啟動拉流：{video_source}")
-    cap = cv2.VideoCapture(video_source)
+    # 影片檔（AV1）走 PyAV 解碼、webcam index 走 cv2；介面與 cv2.VideoCapture 相同。
+    cap = open_source(video_source)
     if not cap.isOpened(): 
         print(f"❌ 鏡頭頻道 [{camera_id}] 無法開啟影像源: {video_source}")
         return
@@ -98,9 +174,10 @@ def camera_worker(camera_id, video_source):
     
     last_pose_feat = np.zeros(34, dtype=np.float32)
     has_seen_person = False
-    last_valid_annotated_frame = None  
+    last_valid_annotated_frame = None
     frame_count = 0
     normal_h_reference = None
+    triton_down_warned = False  # Triton 斷線降級提示只印一次，避免逐幀刷屏
     
     # 💡 狀態旗標
     ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標
@@ -143,10 +220,27 @@ def camera_worker(camera_id, video_source):
             continue
 
         img_h, img_w, _ = frame.shape
-        
+
         # 核心推理：同時運行 Pose 與 Seg 模型
-        results_pose = yolo_pose_model(frame, verbose=False, conf=0.45)
-        results_env = yolo_env_model(frame, verbose=False, conf=0.35)  # 執行實例分割
+        # Triton 斷線降級：pose/detr 的連線是 thread-local 首次呼叫才建立，Triton 掛掉時會在
+        # 此拋錯。用 try/except 接住讓「該相機 worker 續跑」（頂多該幀跳過），不讓未捕捉例外
+        # 殺掉整條 worker 執行緒——保留 Albert 原設計的容錯：某路 Triton 抖動不影響其他相機。
+        try:
+            results_pose = yolo_pose_model(frame, verbose=False, conf=0.45)
+        except Exception as e:
+            if not triton_down_warned:
+                print(f"⚠️ [{camera_id}] Triton pose 推論失敗（降級：略過此幀，持續重試）：{e}")
+                triton_down_warned = True
+            t_sleep = frame_delay - (time.time() - t_start)
+            if t_sleep > 0: time.sleep(t_sleep)
+            continue
+        try:
+            results_env = yolo_env_model(frame, verbose=False, conf=0.35)  # rt_detr 環境物件偵測
+        except Exception as e:
+            if not triton_down_warned:
+                print(f"⚠️ [{camera_id}] Triton rt_detr 推論失敗（降級：本幀不做環境物件疊圖）：{e}")
+                triton_down_warned = True
+            results_env = None  # 下游 `if results_env and ...` guard 可容忍 None
         
         detected_objects = []
         bed_box_xyxy = None  
@@ -204,7 +298,7 @@ def camera_worker(camera_id, video_source):
                         # 跌倒防線 A
                         try:
                             shoulder_x = (kp[5][0] + kp[6][0]) / 2.0; shoulder_y = (kp[5][1] + kp[6][1]) / 2.0
-                            hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + hip_y) / 2.0
+                            hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + kp[12][1]) / 2.0
                             if not (shoulder_x == 0 or hip_x == 0):
                                 body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
                                 if body_angle < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
@@ -232,15 +326,25 @@ def camera_worker(camera_id, video_source):
         status_text = "Normal"; color = (0, 255, 0); act_confidence = 0.0; draw_border = True   
         pred_class = 1  
         
+        act_triton_ok = False
         if len(frame_window) == 30 and transformer_model is not None:
             np_window = np.array(frame_window, dtype=np.float32)
-            input_tensor = torch.from_numpy(np_window).unsqueeze(0).to(device)
-            with torch.no_grad():
-                outputs = transformer_model(input_tensor)
+            # TritonActModel 回原始 logits (1,2) ndarray；softmax/argmax 沿用原本邏輯。
+            # Triton 斷線降級：AcT 連線同為 thread-local 首次呼叫才建立，Triton 掛掉時這裡拋錯。
+            # 接住後退回下面的「is_physically_lying 幾何模擬」分支，不讓整條 worker 崩。
+            try:
+                logits = transformer_model(np_window)
+                outputs = torch.from_numpy(np.asarray(logits, dtype=np.float32))
                 prob = torch.softmax(outputs, dim=1)
                 pred_class = torch.argmax(prob, dim=1).item()
                 act_confidence = prob[0][pred_class].item()
-        elif len(frame_window) == 30:
+                act_triton_ok = True
+            except Exception as e:
+                if not triton_down_warned:
+                    print(f"⚠️ [{camera_id}] Triton AcT 推論失敗（降級：退回幾何模擬判斷）：{e}")
+                    triton_down_warned = True
+        if len(frame_window) == 30 and not act_triton_ok:
+            # transformer_model 為 None（建構期就沒 AcT）或 Triton 呼叫失敗，皆走幾何模擬。
             pred_class = 0 if is_physically_lying else 1
             act_confidence = 0.75 if is_physically_lying else 0.0
 
@@ -310,50 +414,32 @@ def camera_worker(camera_id, video_source):
             # 🧠 4. 【生產品級核心】動態不重複檔名機制 (帶精確時間戳)
             current_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
             snapshot_name = f"snapshot_{camera_id}_{current_time_str}.jpg"  # 不重複檔名
-            cv2.imwrite(snapshot_name, frame)  # 實體不重複存檔留存
+            snapshot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
+            os.makedirs(snapshot_dir, exist_ok=True)
+            snapshot_full_path = os.path.join(snapshot_dir, snapshot_name)
+            cv2.imwrite(snapshot_full_path, frame)  # 實體不重複存檔留存
 
             if producer is not None:
-                # 🟢 分流 A：快速道路 (Critical_Fast_Track)
-                if (act_confidence > 0.90 or is_chair_slipped) and not is_occluded_fall:
-                    vlm_triggered = True
-                    
-                    fast_track_payload = {
-                        "device_id": numeric_id,
-                        "event_type": event_label,
-                        "clip_path": str(video_source),            # 帶入當前影片源路徑
-                        "detected_at": datetime.now().isoformat(),  # 轉為符合後端解析的 ISO 時間字串
-                        "snapshot_path": os.path.abspath(snapshot_name), # 提供不重複相片的絕對路徑
-                        "image_filename": snapshot_name,           # 傳遞不重複檔名供中央 VLM 精準讀取
-                        "yolo_score": final_score,
-                        "yolo_threshold": yolo_thresh,
-                        "vlm_summary": "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。",
-                        "severity": "high"
-                    }
-                    
-                    producer.send('processed-reports', value=fast_track_payload)
-                    producer.flush()
-                    vlm_report = "Fast-track Sent"
-                    
-                # 🔵 分流 B：慢速道路 (Pending_VLM_Review)
-                else:
-                    vlm_triggered = True
-                    
-                    vlm_queue_payload = {
-                        "device_id": numeric_id,
-                        "event_type": event_label,
-                        "clip_path": str(video_source),
-                        "detected_at": datetime.now().isoformat(),
-                        "snapshot_path": os.path.abspath(snapshot_name), # 提供不重複相片的絕對路徑
-                        "image_filename": snapshot_name,           # 傳遞不重複檔名供中央 VLM 精準讀取
-                        "yolo_score": final_score,
-                        "yolo_threshold": yolo_thresh,
-                        "vlm_summary": "【AI 信心度不足】已觸發大模型二審，正在分析影像特徵並生成詳細報告...",
-                        "severity": "medium"
-                    }
-                    
-                    producer.send('nursing-home-alerts', value=vlm_queue_payload)
-                    producer.flush()
-                    vlm_report = "VLM Queued..."
+                vlm_triggered = True
+                # 🚦 信心分流抽成 route_by_confidence()：由它決定送哪個 topic、組哪個 payload。
+                # 這裡只負責算好參數、把回傳的 (topic, payload) 送出，路由決策可被 LangGraph 接管。
+                topic, payload = route_by_confidence(
+                    act_confidence=act_confidence,
+                    is_chair_slipped=is_chair_slipped,
+                    is_occluded_fall=is_occluded_fall,
+                    event_label=event_label,
+                    numeric_id=numeric_id,
+                    video_source=video_source,
+                    detected_at=datetime.now().isoformat(),  # 符合後端解析的 ISO 時間字串
+                    snapshot_full_path=snapshot_full_path,
+                    snapshot_name=snapshot_name,
+                    final_score=final_score,
+                    yolo_thresh=yolo_thresh,
+                )
+                producer.send(topic, value=payload)
+                producer.flush()
+                # 畫面上的 VLM 狀態依落點提示：快速道 vs 送二審佇列。
+                vlm_report = "Fast-track Sent" if topic == TOPIC_PROCESSED_REPORTS else "VLM Queued..."
 
         # === Step D: 畫布渲染（✅ 自動半透明疊加不規則物件輪廓） ===
         annotated_frame = results_pose[0].plot(boxes=True, labels=True, conf=0.45) 
@@ -392,18 +478,53 @@ def camera_worker(camera_id, video_source):
 # =========================================================================
 if __name__ == "__main__":
     # 💡 業界測試多路併發：可直接在此擴充相機與不同的測試影片
+    # 測試影片放在 ai/test_demo/，以 __file__ 為基準解析絕對路徑，不受從哪個目錄啟動影響。
+    _AI_DIR = os.path.dirname(os.path.abspath(__file__))
     camera_channels = {
-        "Room_301_Bed": "test_demo/test1.mp4",        
-        "Room_302_Bed": "test_demo/test2.mp4",        
-        "Room_303_Bed": "test_demo/test3.mp4",        
+        "Room_301_Bed": os.path.join(_AI_DIR, "test_demo", "test1.mp4"),
+        "Room_302_Bed": os.path.join(_AI_DIR, "test_demo", "test2.mp4"),
+        "Room_303_Bed": os.path.join(_AI_DIR, "test_demo", "test3.mp4"),
     }
+    # 即時串流（RTSP）測試開關：設了 RTSP_TEST_URL 就多掛一路即時流（open_source 走 PyAV 拉流），
+    # mp4 三路照跑不受影響。例：RTSP_TEST_URL=rtsp://127.0.0.1:8554/test python ai/inference_test.py
+    _RTSP_TEST = os.environ.get("RTSP_TEST_URL")
+    if _RTSP_TEST:
+        camera_channels["RTSP_Live_Test"] = _RTSP_TEST
+        print(f"📡 已掛入 RTSP 即時流測試頻道：{_RTSP_TEST}")
+
+    # 壓測開關（比照 RTSP_TEST_URL：未設環境變數 = 位元級原行為，不留死改動）：
+    # STRESS_CAM_COUNT=N 時，把現有 test1/2/3.mp4 循環重複掛成 N 個唯一房間頻道
+    # （Room_301..30N，src 用 test1/2/3 輪替）。壓測看的是「N 路併發吞吐」，不是內容，
+    # 所以重複掛同幾支影片即可。例：STRESS_CAM_COUNT=5 python ai/inference_test.py
+    _STRESS_CAM_COUNT = os.environ.get("STRESS_CAM_COUNT")
+    if _STRESS_CAM_COUNT:
+        _n = int(_STRESS_CAM_COUNT)
+        _pool = [os.path.join(_AI_DIR, "test_demo", f"test{i}.mp4") for i in (1, 2, 3)]
+        camera_channels = {
+            f"Room_{301 + i}_Bed": _pool[i % len(_pool)] for i in range(_n)
+        }
+        print(f"🔥 [壓測] STRESS_CAM_COUNT={_n} → 掛 {_n} 路併發頻道：{list(camera_channels.keys())}")
     print(f"🎬 全連鎖安養中心多鏡頭多模態智能管線全面啟動（多路不重複留存模式啟用）...")
     
     threads = []
     for cam_id, stream_src in camera_channels.items():
         t = threading.Thread(target=camera_worker, args=(cam_id, stream_src))
         t.daemon = True; threads.append(t); t.start()
-        
+
+    # Headless 壓測開關（未設 = 原本 GUI 行為，不留死改動）：HEADLESS=1 時主執行緒不畫
+    # imshow（避免 GUI 拖慢壓測數字、且 WSL2 無 X server 會卡），改成純等 worker 跑完影片。
+    # worker 本體完全不動，只是主執行緒不進顯示迴圈。
+    if os.environ.get("HEADLESS"):
+        print("🖥️  [壓測] HEADLESS=1 → 不開 GUI 視窗，主執行緒等待所有 worker 跑完影片流...")
+        try:
+            for t in threads:
+                t.join()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if producer is not None: producer.close()
+        raise SystemExit(0)
+
     try:
         frame_interval = 1.0 / 30.0; window_positions = {}  
         while True:
