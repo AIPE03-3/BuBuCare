@@ -3,6 +3,17 @@ platform: "tensorrt_plan"
 default_model_filename: "model.plan"
 max_batch_size: 0
 
+# ── 版本鎖（version pin）─────────────────────────────────────────────────────
+# 只 serve version 1。原因：platform=tensorrt_plan 要求每個版本目錄都有 model.plan
+# （本機 RTX 5060 Ti / Blackwell 專屬編出的 TensorRT 引擎）。目前只有 rt_detr/1/ 有
+# 已驗證可用的 model.plan；rt_detr/3/ 只有一份 model.onnx、沒有配套 .plan。
+# Triton 預設載「版本號最大」的版本(=3)，會去找 3/model.plan 找不到 → 整支 server
+# 啟動失敗、連 yolo_pose/action_transformer 兩顆一起陪葬(explicit 模式一顆倒全倒)。
+# 用 version_policy 明確鎖 v1，避免「載到沒測過/缺引擎的版本」。
+# 未來要上新版本：先為該版本目錄產出 Blackwell model.plan(不能只丟 onnx)，驗過後再把
+# versions: 改成新版本號(或用 latest{num_versions:1})；務必讓被 serve 的版本都有 .plan。
+version_policy: { specific { versions: [ 1 ] } }
+
 input [
   {
     name: "images"
