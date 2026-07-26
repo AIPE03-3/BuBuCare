@@ -1,6 +1,3 @@
-import time
-from datetime import datetime
-
 class ChairSlipDetector:
     def __init__(self, camera_id):
         self.camera_id = camera_id
@@ -37,29 +34,15 @@ class ChairSlipDetector:
             if hip_y > chair_seat_line and shoulder_y > chair_y1 and hip_y != 0:
                 if not self.slip_triggered:
                     self.slip_triggered = True
-                    
-                    # 🧠 解析出數字 ID（例如 Room_301_Bed -> 301）
-                    try:
-                        numeric_id = int(''.join(filter(str.isdigit, self.camera_id)))
-                    except ValueError:
-                        numeric_id = 1
-
-                    slip_payload = {
-                        "alert_id": f"SLP_{self.camera_id}_{int(time.time())}",
-                        "device_id": numeric_id,                    # ✅ 對齊後端要求的 integer ID
-                        "event_type": "chair_slip",                 # ✅ 明確定義事件型態為座椅滑落
-                        "detected_at": datetime.now().isoformat(),  # ✅ 改用標準 ISO 時間字串
-                        "camera_id": self.camera_id,                # ✅ 由 room_no 修正為統一的 camera_id
-                        "yolo_score": 0.88,                         # ✅ 給予預設信心度
-                        "vlm_summary": f"【長照預警系統：座椅意外滑落】感測到 [{self.camera_id}] 長輩疑似從輪椅或座椅滑落、癱坐在地上！可能因無力或失神導致，請護理人員立刻前往協助。",
-                        "severity": "high",                         # ✅ 對齊後端嚴重度
-                        "status": "UNREAD"
-                    }
-                    
-                    if producer is not None:
-                        producer.send('processed-reports', value=slip_payload)
-                        producer.flush()
-                        print(f"⚠️ [模組 I] [{self.camera_id}] 偵測到長輩從座椅滑落意外！（格式已對齊）")
+                    # ⚠️ 契約邊界：本模組「只偵測、不外發」。
+                    # 座椅滑落事件的 Kafka 外發統一由 inference_test 主迴圈負責
+                    # （is_chair_slipped=True → route_by_confidence() 組出恰好 9 欄的
+                    #   processed-reports payload：device_id/event_type/clip_path/detected_at/
+                    #   snapshot_path/yolo_score/yolo_threshold/vlm_summary/severity）。
+                    # 早期版本曾在此直接 producer.send() 一份自訂 payload（多 alert_id/camera_id/
+                    # status、缺 clip_path/snapshot_path/yolo_threshold），會被後端 422 退件、
+                    # 且與主迴圈重複外發。移除後改回傳 True 交給主迴圈，守住 9 欄契約。
+                    print(f"⚠️ [模組 I] [{self.camera_id}] 偵測到長輩從座椅滑落意外！（交主迴圈外發）")
                 return True
         else:
             self.slip_triggered = False

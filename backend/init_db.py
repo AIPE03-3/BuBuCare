@@ -47,6 +47,16 @@ def seed_demo_data(db):
     else:
         print("裝置已存在，略過")
 
+    # 邊緣 AI 端（inference_test.py）以相機房號當 device_id：Room_301_Bed -> 301、302、303。
+    # 後端裝置表要有對應 device_id，POST /events 才不會因查無裝置回 400（見上方 line 23 註解）。
+    # 逐 id 冪等新增（不套上面「有任何裝置就整批略過」的 guard），可安全重跑、不動既有 1/2/101。
+    for _dev_id in (301, 302, 303):
+        if db.query(Device).filter_by(device_id=_dev_id).first() is None:
+            db.add(Device(device_id=_dev_id, device_name=f"寢室-{_dev_id}",
+                          status="active", company_id=1))
+    db.commit()
+    print("已確保邊緣相機裝置 301/302/303 存在")
+
     if db.query(Staff).first() is None:
         db.add(Staff(staff_name="照護員A", company_id=1))
         db.add(Staff(staff_name="照護員B", company_id=1))
