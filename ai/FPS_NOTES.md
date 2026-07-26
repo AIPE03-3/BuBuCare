@@ -65,5 +65,16 @@ tensor 轉換），佔幀時間 ~80%。故 gRPC、源頭降解析度、關畫圖
 - ✅ **gRPC**：+0.5 fps。小，但零成本（只改 env），建議壓測時採用。
 - ✅ **`NO_RENDER`**：+1 fps。HEADLESS 壓測時該開。
 - ⭕ **源頭降解析度**：實測 ≈0（甚至略降，多一次 resize 抵銷）。已不保留此開關。
-- 🎯 **client 後處理搬 GPU（進行中）**：剖析指向的真正大魚，見 `triton_pose_client.py` /
-  `triton_detr_client.py` 的 `_postprocess`（NMS/scale 改在 CUDA tensor 上做）。
+- ⭕ **pose 後處理搬 GPU（選項 C，已試、已還原）**：反而略降（~11.6 vs 12.5）。
+  原因：conf 過濾後通常只剩 1 個人，NMS/scale 是在 1 row 上做，這麼小的運算搬 GPU，
+  CPU→GPU 傳輸＋kernel 啟動的固定開銷 > 省下的運算。剖析裡 pose 那 23.6ms 大頭其實是
+  `torch.from_numpy(8400×56)` 搬運與 gRPC 回傳，不是 NMS 本身。**小批量/單人 workload
+  上，後處理搬 GPU 是負優化**。已還原成 CPU 版（正確性驗過 GPU/CPU 輸出一致，max|Δ|<1e-3px）。
+
+## 收斂結論
+
+在**單路、單人**的長照場景下，這條管線的 FPS 上限（~12.5fps）主要卡在
+**Python 單執行緒逐幀 CPU 後處理 + gRPC 回傳搬運**，且量體太小、搬 GPU 不划算。
+零成本可採用的是 **gRPC + `NO_RENDER`**（~12.5fps）。若要再往上，方向不是「單幀搬 GPU」，
+而是**併發**：三顆模型並行打（序列 25ms → ~14ms）、或每相機獨立進程繞開 GIL——
+這些是後續有需要再做的較大改動，非本輪範圍。
