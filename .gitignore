@@ -36,3 +36,39 @@ CLAUDE.md
 docker-compose.override.yml
 
 gcp_vm_environment/.env
+
+# =========================================================================
+# 機器產物與大檔：一律不進 repo
+# 起因：這些路徑長期是 untracked，任何人跑 `git add -A` 就會全吃進來（約 1.1GB），
+# 其中 test4.mp4 有 344MB、超過 GitHub 100MB 硬上限，commit 後推不上去還得改寫歷史。
+# =========================================================================
+
+# Triton model_repository：只有 config.pbtxt / README.md 進 repo，模型版本目錄
+#（1/、2/、3/…）裡的 model.onnx 由 `python ai/export_models.py` 重建。
+# run_triton.sh 的註解本來就這樣寫，只是先前漏了對應的 ignore 規則。
+ai/triton_repo/*/[0-9]*/
+*.onnx
+
+# 影片：預設全擋，只放行既有已追蹤的四支小檔（各 1.5~2.4MB）。
+# test4.mp4 是 4.9 分鐘的 FPS 量測長片（344MB），要用請另外取得、不進版控。
+# 新增影片前先想清楚大小；要進 repo 就在這裡加一條 `!` 白名單。
+*.mp4
+!ai/test_demo/test1.mp4
+!ai/test_demo/test2.mp4
+!ai/test_demo/test3.mp4
+!frontend/public/videos/fall-demo.mp4
+
+# inference_test 觸發事件時寫入的證據快照（執行時產物）
+ai/snapshots/
+
+# ultralytics 訓練/驗證輸出
+runs/
+
+# 主動學習資料集（重訓用的圖與標註，機器產物）
+ai/active_learning_dataset/
+
+# ⚠️ ClearML server 設定：apiserver.conf 內含明文預設密碼，不可進 repo
+ai/clearml_server_config/
+
+# 編輯/轉檔備份檔（如 config.pbtxt.onnx.bak）
+*.bak
