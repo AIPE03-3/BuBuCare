@@ -12,6 +12,10 @@ PyAV 自帶 libdav1d，可解 AV1，故改用 PyAV 讀格 → 轉 numpy BGR。
 inference_test.py 每支相機一條 camera_worker，各自 `open_source()` 建自己的 reader，
 天然每執行緒獨立、不跨執行緒共用，安全（與三顆 Triton client 的 thread-local 精神一致）。
 """
+import os
+import queue
+import threading
+
 import cv2
 import numpy as np
 
@@ -165,6 +169,109 @@ class AVStreamReader:
             self._frames = None
 
 
+class PrefetchReader:
+    """把任一 reader 包成「解碼在背景執行緒先跑」，介面仍對齊 `cv2.VideoCapture`。
+
+    為什麼要這層：camera_worker 原本是「讀一幀 → 推論 → 讀下一幀 → 推論」完全序列，
+    解碼那 ~6.9ms 期間 GPU 在乾等、推論那 ~64ms 期間解碼器也在乾等，兩件事其實不互相
+    依賴。這裡讓一條背景執行緒**預先解好下一幀**塞進小 queue，主迴圈 `read()` 直接取，
+    解碼時間就整個藏進推論時間裡（實測見 FPS_NOTES.md 的 decode 並行段落）。
+
+    ⚠️ inner reader 必須在「真正會迭代它的那條執行緒」內建立：PyAV 的 container 與
+    `decode()` 迭代器綁建立它的執行緒（見本檔頭註解），所以這裡收的是 **factory**
+    而不是建好的 reader，由背景執行緒自己去建。`get(CAP_PROP_FPS)` 要的 fps 在背景
+    執行緒起手時就抄成一個 float，主執行緒讀快取值，完全不跨執行緒碰 PyAV 物件。
+
+    queue 刻意只留 2 格：對影片檔是要衝吞吐，對 RTSP 則最多多 2 幀延遲（~66ms@30fps）。
+    即時流若消費不贏來源，本來單執行緒版也一樣會落後，故無退步。
+    """
+
+    _EOF = object()  # 串流結束哨兵（與正常的 (True, frame) 區隔）
+
+    def __init__(self, factory, queue_size: int = 2):
+        self._factory = factory
+        self._q = queue.Queue(maxsize=queue_size)
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._inner = None
+        self._opened = False
+        self._fps = 0.0
+        self._eof_seen = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        self._ready.wait()  # 等背景執行緒把 inner 建好、isOpened/fps 抄出來再放行
+
+    def _run(self):
+        try:
+            try:
+                self._inner = self._factory()
+                self._opened = bool(self._inner.isOpened())
+                if self._opened:
+                    self._fps = float(self._inner.get(cv2.CAP_PROP_FPS) or 0.0)
+            except Exception as e:
+                print(f"❌ [PrefetchReader] 建立 reader 失敗：{e}")
+                self._opened = False
+            finally:
+                self._ready.set()  # 不論成敗都要放行，否則主執行緒卡死在建構子
+
+            if not self._opened:
+                self._put(self._EOF)
+                return
+
+            while not self._stop.is_set():
+                ret, frame = self._inner.read()
+                if not ret:
+                    self._put(self._EOF)
+                    break
+                if not self._put((True, frame)):
+                    break  # release() 已叫停
+        finally:
+            if self._inner is not None:
+                try:
+                    self._inner.release()  # 在建立它的執行緒內釋放（PyAV 要求）
+                except Exception:
+                    pass
+
+    def _put(self, item) -> bool:
+        """塞進 queue，但每 0.1s 回頭看 stop 旗標，避免 release() 後永遠卡在滿的 queue。"""
+        while not self._stop.is_set():
+            try:
+                self._q.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def isOpened(self) -> bool:
+        return self._opened
+
+    def read(self):
+        """回 `(ret, frame)`，對齊 `cv2.VideoCapture.read`。EOF 後續呼叫恆回 (False, None)。"""
+        if self._eof_seen:
+            return False, None
+        item = self._q.get()
+        if item is self._EOF:
+            self._eof_seen = True
+            return False, None
+        return item
+
+    def get(self, prop_id):
+        """只支援 camera_worker 用到的 CAP_PROP_FPS（背景執行緒抄下來的快取值）。"""
+        if prop_id == cv2.CAP_PROP_FPS:
+            return self._fps
+        return 0.0
+
+    def release(self):
+        self._stop.set()
+        # 清空 queue，讓可能卡在 put() 的背景執行緒有位子退出
+        while True:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                break
+        self._thread.join(timeout=2.0)
+
+
 # 判定為「即時串流 URL」的協定前綴（走 AVStreamReader 低延遲拉流）。
 _STREAM_PREFIXES = ("rtsp://", "rtp://", "rtmp://", "http://", "https://")
 
@@ -179,10 +286,18 @@ def open_source(video_source):
 
     回傳物件都具備相同的 `isOpened / read / get / release` 介面，故 camera_worker
     只需把 `cv2.VideoCapture(video_source)` 換成 `open_source(video_source)`。
+
+    提速開關 `DECODE_PREFETCH=1`：外面再包一層 `PrefetchReader`，讓解碼在背景執行緒
+    先跑、與推論重疊（省下 ~6.9ms/幀）。未設＝位元級原行為（直接回上述三種 reader）。
     """
-    if isinstance(video_source, int):
-        return cv2.VideoCapture(video_source)
-    s = str(video_source)
-    if s.startswith(_STREAM_PREFIXES):
-        return AVStreamReader(s)
-    return AVFrameReader(s)
+    def _factory():
+        if isinstance(video_source, int):
+            return cv2.VideoCapture(video_source)
+        s = str(video_source)
+        if s.startswith(_STREAM_PREFIXES):
+            return AVStreamReader(s)
+        return AVFrameReader(s)
+
+    if os.environ.get("DECODE_PREFETCH"):
+        return PrefetchReader(_factory)
+    return _factory()
