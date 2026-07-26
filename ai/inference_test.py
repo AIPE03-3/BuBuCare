@@ -189,6 +189,14 @@ def camera_worker(camera_id, video_source):
     # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/mask 疊圖/putText/copy），
     # 這些只為 GUI 顯示，HEADLESS 壓測根本不看畫面卻每幀白燒 CPU。快照存檔仍保留（事件證據）。
     _no_render = bool(os.environ.get("NO_RENDER"))
+    # 提速：DETR_EVERY_N=N（N>1）把 rt_detr 環境物件偵測降頻成「每 N 個處理幀才跑一次」，
+    # 其餘幀復用上次結果。detr 佔 ~30% 幀時間，但它偵測的全是靜態家具（bed/chair/couch…），
+    # results_env 三個下游用途（bed_box 離床、chair_box 座椅滑落、mask 疊圖）都只是
+    #「空間參考框」，家具不會動、幾秒不更新沒差；pose 則必須每幀跑（要餵連續 30 幀給 AcT，
+    # 時序不能有洞）故完全不動。未設＝1＝位元級原本的每幀行為，隨時可退回。
+    _detr_every_n = max(1, int(os.environ.get("DETR_EVERY_N", "1")))
+    _detr_proc_idx = 0          # 已處理幀計數（只給 detr 降頻用，與 FPS 計數解耦）
+    _cached_results_env = None  # 上次 detr 結果，跳過的幀復用
     _fps_t0 = time.time()
     _fps_n = 0            # 本區間已處理幀數
     _fps_proc_total = 0   # 累計已處理幀數
@@ -263,14 +271,25 @@ def camera_worker(camera_id, video_source):
             t_sleep = frame_delay - (time.time() - t_start)
             if t_sleep > 0: time.sleep(t_sleep)
             continue
-        try:
-            results_env = yolo_env_model(frame, verbose=False, conf=0.35)  # rt_detr 環境物件偵測
-        except Exception as e:
-            if not triton_down_warned:
-                print(f"⚠️ [{camera_id}] Triton rt_detr 推論失敗（降級：本幀不做環境物件疊圖）：{e}")
-                triton_down_warned = True
-            results_env = None  # 下游 `if results_env and ...` guard 可容忍 None
-        
+        # rt_detr 降頻（DETR_EVERY_N）：只在每 N 個處理幀真的打一次 Triton，其餘幀復用快取。
+        # ⚠️ 是「復用上次結果」而不是「傳 None」——results_env 的下游（模組 A 離床拿 bed_box、
+        #    模組 I 座椅滑落拿 chair_box）都靠它當空間參考框，傳 None 會讓偵測時斷時續；
+        #    家具靜態，復用幾幀前的框才是正確做法。N=1 時此分支恆真，行為與原本完全一致。
+        if _detr_proc_idx % _detr_every_n == 0:
+            try:
+                results_env = yolo_env_model(frame, verbose=False, conf=0.35)  # rt_detr 環境物件偵測
+            except Exception as e:
+                if not triton_down_warned:
+                    print(f"⚠️ [{camera_id}] Triton rt_detr 推論失敗（降級：本幀不做環境物件疊圖）：{e}")
+                    triton_down_warned = True
+                results_env = None  # 下游 `if results_env and ...` guard 可容忍 None
+            # 失敗時的 None 也一併寫回快取：Triton 斷線就該讓下游看到 None，
+            # 不能拿幾幀前的舊框假裝偵測還活著（保住原本的斷線降級語意）。
+            _cached_results_env = results_env
+        else:
+            results_env = _cached_results_env
+        _detr_proc_idx += 1
+
         detected_objects = []
         bed_box_xyxy = None  
         
