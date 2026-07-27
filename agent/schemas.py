@@ -31,9 +31,12 @@ class AlertMessage(BaseModel):
 
     **Kafka 1 上有兩種格式**（2026-07-20 核對邊緣端程式碼確認，非依文件範例）：
 
-    1. 跌倒/滑落告警 —— `ai/inference_test.py:341`
-       `device_id`(int)、`event_type`("fall"/"chair_slip")、`yolo_threshold`、
+    1. 跌倒告警 —— `ai/inference_test.py` 的 `route_by_confidence()`
+       `device_id`(int)、`event_type`、`yolo_threshold`、
        `clip_path`、`snapshot_path`… **沒有 camera_id 欄位**
+       ⚠️ 2026-07-27：`event_type` 從此恆為 `"fall"`。原本還有 `"chair_slip"`（模組 I），
+       該模組已隨 `ai/modules/` 白名單收斂刪除（見根目錄 `CLAUDE.md`）。欄位型別不變，
+       仍是字串、不是 enum，所以本 schema 不需要改，只是值域少了一個。
     2. 定時巡檢 —— `ai/modules/sanity_check.py:35`
        `device_id`(int)、`camera_id`("Room_301_Bed" 這種非數字字串)、
        `event_type`("Routine_Environment_Sanity_Check")… **沒有 yolo_threshold**

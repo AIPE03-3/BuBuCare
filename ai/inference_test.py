@@ -12,14 +12,19 @@ from datetime import datetime
 import base64
 
 # =========================================================================
-# 🌟 導入全套自研長照智慧模組（六大防線極致完全體對照表）
+# 🌟 外掛模組（白名單制，見根目錄 CLAUDE.md）
 # =========================================================================
-from modules.bed_exit import BedExitDetector         # 模組 A：半夜離床虛擬圍籬預警
-from modules.wandering import WanderingDetector       # 模組 E：跨相機軌跡徘徊遊走偵測
+# 2026-07-27 起 ai/modules/ 只准存在、也只准 import 兩個檔：__init__.py 與 sanity_check.py。
+# 原本的 bed_exit / wandering / micro_motion / audio_fusion / chair_slip 五個模組已刪除，
+# 功能與邏輯一律不再套用。理由（詳見 CLAUDE.md）：
+#   · 前三個各自繞過 route_by_confidence() 自組 payload 直送 Kafka，欄位對不上契約，
+#     每一則都被後端 422 退件（2026-07-27 用 test4.mp4 實測確認）。
+#   · audio_fusion 是展示用的假資料產生器（對 camera_id 含 "303" 的相機每 22 秒隨機
+#     丟「撞擊聲/呼救」並把信心強制拉到 0.96 直入快速道），是誤報來源不是偵測能力。
+#   · 本階段只保留跌倒機制。跌倒主邏輯在下面 camera_worker 的主迴圈裡（防線 A 體角判定、
+#     防線 B 幾何遮擋、AcT 時序分類），從來就不在 modules/ 底下，不受這次收斂影響。
+# 護欄 scripts/check_guardrails.py 會擋掉任何新增檔案或 import，不是只靠這段註解。
 from modules.sanity_check import RoutineSanityChecker  # 模組 G：VLM 閒置算力環境安全巡檢
-from modules.micro_motion import MicroMotionDetector   # 模組 F：非接觸式床上微觀躁動偵測
-from modules.audio_fusion import AudioFusionEngine     # 模組 H：邊緣端聽覺多模態特徵融合
-from modules.chair_slip import ChairSlipDetector       # 模組 I：座椅/輪椅意外滑落偵測
 
 from triton_pose_client import TritonPoseModel          # Triton 版 yolo_pose client（人體姿態）
 from triton_detr_client import TritonDetrModel          # Triton 版 rt_detr client（環境物件偵測）
@@ -60,16 +65,21 @@ TOPIC_PROCESSED_REPORTS = "processed-reports"   # 高信心快速道 + 二審完
 TOPIC_NURSING_HOME_ALERTS = "nursing-home-alerts"  # 低信心 → VLM 二審佇列
 
 
-def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
+def route_by_confidence(*, act_confidence, is_occluded_fall,
                         event_label, numeric_id, clip_path, detected_at,
                         snapshot_full_path, snapshot_name, final_score, yolo_thresh):
-    """依 AcT 信心把單一跌倒/滑落事件路由到對應 Kafka topic，回傳 (topic, payload)。
+    """依 AcT 信心把單一跌倒事件路由到對應 Kafka topic，回傳 (topic, payload)。
 
     這是 C 組信心分流的乾淨抽離點（原本寫死在 camera_worker 裡的 if/else）：
-      - 高信心（act_confidence >= FAST_TRACK_CONF 或明確 chair_slip）且非遮擋不確定
+      - 高信心（act_confidence >= FAST_TRACK_CONF）且非遮擋不確定
         → (processed-reports, 快速道 payload)：後端 consumer 直接落 PostgreSQL，不經 VLM。
       - 其餘（信心不足 / 遮擋難判）
         → (nursing-home-alerts, 待審 payload)：走 Kafka → vlm_worker 二審 → 回 processed-reports。
+
+    2026-07-27：原本還有一個 `is_chair_slipped` 參數（模組 I 判定座椅滑落時強制走快速道，
+    event_type 送 "chair_slip"）。該模組已隨 ai/modules/ 白名單收斂刪除（見檔頭與 CLAUDE.md），
+    參數一併移除、`event_type` 從此恆為 "fall"。**payload 欄位一個字都沒動**——
+    護欄 scripts/check_guardrails.py 檢查的是下面兩個 payload dict 的 keys，不是本函式簽章。
 
     兩個 payload 的欄位**不一樣**，因為去向不一樣：
       - 快速道走 processed-reports，會被後端 consumer 直接轉成 POST /events，所以只帶
@@ -89,10 +99,10 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
     `video_source`——影片檔時代那就是那支 mp4 還說得過去，但接上 RTSP 之後會變成一個
     `rtsp://` 網址，前端點下去沒有「事發當時」可看。欄位名是契約不動，只換裡面的值。
     """
-    is_fast_track = (act_confidence >= FAST_TRACK_CONF or is_chair_slipped) and not is_occluded_fall
+    is_fast_track = act_confidence >= FAST_TRACK_CONF and not is_occluded_fall
 
     if is_fast_track:
-        # 🟢 分流 A：快速道路（Critical_Fast_Track）——高信心/明確滑落，直入後端落庫。
+        # 🟢 分流 A：快速道路（Critical_Fast_Track）——高信心，直入後端落庫。
         # 這條直接進後端，只帶後端要的欄位；不帶 yolo_threshold（AI 內部用的門檻值）。
         payload = {
             "device_id": numeric_id,
@@ -102,7 +112,7 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
             "snapshot_path": snapshot_full_path,
             "image_filename": snapshot_name,
             "yolo_score": final_score,
-            "vlm_summary": "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。",
+            "vlm_summary": "【緊急通報】邊緣端偵測到嚴重跌倒！請立刻前往救援。",
         }
         return TOPIC_PROCESSED_REPORTS, payload
 
@@ -367,13 +377,15 @@ def camera_worker(camera_id, video_source):
     # 💡 狀態旗標
     ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標
     
-    # 💡 實例化全套獨立的外掛大腦物件
-    bed_detector = BedExitDetector(camera_id)
-    wandering_detector = WanderingDetector(camera_id, threshold=8.0)
-    sanity_checker = RoutineSanityChecker(camera_id, interval_seconds=15.0)
-    motion_detector = MicroMotionDetector(camera_id)
-    audio_engine = AudioFusionEngine(camera_id)
-    chair_slitter = ChairSlipDetector(camera_id)  # 模組 I：座椅滑落實例物件
+    # 💡 白名單內唯一的外掛模組（其餘五個已刪，見檔頭與 CLAUDE.md）
+    # 間隔拉長的原因：巡檢原本靠 `not is_leaving_bed and not is_wandering` 兩個旗標抑制，
+    # 那兩個模組刪掉後旗標恆為 False，等於少了兩道閘門。若維持 15 秒，閒置時每 15 秒就有
+    # 一張圖進 nursing-home-alerts；而 uncertainty_router 是「一律二審不加 discard」、
+    # vlm_worker 每筆二審完成都外發 processed-reports，後端就會每 15 秒多一筆巡檢事件。
+    # 用環境變數可調，未設＝60 秒。（sanity_check.py 本身一行未動，間隔是呼叫端給的參數。）
+    sanity_checker = RoutineSanityChecker(
+        camera_id, interval_seconds=float(cfg("SANITY_INTERVAL_SEC", "60"))
+    )
 
     while True:
         t_start = time.time()
@@ -534,12 +546,9 @@ def camera_worker(camera_id, video_source):
         current_pose_feat = np.zeros(34, dtype=np.float32)
         is_current_frame_valid = False
         is_physically_lying = False  
-        is_occluded_fall = False     
-        is_leaving_bed = False       
-        is_whitespace = False  
-        is_agitated = False
-        is_chair_slipped = False  
-        
+        is_occluded_fall = False
+        is_whitespace = False
+
         if results_pose and len(results_pose[0].keypoints) > 0:
             kpts_obj = results_pose[0].keypoints
             try:
@@ -580,15 +589,6 @@ def camera_worker(camera_id, video_source):
                         # 跌倒防線 B (幾何遮擋防禦)
                         if normal_h_reference is not None:
                             if (h_box / normal_h_reference) < 0.70 and y2 > (img_h * 0.5): is_occluded_fall = True
-                                
-                        # 模組 A：離床預警呼叫
-                        is_leaving_bed = bed_detector.process(kp, bed_box_xyxy, img_h, is_physically_lying, producer)
-                        
-                        # 模組 F：床上微觀躁動呼叫
-                        is_agitated = motion_detector.process(kp, is_physically_lying, producer)
-                        
-                        # 模組 I：座椅/輪椅意外滑落呼叫
-                        is_chair_slipped = chair_slitter.process(kp, results_env, img_h, is_physically_lying, producer)
 
             except Exception: pass
 
@@ -628,38 +628,20 @@ def camera_worker(camera_id, video_source):
                 if len(frame_window) < 30 or is_ai_thinking_fall or is_occluded_fall: should_trigger_fall = True
             elif len(frame_window) == 30 and pred_class == 0 and act_confidence > 0.55: should_trigger_fall = True
 
-        # === 模組 H：多模態音訊特徵融合運算 ===
-        should_trigger_fall, act_confidence, fusion_reason = audio_engine.listen_and_fuse(should_trigger_fall, act_confidence)
-        if fusion_reason is not None:
-            vlm_report = "Audio Fused!"
-
-        # 模組 E：滯留遊走呼走
-        is_wandering = wandering_detector.process(is_current_frame_valid, should_trigger_fall, ever_detected_fall, producer)
-
-        # 模組 G：環境安全巡檢定時器呼叫
-        check_status = sanity_checker.process(frame, ever_detected_fall, is_leaving_bed, is_wandering, producer)
+        # 模組 G：環境安全巡檢定時器呼叫（白名單內唯一的外掛模組）
+        # 第 3、4 個參數原本是模組 A 離床 / 模組 E 遊走的旗標，兩個模組已刪除故恆為 False。
+        # sanity_check.py 是白名單檔、一行不動，所以維持原簽章、由呼叫端傳字面值。
+        check_status = sanity_checker.process(frame, ever_detected_fall, False, False, producer)
         if check_status is not None:
             vlm_report = check_status
 
         # =========================================================================
         # 🚦 終極決策中樞
         # =========================================================================
-        if should_trigger_fall or ever_detected_fall or is_chair_slipped:
-            status_text = "FALL / CHAIR SLIP DETECTED!" if is_chair_slipped else "FALL DETECTED!"
-            color = (0, 0, 255) 
-            ever_detected_fall = True 
-
-        elif is_leaving_bed:
-            status_text = "BED EXIT PRE-ALERT"
-            color = (0, 165, 255) 
-
-        elif is_agitated:
-            status_text = "PATIENT AGITATION (夜間躁動)"
-            color = (0, 255, 255) 
-
-        elif is_wandering:
-            status_text = "WANDERING ALERT (門口滯留遊走)"
-            color = (255, 0, 255) 
+        if should_trigger_fall or ever_detected_fall:
+            status_text = "FALL DETECTED!"
+            color = (0, 0, 255)
+            ever_detected_fall = True
 
         else:
             if len(frame_window) < 30:
@@ -670,19 +652,20 @@ def camera_worker(camera_id, video_source):
         # =========================================================================
         # ⚡ ⚡ ⚡ 業界商用規格修改：動態不重複相片命名與傳遞 ⚡ ⚡ ⚡
         # =========================================================================
-        if (should_trigger_fall or is_chair_slipped) and not vlm_triggered:
+        if should_trigger_fall and not vlm_triggered:
             # 🧠 1. 解析並對齊 device_id 為 int
             try:
                 numeric_id = int(''.join(filter(str.isdigit, camera_id)))
             except ValueError:
                 numeric_id = 1
-                
+
             # 🧠 2. 對齊事件型態字串
-            event_label = "chair_slip" if is_chair_slipped else "fall"
-            
+            # 模組 I（座椅滑落）已刪除，"chair_slip" 不再產生，這裡恆為 "fall"。
+            event_label = "fall"
+
             # 🧠 3. 基礎 YOLO 推理數據規格化
             final_score = float(act_confidence) if act_confidence > 0 else 0.70
-            yolo_thresh = 0.45 if event_label == "fall" else 0.35
+            yolo_thresh = 0.45
 
             # 🧠 4. 【生產品級核心】動態不重複檔名機制 (帶精確時間戳)
             current_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
@@ -713,7 +696,6 @@ def camera_worker(camera_id, video_source):
                 # 這裡只負責算好參數、把回傳的 (topic, payload) 送出，路由決策可被 LangGraph 接管。
                 topic, payload = route_by_confidence(
                     act_confidence=act_confidence,
-                    is_chair_slipped=is_chair_slipped,
                     is_occluded_fall=is_occluded_fall,
                     event_label=event_label,
                     numeric_id=numeric_id,

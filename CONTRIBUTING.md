@@ -119,4 +119,10 @@ PR 上 GitHub Actions 是綠燈才代表「沒踩到已知的雷」，不代表�
 
 這兩個是跟後端組講好的契約邊界。要改必須兩邊同時改，不是「我這邊跑得動」就算數。
 
+- **`ai/modules/` 白名單**：只准存在、也只准 import `__init__.py` 與 `sanity_check.py`
+  兩個檔（護欄會擋）。原本的 bed_exit / wandering / micro_motion / audio_fusion /
+  chair_slip 五個模組已於 2026-07-27 刪除，功能與邏輯一律不再套用。
+  理由與復活流程見 [`CLAUDE.md`](CLAUDE.md)。跌倒主邏輯在 `ai/inference_test.py`
+  主迴圈，不在 `modules/` 底下，不受這條規則影響。
+
 模型、reader、VLM 後端這些則可以自由換。
