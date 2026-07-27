@@ -27,7 +27,7 @@ from triton_act_client import TritonActModel            # Triton 版 action_tran
 
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
-    build_camera_channels, BackendUnavailable, BACKEND_API_URL,
+    build_camera_channels, BackendUnavailable, BACKEND_API_URL, cfg,
 )
 
 # =========================================================================
@@ -119,23 +119,31 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
 # 接上 RTSP 之後會變成一個 rtsp:// 網址 —— 前端點下去根本沒有事發當時的畫面可看。
 # 改成把觸發瞬間前後各數秒寫成一段獨立影片，`clip_path` 指向它。
 #
-# 全部走環境變數、未設＝保守預設，不動任何既有開關的行為。
-_CLIP_PRE_SEC = float(os.environ.get("CLIP_PRE_SEC", "5"))
-_CLIP_POST_SEC = float(os.environ.get("CLIP_POST_SEC", "5"))
+# 全部走設定、未設＝保守預設，不動任何既有開關的行為。
+# 用 backend_devices.cfg 而不是 os.environ.get：專案的 .env 是用 dotenv_values 讀成 dict
+# （刻意不注入 os.environ，見 backend_devices 檔頭），只讀 os.environ 會完全看不到 .env 的設定。
+_CLIP_PRE_SEC = float(cfg("CLIP_PRE_SEC", "5"))
+_CLIP_POST_SEC = float(cfg("CLIP_POST_SEC", "5"))
 # 緩衝存的是「原始幀」（塞在跳幀之前），1080p 全解析度下前後 10 秒每台相機要吃 ~1.8GB，
 # 多路併發直接 OOM。故片段緩衝獨立降寬——推論吃的仍是原圖，完全不受影響。
 # H.264 要求邊長為偶數，故抹掉奇數位。設 0＝不縮放（記憶體自負）。
-_CLIP_WIDTH = int(os.environ.get("CLIP_WIDTH", "640"))
+_CLIP_WIDTH = int(cfg("CLIP_WIDTH", "640"))
 _CLIP_WIDTH -= _CLIP_WIDTH % 2
-_CLIP_DIR = os.environ.get("CLIP_DIR") or os.path.join(
+_CLIP_DIR = cfg("CLIP_DIR") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "clips"
 )
 # 後端 GET /events/{id}/media 只認 s3://（backend/core/s3.py 的 generate_presigned_url
 # 對非 s3:// 一律回 None），所以本地路徑前端是拿不到可播網址的。
 # 設了 bucket 就上傳並讓 clip_path 帶 s3:// URI；沒設就退回本地路徑 —— 沒有 AWS 憑證的
 # 機器照樣跑得動、不會在跌倒當下噴錯，只是前端暫時拿不到影片。
-_CLIP_S3_BUCKET = os.environ.get("CLIP_S3_BUCKET", "").strip()
-_CLIP_S3_PREFIX = os.environ.get("CLIP_S3_PREFIX", "videos").strip("/")
+_CLIP_S3_BUCKET = cfg("CLIP_S3_BUCKET").strip()
+_CLIP_S3_PREFIX = cfg("CLIP_S3_PREFIX", "videos").strip("/")
+# AWS 憑證的變數名沿用後端那組（backend/core/config.py 也是讀這兩個名字），
+# 不是 boto3 標準的 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY——故必須顯式傳進 client，
+# 光靠 boto3 預設憑證鏈是抓不到的。留空則傳 None，退回預設鏈（EC2/GCP VM 的 IAM role 走這條）。
+_S3_REGION = cfg("S3_REGION")
+_S3_ACCESS_KEY = cfg("ACCESS_KEY_ID")
+_S3_SECRET_KEY = cfg("SECRET_ACCESS_KEY")
 
 
 def _downscale_for_clip(frame):
@@ -188,7 +196,12 @@ def write_event_clip(frames, out_path, fps, camera_id, s3_key=None):
             return
         # lazy import：沒設 CLIP_S3_BUCKET 的機器不必裝 boto3、也不必有 AWS 憑證。
         import boto3
-        boto3.client("s3", region_name=os.environ.get("S3_REGION") or None).upload_file(
+        boto3.client(
+            "s3",
+            region_name=_S3_REGION or None,
+            aws_access_key_id=_S3_ACCESS_KEY or None,
+            aws_secret_access_key=_S3_SECRET_KEY or None,
+        ).upload_file(
             out_path, _CLIP_S3_BUCKET, s3_key, ExtraArgs={"ContentType": "video/mp4"}
         )
         print(f"📦 [{camera_id}] 片段已上傳：s3://{_CLIP_S3_BUCKET}/{s3_key}")

@@ -28,6 +28,11 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key) or _DOTENV.get(key) or default
 
 
+# inference_test 的 CLIP_* / S3 憑證也要走同一套「真實環境變數優先於 .env」的取值規則，
+# 對外公開一個 alias 避免各處自己再 dotenv_values 一次（_cfg 本身不動，既有呼叫端零改動）。
+cfg = _cfg
+
+
 # ⚠️ 變數名不要跟 TRITON_*_URL 混：Triton 的預設 URL 同樣寫 127.0.0.1:8000（實際掛 8010），
 # 兩者混在一起看 log 會分不清是在打推論還是打後端。
 BACKEND_API_URL = _cfg("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
