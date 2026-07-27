@@ -50,12 +50,23 @@ def seed_demo_data(db):
     # 邊緣 AI 端（inference_test.py）以相機房號當 device_id：Room_301_Bed -> 301、302、303。
     # 後端裝置表要有對應 device_id，POST /events 才不會因查無裝置回 400（見上方 line 23 註解）。
     # 逐 id 冪等新增（不套上面「有任何裝置就整批略過」的 guard），可安全重跑、不動既有 1/2/101。
+    #
+    # stream_url 種的是「本機 MediaMTX 模擬串流」格式，不含任何帳密；AI 端 CAMERA_SOURCE=backend
+    # 時就是靠這欄決定要拉哪幾路。真環境改成攝影機自己的位址（Tapo 實測格式：
+    # rtsp://<帳號>:<密碼>@<IP>:554/stream2），走 POST /devices 或直接改資料庫，不要寫進版控。
+    _SEED_RTSP_BASE = "rtsp://127.0.0.1:8554"
     for _dev_id in (301, 302, 303):
-        if db.query(Device).filter_by(device_id=_dev_id).first() is None:
+        _seed_url = f"{_SEED_RTSP_BASE}/cam{_dev_id}"
+        _dev = db.query(Device).filter_by(device_id=_dev_id).first()
+        if _dev is None:
             db.add(Device(device_id=_dev_id, device_name=f"寢室-{_dev_id}",
-                          status="active", company_id=1))
+                          status="active", stream_url=_seed_url, company_id=1))
+        elif _dev.stream_url is None:
+            # 只補「還沒接串流」的舊資料。已經有值＝有人填過真攝影機位址，一律不覆蓋，
+            # 否則每次重跑 init_db 都會把現場設定打回示範值。
+            _dev.stream_url = _seed_url
     db.commit()
-    print("已確保邊緣相機裝置 301/302/303 存在")
+    print("已確保邊緣相機裝置 301/302/303 存在（stream_url 僅在空值時補示範值）")
 
     if db.query(Staff).first() is None:
         db.add(Staff(staff_name="照護員A", company_id=1))
