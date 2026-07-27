@@ -1,180 +1,286 @@
 # 下一階段待辦
 
-階段 4（接真實 RTSP 攝影機）完成後浮出來的兩件事。兩件都跟「攝影機是 24 小時長跑」
-這個新前提有關 —— 以前跑影片檔跑完就結束，所以都看不出來。
-
 各項標題前的【】標記目前狀態，一眼掃過去就知道要不要動：
-【待辦】＝還沒做；【本輪不執行】＝已決定這輪不做（理由見該項）；
-【已完成】＝驗證過了，不用重做。
+【已完成】＝驗證過了，不用重做；【待辦】＝還沒做；
+【本輪不執行】＝已決定這輪不做（理由見該項）；【只出設計】＝方案已定、實作留給後續。
+
+**2026-07-28 這一輪做了什麼**：S3 上傳接通（前端終於看得到影片）、六大防線收斂成
+「跌倒 + 巡檢」並把規則寫成護欄擋得住的硬規定、產出 Triton GPU vs CPU 對照數據、
+出了 Prometheus 導入設計。
 
 ---
 
-## 待辦總覽：三條互不依賴、可分頭進行的工作
+## 待辦總覽
 
-**① S3 權限確認**（外部行動，不是 code）
-問後端組／AWS 管理者：`.env` 的 `ACCESS_KEY_ID` 對 `aipe03-3` bucket 有沒有
-`PutObject` 權限。權限確認前**絕對不要設** `CLIP_S3_BUCKET`（見 `HANDOVER.md`「已知限制」，
-設了但沒權限＝上傳失敗但已發出壞連結，比現在「誠實沒有」更難查）。
-
-**② 三個模組契約破口修復**（code 工作，對應第 3 項）
-`micro_motion.py` 已用實測證據確認會被後端 422 丟棄；`wandering.py`／`bed_exit.py`
-程式碼型態相同，推測同款問題但未實測；`sanity_check.py` 走二審佇列，影響不同，待查。
-修法範本在 `chair_slip.py:40-49`（stage2 已修過同款破口）。
-
-**③ 事件冷卻計時器**（對應第 1 項，本輪已決定不執行）
-卡在多人追蹤缺口——系統分不出同一人或另一人，加冷卻會永久漏接冷卻期間發生的
-別人的跌倒。需要多人追蹤才能真正解決，範圍不小，這輪先接受現況限制。
-
-以上三條互不依賴。另外 **agent P2**（後端記錄 AI 判斷＋前端顯示，見第 4 項）
-也是獨立的一塊，可以跟上面三條同時分頭進行，不互相卡。
-
----
-
-## 1.【本輪不執行】跌倒事件只發一次：改成冷卻幾分鐘後可再發
-
-**現況**：`ai/inference_test.py` 的 `vlm_triggered` 是 per-worker 的一次性旗標
-（[ai/inference_test.py:206](ai/inference_test.py) 初始化、[:501](ai/inference_test.py) 判斷、
-[:524](ai/inference_test.py) 設起來就永不清除）。同一路相機的 worker，**整個行程生命週期只會
-發出一次跌倒事件**；`ever_detected_fall` 也會讓畫面永遠停在 "FALL DETECTED!"。
-
-**為什麼以前沒事**：影片檔 worker 播完就結束、行程也跟著收工，一支影片本來就只該報一次。
-接上真攝影機後 worker 會跑好幾天 —— 等於第一次跌倒之後，那台相機就再也不會示警了。
-
-**要做什麼**：把「一次性閂鎖」換成「冷卻計時器」。同一起事件在冷卻時間內不重複發（避免
-一次跌倒連發十筆），冷卻過了就恢復可發報。
-
-**設計時要想清楚的**：
-- 冷卻長度（暫定幾分鐘）要能用環境變數調，未設時給一個保守預設。
-- 冷卻的粒度：是「每台相機一個冷卻」還是「每種事件類型一個冷卻」（跌倒 / 座椅滑落 /
-  離床是不同防線，混在一起會互相蓋掉）。
-- 斷線重連時**不要**重設冷卻（現在重連刻意保留 `ever_detected_fall` / `vlm_triggered`，
-  就是為了避免網路抖動導致同一起事件重複發報 —— 換成計時器後要保持這個性質）。
-- 不能動 Kafka 的 9 欄 payload 契約（`route_by_confidence` 受 `scripts/check_guardrails.py`
-  的 AST 檢查監看）。
-
----
-
-## 2.【已完成：片段錄製；S3 上傳待①權限確認】跌倒瞬間前後各 5 秒的影片片段存檔
-
-> ✅ **片段錄製（前5秒＋後5秒＋mp4寫檔）已完成並實測驗證**——見 `HANDOVER.md`
-> 交接紀錄與 `test-main-stage6-clip-s3` tag（編碼器fallback、前後切分邏輯、視覺比對、
-> 9欄契約、S3未設時的降級行為，皆已用真實管線跑過驗證，不用重做）。
-> ⏳ **唯一沒完成的是 S3 上傳本身**——卡在權限未確認（見 `HANDOVER.md`「已知限制」與待辦總覽①），
-> `clip_path` 目前仍是本地路徑，前端還看不到影片。以下是原始需求記錄（保留供參考）：
-
-**現況**：Kafka payload 的 `clip_path` 現在塞的是**影像來源本身**
-（[ai/inference_test.py:85](ai/inference_test.py) 與 [:100](ai/inference_test.py) 都是
-`str(video_source)`）。影片檔時代這還說得過去（就是那支 mp4），但接上 RTSP 之後
-`clip_path` 會變成一個 `rtsp://...` 網址 —— 前端點下去根本沒有「事發當時」的畫面可看。
-
-**要做什麼**：跌倒觸發時，把該瞬間**前 5 秒 + 後 5 秒**（暫定，要可調）的影像存成一個片段，
-`clip_path` 改指向這個片段。
-
-**從 albert 分支抓現成的來改**：`origin/albert_chiang` 的
-`Fall/tools/inference_test.py` 已經有完整實作，可直接參考：
-
-| 位置 | 內容 |
-|---|---|
-| `:408-409` | `MAX_PRE_FRAMES = int(fps * PRE_SEC)` / `MAX_POST_FRAMES = int(fps * POST_SEC)` |
-| `:412-415` | `pre_video_buffer = deque(maxlen=...)`（前段環形緩衝）＋ `post_video_buffer` list ＋ `is_recording_post` 旗標 |
-| `:463` | 用 ffmpeg pipe（`-c:v libx264 -preset ultrafast`）寫檔 |
-| `:484-500` | 每幀塞進 pre buffer；觸發後改塞 post buffer |
-| `:767-768` | 觸發跌倒時 `is_recording_post = True`、`post_frame_count = 0` |
-
-**搬過來要改的地方**（不能整段照抄）：
-- albert 分支是 orphan、無共同歷史，且含歷史機密與 Mac 絕對路徑 —— **只抓邏輯，逐段重寫**，
-  不要 cherry-pick、不要複製整支檔案。
-- 我們的 worker 已經有隔幀跳過（`frame_count % 2`）與 `DETR_EVERY_N` 降頻，緩衝要存的是
-  **原始幀**還是**已處理幀**要先想清楚（存原始幀才是真的 5 秒）。
-- 目前 `NO_RENDER=1` 時整段畫圖是跳過的，片段裡要不要有標註框要決定。
-- RTSP 是無限長跑：pre buffer 是 deque 有上限沒問題，但 post buffer 是 list，要確保
-  錄完就清掉，否則記憶體會一路長。
-- 片段存哪、怎麼給後端拿到（本地路徑 vs 上傳 S3）要跟後端對齊 —— `clip_path` 是 9 欄契約
-  裡的欄位，**欄位本身不能改**，只能改裡面放什麼值，換內容前要先跟後端組講好。
-- 重連後 fps 可能重新協商過，`MAX_PRE_FRAMES` 要跟著重算（`frame_delay` 已經有重算了）。
-
-**跟第 1 項的關聯**：兩件事都在同一段觸發程式碼裡（`:501-524`），一起做比較省事 ——
-冷卻計時器決定「這次要不要發」，片段存檔決定「發出去的 clip_path 指向什麼」。
-
----
-
-## 3.【待辦，未修復】三個模組疑似跟 chair_slip 修復前同款契約破口（會被後端 422 丟棄）
-
-**2026-07-27 用 `test4.mp4`（4.9 分鐘）第一次跑完整管線時發現**。之前所有測試影片都太短
-（test1/2/3 僅 7.8~9.2 秒），跑不到這幾個模組的計時器門檻（15~22 秒起跳），所以這個破口
-**一直沒被任何測試曝露過**。
-
-**已用實測證據確認（不是推測）**：`ai/modules/micro_motion.py:45-58`（模組 F，夜間躁動）
-在偵測到躁動時，繞過 `route_by_confidence()`，自己組一份 payload 直接
-`producer.send('processed-reports', ...)`：
-
-```python
-agitation_payload = {
-    "alert_id": f"AGT_{self.camera_id}_{int(time.time())}",   # ← 契約沒有這欄
-    "device_id": numeric_id, "event_type": "agitation",
-    "detected_at": ..., "camera_id": self.camera_id,          # ← 契約沒有這欄
-    "yolo_score": ..., "vlm_summary": ..., "severity": "medium",
-    "status": "UNREAD"                                         # ← 契約沒有這欄
-    # 缺 clip_path / snapshot_path / yolo_threshold —— 9 欄契約少了 3 個必要欄位
-}
-```
-
-後端 log 實測結果：
-
-```
-"POST /events HTTP/1.1" 422 Unprocessable Entity
-ERROR 毒訊息，跳過：b'{"alert_id": "AGT_Room_301_Bed_...", ...}'
-```
-
-這正是 `ai/modules/chair_slip.py:40-49` 註解裡記載、stage2 已修過的**同一種破口**
-（「早期版本曾在此直接 producer.send() 一份自訂 payload...會被後端 422 退件」）。
-`chair_slip.py` 的修法是範本：**模組只偵測、回傳訊號，外發統一交回 `inference_test.py`
-主迴圈的 `route_by_confidence()` 組 9 欄 payload**。
-
-**同一段程式碼裡另外兩個模組，程式碼型態跟 micro_motion 一模一樣（自己組 payload 直送
-`processed-reports`），推測有相同問題，但這次測試沒有實際觸發到它們，未經實測確認**：
-
-| 模組 | 位置 | 送去哪 |
+| # | 項目 | 狀態 |
 |---|---|---|
-| `ai/modules/wandering.py`（模組 E，遊走） | `:36-48` | 直送 `processed-reports`，推測同款破口 |
-| `ai/modules/bed_exit.py`（模組 A，離床） | `:40-52` | 直送 `processed-reports`，推測同款破口 |
+| 1 | S3 上傳接通 | ✅ 已完成並實測 |
+| 2 | 六大防線收斂 + `ai/modules/` 白名單 | ✅ 已完成 |
+| 3 | Triton GPU vs CPU 對照 | ✅ 已完成，報告見 `ai/BENCHMARK_GPU_VS_CPU.md` |
+| 4 | Prometheus 導入 | 📐 只出設計，未接線 |
+| 5 | 事件冷卻計時器 | ⏸ 本輪不執行（卡多人追蹤）|
+| 6 | agent P2（後端記錄 + 前端顯示 AI 判斷）| ⏳ 尚未開始 |
 
-`ai/modules/sanity_check.py`（模組 G，巡檢）送的是 `nursing-home-alerts`
-（`:36-49`），會先經過 VLM 二審那層重新組包，**影響可能不同，也未經實測，一併列入待查**。
-
-**這次沒有修**：跟片段存檔／S3 上傳兩件事無關，範圍不小（四個模組要逐一檢查與修正），
-且需要跑得夠長的影片才能實測驗證每一個，留給接手者評估優先序後另案處理。
+第 5、6 兩項互不依賴，可分頭進行。
 
 ---
 
-## 4.【待辦，尚未開始】agent P2：後端記錄 AI 判斷 + 前端顯示建議
+## 1.【已完成】S3 上傳接通 —— 前端看得到事發影片了
 
-**2026-07-27 確認**：stage5 只做了 agent 的 shadow 驗證（P0/P1/P4，`AGENT_SHADOW=1`），
-P2（把 agent 的判斷接進後端資料庫、前端顯示出來）**完全沒有動過**——`backend/core/models.py`
-的 `DetectEvent` 沒有任何 `ai_*` 欄位，前端也沒有任何 AI 建議相關元件。
+### 原本卡在哪（記錄用）
 
-**shadow 已經真的跑過、判斷品質可用**（`ai/agent_shadow.jsonl` 為證，非空談）：
+舊版這裡寫的是「要去問後端組／AWS 管理者有沒有 `PutObject` 權限」。**這個前提是錯的**：
+根 `.env` 早就有一組標明「AWS S3 讀寫」的 `S3_RW_*` 金鑰，只是**全 repo 沒有任何程式碼
+讀它**——`ai/inference_test.py` 讀的仍是唯讀那組。真正的缺口是「金鑰名稱對不上」＋
+「`CLIP_S3_BUCKET` 沒設」，不是權限。
+
+### 做了什麼
+
+1. **先驗權限再改設定**（順序不能反：設了 bucket 但沒權限＝上傳失敗但壞連結已經發出去，
+   比「誠實地沒有影片」更難查）。用 `S3_RW_*` 對 `s3://aipe03-3/videos/` 實跑
+   put → head → get → delete，**全通**。
+2. `ai/inference_test.py` 的 S3 憑證改成**讀寫優先、舊名 fallback**：
+   ```python
+   _S3_REGION     = cfg("S3_RW_REGION")            or cfg("S3_REGION")
+   _S3_ACCESS_KEY = cfg("S3_RW_ACCESS_KEY_ID")     or cfg("ACCESS_KEY_ID")
+   _S3_SECRET_KEY = cfg("S3_RW_SECRET_ACCESS_KEY") or cfg("SECRET_ACCESS_KEY")
+   ```
+   留 `or` fallback 的原因：沒設 `S3_RW_*` 的機器（Mac、CI）行為與改動前完全一樣。
+3. `.env` 補上 `CLIP_S3_BUCKET=aipe03-3` 與 `CLIP_S3_PREFIX=videos`。
+
+### 實測驗證（不是推論）
+
+跑一次真管線觸發跌倒後：
+
+```
+🎬 [Room_301_Bed] 事件片段已寫入（187 幀 @ 24.0fps）：ai/clips/clip_Room_301_Bed_20260728_003214.mp4
+📦 [Room_301_Bed] 片段已上傳：s3://aipe03-3/videos/clip_Room_301_Bed_20260728_003214.mp4
+```
+
+Kafka 上的 payload（`nursing-home-alerts`，欄位一個字沒動）：
+
+```json
+{"device_id": 301, "event_type": "fall",
+ "clip_path": "s3://aipe03-3/videos/clip_Room_301_Bed_20260728_003214.mp4",
+ "detected_at": "...", "snapshot_path": "...", "image_filename": "...",
+ "yolo_score": 0.9427, "yolo_threshold": 0.45, "vlm_summary": "..."}
+```
+
+用**後端自己的程式碼**（容器內 `core.s3.generate_presigned_url`）換發網址：
+
+```
+presigned URL: 已產生
+GET → HTTP 200  Content-Type=video/mp4  bytes=995737
+非 s3:// 的欄位: None      ← 舊事件（本地路徑）仍照樣回 null，向下相容沒破
+```
+
+### 給後端組的名稱清單
+
+| 項目 | 值／名稱 | 後端要做什麼 |
+|---|---|---|
+| bucket / prefix | `aipe03-3` / `videos/` | — |
+| **後端讀的憑證變數（不動）** | `S3_REGION`、`ACCESS_KEY_ID`、`SECRET_ACCESS_KEY` | 維持唯讀，一行不改 |
+| AI 端改讀的憑證變數 | `S3_RW_REGION`、`S3_RW_ACCESS_KEY_ID`、`S3_RW_SECRET_ACCESS_KEY` | 僅告知 |
+| 契約欄位 `clip_path` 的值 | 由本地路徑改成 `s3://aipe03-3/videos/clip_<camera>_<ts>.mp4`（**欄位名不變**）| 僅告知；`GET /events/{id}/media` 從此會回真的 presigned URL |
+| 唯讀金鑰的 `GetObject` 權限 | 已用後端自己的程式碼實測 HTTP 200 | ✅ **不需要任何動作，已確認可用** |
+| `event_type` 值域 | 從此恆為 `"fall"`（`chair_slip` 不再出現，型別仍是字串）| 僅告知 |
+| 後端 log 的 422 毒訊息 | `agitation` / `bed_exit` / `wandering` 事件源已刪，不再進 Kafka | 僅告知，會自然消失 |
+
+**兩組金鑰刻意分開＝最小權限**：AI 端上傳片段要 `PutObject`，後端簽 presigned URL 只要
+`GetObject`。不要把讀寫金鑰塞進後端那三個名字。
+
+### 已知殘留
+
+- 慢車道（`nursing-home-alerts`）的事件要 `ai/vlm_worker.py` 在跑才會轉進後端。
+  驗證當下 vlm_worker 沒開，所以那筆事件停在 Kafka、沒進 DB —— 這是既有行為、不是這次的迴歸。
+- 片段每個 worker 生命週期只錄一次（掛在 `vlm_triggered` 一次性閂鎖下），要等第 5 項的
+  冷卻計時器才會解開。
+
+---
+
+## 2.【已完成】六大防線收斂為「跌倒 + 巡檢」，並立了 `ai/modules/` 白名單
+
+### 決定
+
+`ai/modules/` **只保留 `__init__.py` 與 `sanity_check.py`**，其餘不使用也不套用。
+刪除五個模組：`bed_exit.py`（A 離床）、`wandering.py`（E 遊走）、`micro_motion.py`（F 躁動）、
+`audio_fusion.py`（H 音訊融合）、`chair_slip.py`（I 座椅滑落）。
+
+### 這一刀同時解掉了舊版第 3 項的「契約破口」
+
+舊版列的三個「自組 payload 被後端 422 丟棄」的破口（`micro_motion` / `wandering` /
+`bed_exit`）**是從根拔除，不是逐一修補**——製造破口的程式碼整個不在了。
+
+`sanity_check.py` 走的是 `nursing-home-alerts`，會先經 `vlm_worker` 重新組包成 7 欄外發，
+所以它多帶的 `alert_id` / `camera_id` / `severity` / `status` 到不了後端，**不會 422**。
+`severity: "low"` 是後端 2026-07-19 移除該欄位後的殘留，無害，故不修（它是白名單檔，
+維持一行不動）。
+
+### 跌倒偵測沒有被削弱
+
+跌倒主邏輯一直都在 `ai/inference_test.py` 的 `camera_worker` 主迴圈（防線 A 肩髖體角 +
+長寬比、防線 B 幾何遮擋、AcT 30 幀時序分類），**從來就不在 `modules/` 底下**。
+
+反而是**移除了一個誤報來源**：`audio_fusion.py` 對 camera_id 含 `"303"` 的相機
+**每 22 秒隨機**丟出 `THUD_CRASH`/`HELP_SCREAM`，並把信心強制拉到 `0.96` 直入快速道。
+那是展示用的假資料產生器，不是偵測能力。
+
+### 三個行為變更（要記得）
+
+1. **`event_type` 從此恆為 `"fall"`**，`"chair_slip"` 不再出現。後端與 agent 都當字串
+   處理（非 enum），不會 422。`agent/schemas.py` 的格式說明註解已同步更新。
+   **payload 欄位一個字沒動**，護欄 AST 契約檢查全綠。
+2. **快速道條件簡化**為 `act_confidence >= 0.90 且非遮擋`（原本多一個「或明確 chair_slip」）。
+3. **巡檢間隔從 15 秒改成 60 秒**。原本 `sanity_check` 靠
+   `not is_leaving_bed and not is_wandering` 兩個旗標抑制，那兩個模組刪掉後旗標恆為 False，
+   等於少了兩道閘門；而 `uncertainty_router` 是「一律二審不加 discard」、`vlm_worker`
+   每筆二審完成都外發，維持 15 秒的話後端會每 15 秒多一筆巡檢事件。
+   間隔可用 `SANITY_INTERVAL_SEC` 調（未設＝60），**改的是呼叫端，`sanity_check.py` 沒動**。
+
+### 規則落地：文件 + 機器都擋
+
+- **根目錄新增 [`CLAUDE.md`](CLAUDE.md)** —— 每次動工前必讀，寫明白名單、理由、
+  跌倒主邏輯在哪、以及「真的要復活」的流程。
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md) 第六節**加一條紅線，與 Kafka topic、
+  `route_by_confidence()` payload 並列。
+- **[`scripts/check_guardrails.py`](scripts/check_guardrails.py) 加 `check_module_whitelist()`**
+  —— AST 靜態解析，擋兩種違規：在 `ai/modules/` 新增非白名單檔案、任何 `.py` import
+  非白名單模組。pre-commit 與 GitHub Actions 兩層都會紅燈。
+
+  為什麼一定要機器擋：這種「模組自己送 Kafka」的破口靠 code review 抓不到——它跑得動、
+  不噴錯，只是訊息在後端被靜默丟掉，要跑夠長的影片才會曝露（舊版用 7~9 秒的
+  test1/2/3 測了很久都沒發現，換 4.9 分鐘的 test4.mp4 才炸出來）。
+
+  兩種違規都已用負向測試確認**擋得下來**。
+
+### 真的要復活某個模組時
+
+三件事缺一不可，不要只改護欄讓它過：改 `CLAUDE.md` 白名單並寫清楚為什麼收回這個決定 →
+改 `scripts/check_guardrails.py` 的 `MODULES_ALLOW` → **先補契約測試**，確認該模組
+不自組 payload 外發，外發一律回主迴圈的 `route_by_confidence()`。
+
+---
+
+## 3.【已完成】Triton GPU vs CPU 同機對照
+
+完整報告：**[`ai/BENCHMARK_GPU_VS_CPU.md`](ai/BENCHMARK_GPU_VS_CPU.md)**。摘要：
+
+| | GPU | CPU | 倍數 |
+|---|---:|---:|---:|
+| 端到端 processed FPS（單路）| **10.8 fps** | **3.2 fps** | 3.4× |
+| `yolo_pose`（ONNX 兩邊同款）| 22.5 ms | 76.1 ms | 3.4× |
+| `rt_detr`（GPU TensorRT vs CPU ONNX）| 17.3 ms | 192.0 ms | 11.1× |
+| `action_transformer` | 2.08 ms | **0.78 ms** | **0.4×（CPU 較快）** |
+
+三個值得記住的結論：
+
+1. **瓶頸是 `rt_detr` 不是 pose**。CPU 上單次 192 ms，占端到端每幀時間的絕大部分。
+2. **`action_transformer` 在 CPU 上比 GPU 快**——模型只有 315 KB，GPU 的 kernel 啟動與
+   PCIe 搬運比算它本身還貴。之後要做混合部署的話，這顆放 CPU 是划算的。
+3. **TensorRT 是真的有用**：同在 GPU 上，`rt_detr` 用 TensorRT plan 比用 ONNX 快 1.7 倍。
+
+**新工具**（都走環境變數，未設時行為與改動前位元級相同）：
+- `ai/run_triton.sh` 新增 `TRITON_GPUS`（設 `none` 就不帶 `--gpus`）、`TRITON_CPUS`
+  （`--cpuset-cpus`）、`LOAD_MODELS`（原本硬編三顆模型名）
+- `ai/make_cpu_repo.sh` —— 產生 CPU 版 model repository（config 改 `KIND_CPU`、
+  權重用 hardlink 零額外空間）
+- `ai/bench_triton.py` —— 復用線上的三支 Triton client 量測，同時抓 Triton `/metrics`
+  分離出 server 端純推論時間
+
+**下一步的明顯空間**（本輪沒做）：四顆 config 全是 `max_batch_size: 0` + `count: 1`，
+等於 **dynamic batching 與多 instance 兩項都沒開**。要上多路相機，這是優先於任何
+模型替換的事。
+
+---
+
+## 4.【只出設計】Prometheus 導入
+
+### 對「照架構圖五個底色各包一顆 Docker」的評估：**分層很好用，但不能拿來當容器邊界**
+
+四個具體會出錯的地方：
+
+1. **綠色（儲存與資料服務）根本沒有 process 可以包**。PostgreSQL 是 AWS RDS、S3 是真 AWS、
+   模型儲存庫也在 S3。這一層只能用 exporter 從外面看，「包一顆 docker」不成立。
+2. **藍色（邊緣／運算層）內部生命週期差太多**。Triton 是常駐 GPU 服務、已經是官方容器且
+   自帶 `:8002/metrics`；AI worker 是每台相機一條 thread 的 Python 行程，改邏輯就要重啟。
+   綁成一顆等於「改推論程式要重啟 Triton」，會破壞已經打通的模型熱載
+   （`model_control_mode=explicit` + `POST /v2/repository/models/*/load`）。至少切成兩顆。
+3. **黃色（事件匯流）跟藍色裡的「訊息發佈 Kafka」是同一個 broker**。圖上兩個 Kafka 是
+   兩條資料流不是兩套 broker，現況 `docker-compose.yml` 就只有一個 `nh-kafka`。
+   照底色打包會做出兩個 broker。
+4. **橘色把線上與離線混在一起**。「事件處理（uncertainty_router / vlm_worker，線上要低延遲）」
+   跟「MLOps 迴路（Label Studio / ClearML 重訓，離線吃 GPU 很久）」同色。包成一顆的話，
+   重訓一跑就排擠二審延遲。
+
+### 建議：底色 → Prometheus label 與 Grafana 分頁，不 → 容器邊界
+
+容器邊界照「行程生命週期 + 資源型態」切，每個 job 打上
+`layer="edge|event|app|storage|mlops|control"`。分層在監控畫面上完整呈現，部署不被綁死。
+
+可落地順序（由現成到要動工）：
+
+| target | 端點 | 現況 | layer |
+|---|---|---|---|
+| Triton | `:8002/metrics` | **已經開著，零成本，最先接**（`bench_triton.py` 已經在讀它）| edge |
+| backend FastAPI | `/metrics` | 要加 `prometheus-fastapi-instrumentator`；`gcp_vm_environment/test_sample/test_prometheus_fastapi.py` 有現成範例 | app |
+| Kafka | JMX exporter `:5556` | `gcp_vm_environment/` 已有 jar 與 `jmx_prometheus_kafka.yml`，掛 javaagent 進 `nh-kafka` 即可 | event |
+| AI worker | 自建 `prometheus_client.start_http_server` | 目前只 print（`inference_test.py` 的 FPS log），要改成 Gauge(fps) / Counter(事件數) / Histogram(各段延遲)| edge |
+| GPU | dcgm-exporter | Triton metrics 已含 GPU 使用率/記憶體，要溫度功率才需要 | edge |
+| RDS / S3 | CloudWatch exporter | 外部託管，無容器 | storage |
+
+**動手前要先講清楚的一件事**：`gcp_vm_environment/` 那套已經有 Prometheus + JMX exporter +
+FastAPI instrumentator，但它跟主 stack 是**兩套不同架構**（nginx + 空殼 python 容器 +
+rsync 部署）。導入時是「把零件搬進主 `docker-compose.yml`」，不是兩套並存，
+否則會養出第三套環境。
+
+---
+
+## 5.【本輪不執行】跌倒事件只發一次：改成冷卻幾分鐘後可再發
+
+**現況**：`ai/inference_test.py` 的 `vlm_triggered` 是 per-worker 的一次性旗標。
+同一路相機的 worker，**整個行程生命週期只會發出一次跌倒事件**；`ever_detected_fall`
+也會讓畫面永遠停在 "FALL DETECTED!"。**片段錄製掛在同一個閂鎖下**，所以也只錄一支。
+
+**為什麼以前沒事**：影片檔 worker 播完就結束。接上真攝影機後 worker 會跑好幾天——
+等於第一次跌倒之後，那台相機就再也不會示警了。
+
+**為什麼這輪不做**：卡在多人追蹤缺口——系統分不出同一人或另一人，加冷卻會永久漏接
+冷卻期間發生的**別人**的跌倒。需要多人追蹤才能真正解決，範圍不小。
+
+**真的要做時要想清楚的**：
+- 冷卻長度用環境變數調，未設給保守預設。
+- 冷卻粒度：每台相機一個，還是每種事件類型一個。
+- 斷線重連時**不要**重設冷卻（現在重連刻意保留 `ever_detected_fall` / `vlm_triggered`，
+  就是為了避免網路抖動導致同一起事件重複發報）。
+- 不能動 `route_by_confidence()` 的 payload 欄位（護欄 AST 檢查監看）。
+- 冷卻放行後，片段錄製要跟著能再錄一次（同一段程式碼，一起做比較省事）。
+
+---
+
+## 6.【待辦，尚未開始】agent P2：後端記錄 AI 判斷 + 前端顯示建議
+
+stage5 只做了 agent 的 shadow 驗證（P0/P1/P4，`AGENT_SHADOW=1`），P2 完全沒有動過——
+`backend/core/models.py` 的 `DetectEvent` 沒有任何 `ai_*` 欄位，前端也沒有 AI 建議元件。
+
+**shadow 已經真的跑過、判斷品質可用**（`ai/agent_shadow.jsonl` 為證）：
 
 ```json
 {"ai_verdict": "false_alarm", "ai_confidence": 0.8,
  "ai_reasoning": "根據影像，現場沒有任何人存在，因此可以確定並非真實的跌倒事件。"}
 ```
 
-VLM 正確看出畫面沒人、agent 正確判定誤報並給出清楚理由——底層邏輯是可信的，值得接下去做。
+VLM 正確看出畫面沒人、agent 正確判定誤報並給出清楚理由——底層邏輯可信，值得接下去做。
 
 **範圍（已拍板：只做 P2 的「A 層」，不做 cutover）**：
 - **不**停掉現行 `uncertainty_router.py`／`vlm_worker.py`，agent **維持 shadow**，現行資料流不動。
 - 只做「後端記錄 + 前端顯示」，讓 AI 的判斷變成人工複判時的**參考資訊**，不接手決策權。
 
-**要做什麼（對照 `agent/docs/02-wbs.md` 的 P2 任務拆解，但拿掉 2.4/2.5 shadow 比對與 cutover）**：
-
 | 任務 | 內容 | 對照 |
 |---|---|---|
-| 後端欄位 | `DetectEvent` 加 `ai_verdict`（`true_alarm｜false_alarm｜null`）／`ai_confidence`（float）／`ai_reasoning`（text），**皆 optional、向下相容**；`EventCreateRequest` 同步加；補 DB 遷移 | 欄位名稱與型別對齊 `agent/schemas.py:116-118`，agent 端已經是這個格式，不必再轉換 |
+| 後端欄位 | `DetectEvent` 加 `ai_verdict`（`true_alarm｜false_alarm｜null`）／`ai_confidence`（float）／`ai_reasoning`（text），**皆 optional、向下相容**；`EventCreateRequest` 同步加；補 DB 遷移 | 欄位名與型別對齊 `agent/schemas.py`，agent 端已經是這個格式 |
 | 後端護欄 | **不得有任何自動關閉事件的程式路徑**——`false_alarm` 只存建議、`verdict` 留 NULL，關閉事件仍要人工按 | agent docs 的「不可退讓原則」第 2 條 |
-| 前端顯示 | 事件卡／詳情顯示「AI 建議」徽章 + `ai_reasoning`；`ai_verdict=false_alarm` 時附「確認誤報」一鍵鈕，走既有 `PATCH /events/{id}/verdict`；無 AI 建議的舊事件（`ai_verdict=null`）顯示維持原樣 | — |
-| 測試 | 三種路徑都要測：`true_alarm`／`false_alarm`／`null`（agent 判不出來）；舊格式訊息（無三欄）要照常建檔，既有 pytest 不可退 | — |
+| 前端顯示 | 事件卡／詳情顯示「AI 建議」徽章 + `ai_reasoning`；`ai_verdict=false_alarm` 時附「確認誤報」一鍵鈕，走既有 `PATCH /events/{id}/verdict`；`ai_verdict=null` 的舊事件顯示維持原樣 | — |
+| 測試 | 三種路徑都要測：`true_alarm`／`false_alarm`／`null`；舊格式訊息（無三欄）要照常建檔，既有 pytest 不可退 | — |
 
 **驗證方式**：先把 `ai/agent_shadow.jsonl` 已經產出的判斷手動塞一筆進資料庫確認欄位/顯示正確，
-不一定要等 agent 即時串接；真正要串接 agent 產出寫進 DB（而非只寫 log）是另一個小任務，
-可以跟這個一起做，也可以先用假資料驗證前後端再補上。
+不一定要等 agent 即時串接；真正要串接 agent 產出寫進 DB（而非只寫 log）是另一個小任務。
