@@ -61,7 +61,7 @@ TOPIC_NURSING_HOME_ALERTS = "nursing-home-alerts"  # 低信心 → VLM 二審佇
 
 
 def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
-                        event_label, numeric_id, video_source, detected_at,
+                        event_label, numeric_id, clip_path, detected_at,
                         snapshot_full_path, snapshot_name, final_score, yolo_thresh):
     """依 AcT 信心把單一跌倒/滑落事件路由到對應 Kafka topic，回傳 (topic, payload)。
 
@@ -74,6 +74,10 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
     兩個 payload 的欄位名與型別（device_id(int)/event_type/detected_at(ISO)/snapshot_path/
     vlm_summary/severity …）是後端契約，維持不動。第 2 層 LangGraph Uncertainty Router
     之後可直接 import 本函式接管路由決策，介面不變（VLMModel.infer 已隔離、與此對齊）。
+
+    `clip_path` 收的是**事件片段**的位置（見 write_event_clip）。以前這裡收的是
+    `video_source`——影片檔時代那就是那支 mp4 還說得過去，但接上 RTSP 之後會變成一個
+    `rtsp://` 網址，前端點下去沒有「事發當時」可看。欄位名是契約不動，只換裡面的值。
     """
     is_fast_track = (act_confidence >= FAST_TRACK_CONF or is_chair_slipped) and not is_occluded_fall
 
@@ -82,7 +86,7 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
         payload = {
             "device_id": numeric_id,
             "event_type": event_label,
-            "clip_path": str(video_source),
+            "clip_path": str(clip_path),
             "detected_at": detected_at,
             "snapshot_path": snapshot_full_path,
             "image_filename": snapshot_name,
@@ -97,7 +101,7 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
     payload = {
         "device_id": numeric_id,
         "event_type": event_label,
-        "clip_path": str(video_source),
+        "clip_path": str(clip_path),
         "detected_at": detected_at,
         "snapshot_path": snapshot_full_path,
         "image_filename": snapshot_name,
@@ -107,6 +111,89 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
         "severity": "medium",
     }
     return TOPIC_NURSING_HOME_ALERTS, payload
+
+# =========================================================================
+# 📼 事件片段存檔：跌倒瞬間前 PRE 秒 + 後 POST 秒
+# =========================================================================
+# 為什麼要這個：`clip_path` 以前塞的是「影像來源本身」。影片檔時代那就是那支 mp4，
+# 接上 RTSP 之後會變成一個 rtsp:// 網址 —— 前端點下去根本沒有事發當時的畫面可看。
+# 改成把觸發瞬間前後各數秒寫成一段獨立影片，`clip_path` 指向它。
+#
+# 全部走環境變數、未設＝保守預設，不動任何既有開關的行為。
+_CLIP_PRE_SEC = float(os.environ.get("CLIP_PRE_SEC", "5"))
+_CLIP_POST_SEC = float(os.environ.get("CLIP_POST_SEC", "5"))
+# 緩衝存的是「原始幀」（塞在跳幀之前），1080p 全解析度下前後 10 秒每台相機要吃 ~1.8GB，
+# 多路併發直接 OOM。故片段緩衝獨立降寬——推論吃的仍是原圖，完全不受影響。
+# H.264 要求邊長為偶數，故抹掉奇數位。設 0＝不縮放（記憶體自負）。
+_CLIP_WIDTH = int(os.environ.get("CLIP_WIDTH", "640"))
+_CLIP_WIDTH -= _CLIP_WIDTH % 2
+_CLIP_DIR = os.environ.get("CLIP_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "clips"
+)
+# 後端 GET /events/{id}/media 只認 s3://（backend/core/s3.py 的 generate_presigned_url
+# 對非 s3:// 一律回 None），所以本地路徑前端是拿不到可播網址的。
+# 設了 bucket 就上傳並讓 clip_path 帶 s3:// URI；沒設就退回本地路徑 —— 沒有 AWS 憑證的
+# 機器照樣跑得動、不會在跌倒當下噴錯，只是前端暫時拿不到影片。
+_CLIP_S3_BUCKET = os.environ.get("CLIP_S3_BUCKET", "").strip()
+_CLIP_S3_PREFIX = os.environ.get("CLIP_S3_PREFIX", "videos").strip("/")
+
+
+def _downscale_for_clip(frame):
+    """把要進片段緩衝的幀等比縮到 _CLIP_WIDTH 寬（只縮不放）。"""
+    if _CLIP_WIDTH <= 0:
+        return frame
+    h, w = frame.shape[:2]
+    if w <= _CLIP_WIDTH:
+        return frame
+    new_h = int(round(h * _CLIP_WIDTH / w))
+    new_h -= new_h % 2  # H.264 要求偶數邊長
+    return cv2.resize(frame, (_CLIP_WIDTH, max(new_h, 2)), interpolation=cv2.INTER_AREA)
+
+
+def _video_fourcc(code):
+    """OpenCV 4.x 是 `cv2.VideoWriter_fourcc`，5.x 移到 `cv2.VideoWriter.fourcc`。
+
+    本專案兩台開發機版本不同（macOS 這台是 5.0.0，Windows 那台通常是 4.x），
+    寫死任一邊都會在另一邊 AttributeError。
+    """
+    fn = getattr(cv2, "VideoWriter_fourcc", None) or cv2.VideoWriter.fourcc
+    return fn(*code)
+
+
+def write_event_clip(frames, out_path, fps, camera_id, s3_key=None):
+    """把 frames 寫成 mp4；設了 CLIP_S3_BUCKET 就再上傳一份。
+
+    給背景 daemon thread 跑：寫檔（尤其還要上傳）是秒級 I/O，卡在推論迴圈裡會讓
+    該路相機掉幀。整支包在 try 內 —— 片段存檔失敗不該影響已經發出去的警報。
+    """
+    if not frames:
+        return
+    try:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        h, w = frames[0].shape[:2]
+        # avc1（H.264）瀏覽器 <video> 才播得動；有些 OpenCV build 沒帶 H.264 編碼器，
+        # 開不起來就退 mp4v（一般播放器仍可開，只是瀏覽器相容性差）。
+        writer = cv2.VideoWriter(out_path, _video_fourcc("avc1"), fps, (w, h))
+        if not writer.isOpened():
+            writer = cv2.VideoWriter(out_path, _video_fourcc("mp4v"), fps, (w, h))
+        if not writer.isOpened():
+            print(f"❌ [{camera_id}] 片段寫檔失敗：avc1 / mp4v 編碼器都開不起來 → {out_path}")
+            return
+        for f in frames:
+            writer.write(f)
+        writer.release()
+        print(f"🎬 [{camera_id}] 事件片段已寫入（{len(frames)} 幀 @ {fps:.1f}fps）：{out_path}")
+
+        if not s3_key:
+            return
+        # lazy import：沒設 CLIP_S3_BUCKET 的機器不必裝 boto3、也不必有 AWS 憑證。
+        import boto3
+        boto3.client("s3", region_name=os.environ.get("S3_REGION") or None).upload_file(
+            out_path, _CLIP_S3_BUCKET, s3_key, ExtraArgs={"ContentType": "video/mp4"}
+        )
+        print(f"📦 [{camera_id}] 片段已上傳：s3://{_CLIP_S3_BUCKET}/{s3_key}")
+    except Exception as e:
+        print(f"❌ [{camera_id}] 事件片段處理失敗（警報已發出，不受影響）：{e}")
 
 # =========================================================================
 # 🌟 Action Transformer 模型架構
@@ -166,10 +253,10 @@ def camera_worker(camera_id, video_source):
     _is_stream = is_stream_source(video_source)
     _backoff_max = float(os.environ.get("RTSP_RECONNECT_MAX_BACKOFF", "30"))
 
-    def _frame_delay_of(c):
+    def _fps_of(c):
         f = c.get(cv2.CAP_PROP_FPS)
         if f <= 0 or np.isnan(f): f = 30.0
-        return 1.0 / f
+        return f
 
     def _reconnect():
         """指數退避重連：1→2→4→8→16→30s 封頂，無限重試，拿到可用 reader 才回。
@@ -200,7 +287,20 @@ def camera_worker(camera_id, video_source):
         print(f"🔌 [{camera_id}] 首次連線失敗（攝影機可能還沒開機），進入自動重連：{video_source}")
         cap = _reconnect()
 
-    frame_delay = _frame_delay_of(cap)
+    source_fps = _fps_of(cap)
+    frame_delay = 1.0 / source_fps
+
+    # ── 📼 事件片段緩衝（觸發前 PRE 秒 / 後 POST 秒）──────────────────────
+    # 緩衝塞在 `frame_count % 2` 跳幀之前，存的是原始幀：存已處理幀的話同樣的秒數
+    # 只會收到一半份量的畫面，寫出來的片段時間軸整個對不上。
+    _max_pre_frames = max(1, int(source_fps * _CLIP_PRE_SEC))
+    _max_post_frames = max(1, int(source_fps * _CLIP_POST_SEC))
+    pre_clip_buffer = deque(maxlen=_max_pre_frames)  # 環形：永遠只留最近 PRE 秒
+    pre_clip_snapshot = None   # 觸發瞬間對 pre buffer 拍下的快照（見觸發段的說明）
+    post_clip_buffer = []      # 觸發後續錄；寫檔後立刻斷開參照釋放記憶體
+    is_recording_post = False
+    clip_local_path = None
+    clip_s3_key = None
 
     frame_window = deque(maxlen=30)
     vlm_triggered = False
@@ -258,7 +358,21 @@ def camera_worker(camera_id, video_source):
                 print(f"🔌 [{camera_id}] 串流中斷，開始自動重連：{video_source}")
                 cap.release()
                 cap = _reconnect()
-                frame_delay = _frame_delay_of(cap)   # 重連後 fps 可能重新協商過
+                source_fps = _fps_of(cap)            # 重連後 fps 可能重新協商過
+                frame_delay = 1.0 / source_fps
+                # 片段緩衝的「秒數 → 幀數」換算要跟著新 fps 重算。deque 的 maxlen 不能
+                # 改，用現有內容重建一個（斷線前那幾秒畫面留著，不平白丟掉）。
+                _max_pre_frames = max(1, int(source_fps * _CLIP_PRE_SEC))
+                _max_post_frames = max(1, int(source_fps * _CLIP_POST_SEC))
+                if pre_clip_buffer.maxlen != _max_pre_frames:
+                    pre_clip_buffer = deque(pre_clip_buffer, maxlen=_max_pre_frames)
+                # 錄到一半斷線：後段會缺一塊，硬接起來就是時間跳斷的假片段。中止本次錄影。
+                # vlm_triggered 仍為 True，維持現有「重連不重複發報」的性質不變。
+                if is_recording_post:
+                    print(f"🎞️ [{camera_id}] 片段錄製中斷線，中止本次後段錄影（避免拼出時間跳斷的片段）")
+                    is_recording_post = False
+                    pre_clip_snapshot = None
+                    post_clip_buffer = []
                 # 時序連續性已斷 → 清空餵 AcT 的 30 幀視窗。把斷線前最後一幀直接接上斷線後
                 # 第一幀，等於偽造一個瞬間姿態跳變，那正是 AcT 判定跌倒的特徵，會誤報。
                 # 既有的 len<30 → "Buffering" 路徑會自然接手，累滿 30 幀後恢復判定。
@@ -271,6 +385,16 @@ def camera_worker(camera_id, video_source):
                 _fps_t0 = time.time(); _fps_n = 0
                 print(f"♻️ [{camera_id}] 時序視窗已清空，重新累積 30 幀後恢復 AcT 判定")
                 continue
+            # 影片檔播完但後段還沒錄滿：clip_path 早已隨警報發出去了，不能讓它指向一個
+            # 永遠不存在的檔案。有多少寫多少（片段會短於 POST 秒，但至少存在）。
+            # 這裡同步寫、不丟背景執行緒：worker 收工後行程可能跟著結束，daemon thread 會被砍。
+            if is_recording_post:
+                print(f"🎞️ [{camera_id}] 影像流結束，後段未錄滿 → 補寫已收到的片段")
+                write_event_clip((pre_clip_snapshot or []) + post_clip_buffer,
+                                 clip_local_path, source_fps, camera_id, clip_s3_key)
+                is_recording_post = False
+                pre_clip_snapshot = None
+                post_clip_buffer = []
             print(f"⏳ [{camera_id}] 影像流讀取結束，強行等待後端 MLOps 管線與 VLM 二審完成...")
             time.sleep(12) 
             with frames_lock: backup_frame = output_frames.get(camera_id, None)
@@ -286,6 +410,26 @@ def camera_worker(camera_id, video_source):
                 cv2.putText(clean_end_frame, "STREAM END", (int(w/2) - 180, int(h/2)), cv2.FONT_HERSHEY_SIMPLEX, 1.8, final_color, 5, cv2.LINE_AA)
                 with frames_lock: output_frames[camera_id] = clean_end_frame
             break
+
+        # ──  片段緩衝：擺在跳幀之前，存的是原始幀（降寬後）──────────────────
+        _clip_frame = _downscale_for_clip(frame)
+        pre_clip_buffer.append(_clip_frame)
+        if is_recording_post:
+            post_clip_buffer.append(_clip_frame)
+            if len(post_clip_buffer) >= _max_post_frames:
+                # 後段收滿 → 丟背景執行緒寫檔，主迴圈立刻回去跑推論。
+                #  前段用「觸發當下拍的快照」而不是此刻的 pre_clip_buffer：pre buffer
+                #    每幀都在滾，錄完後段時它裡面裝的已經正好是後段那批幀，直接取會拼出
+                #    「後 N 秒 ×2」的假片段（albert 分支的實作就是踩在這個坑上）。
+                threading.Thread(
+                    target=write_event_clip,
+                    args=((pre_clip_snapshot or []) + post_clip_buffer,
+                          clip_local_path, source_fps, camera_id, clip_s3_key),
+                    daemon=True,
+                ).start()
+                is_recording_post = False
+                pre_clip_snapshot = None
+                post_clip_buffer = []  # 斷開參照，別讓 10 秒份的幀留在記憶體
 
         frame_count += 1
         if frame_count % 2 != 0:
@@ -306,7 +450,7 @@ def camera_worker(camera_id, video_source):
             _inst = _fps_n / _dt if _dt > 0 else 0.0
             _avg = _fps_proc_total / (_now - _fps_run_t0) if (_now - _fps_run_t0) > 0 else 0.0
             _mode = "GPU吞吐(無節流)" if _fps_no_throttle else "穩態(含節流)"
-            print(f"📊 [FPS/{_mode}] [{camera_id}] 區間 {_inst:5.1f} fps｜累計均 {_avg:5.1f} fps"
+            print(f" [FPS/{_mode}] [{camera_id}] 區間 {_inst:5.1f} fps｜累計均 {_avg:5.1f} fps"
                   f"（已處理 {_fps_proc_total} 幀）")
             _fps_t0 = _now
             _fps_n = 0
@@ -319,13 +463,13 @@ def camera_worker(camera_id, video_source):
             results_pose = yolo_pose_model(frame, verbose=False, conf=0.45)
         except Exception as e:
             if not triton_down_warned:
-                print(f"⚠️ [{camera_id}] Triton pose 推論失敗（降級：略過此幀，持續重試）：{e}")
+                print(f" [{camera_id}] Triton pose 推論失敗（降級：略過此幀，持續重試）：{e}")
                 triton_down_warned = True
             t_sleep = frame_delay - (time.time() - t_start)
             if t_sleep > 0: time.sleep(t_sleep)
             continue
         # rt_detr 降頻（DETR_EVERY_N）：只在每 N 個處理幀真的打一次 Triton，其餘幀復用快取。
-        # ⚠️ 是「復用上次結果」而不是「傳 None」——results_env 的下游（模組 A 離床拿 bed_box、
+        #  是「復用上次結果」而不是「傳 None」——results_env 的下游（模組 A 離床拿 bed_box、
         #    模組 I 座椅滑落拿 chair_box）都靠它當空間參考框，傳 None 會讓偵測時斷時續；
         #    家具靜態，復用幾幀前的框才是正確做法。N=1 時此分支恆真，行為與原本完全一致。
         if _detr_proc_idx % _detr_every_n == 0:
@@ -522,6 +666,21 @@ def camera_worker(camera_id, video_source):
 
             if producer is not None:
                 vlm_triggered = True
+
+                # 🧠 5. 事件片段：clip_path 從「影像來源本身」改指向這段前後 N 秒的影片。
+                # 觸發當下就把 pre buffer 拍成快照、把路徑算好，讓 payload 立刻帶著它發出去；
+                # 後段錄滿才在背景寫檔——警報不等影片（跌倒是急救場景，晚 N 秒是真的晚），
+                # 護理師從收到警報到點開影片本來就不只 N 秒，檔案那時早就落地了。
+                clip_name = f"clip_{camera_id}_{current_time_str}.mp4"
+                clip_local_path = os.path.join(_CLIP_DIR, clip_name)
+                clip_s3_key = f"{_CLIP_S3_PREFIX}/{clip_name}" if _CLIP_S3_BUCKET else None
+                # 設了 bucket 才給 s3:// URI（後端只認這個）；否則退本地路徑，見檔頭說明。
+                clip_path = (f"s3://{_CLIP_S3_BUCKET}/{clip_s3_key}"
+                             if clip_s3_key else clip_local_path)
+                pre_clip_snapshot = list(pre_clip_buffer)
+                post_clip_buffer = []
+                is_recording_post = True
+
                 # 🚦 信心分流抽成 route_by_confidence()：由它決定送哪個 topic、組哪個 payload。
                 # 這裡只負責算好參數、把回傳的 (topic, payload) 送出，路由決策可被 LangGraph 接管。
                 topic, payload = route_by_confidence(
@@ -530,7 +689,7 @@ def camera_worker(camera_id, video_source):
                     is_occluded_fall=is_occluded_fall,
                     event_label=event_label,
                     numeric_id=numeric_id,
-                    video_source=video_source,
+                    clip_path=clip_path,
                     detected_at=datetime.now().isoformat(),  # 符合後端解析的 ISO 時間字串
                     snapshot_full_path=snapshot_full_path,
                     snapshot_name=snapshot_name,

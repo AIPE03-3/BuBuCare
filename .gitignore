@@ -61,6 +61,9 @@ ai/triton_repo/*/[0-9]*/
 # inference_test 觸發事件時寫入的證據快照（執行時產物）
 ai/snapshots/
 
+# inference_test 觸發事件時寫入的前後 N 秒事件片段（執行時產物，CLIP_DIR 可改）
+ai/clips/
+
 # ultralytics 訓練/驗證輸出
 runs/
 
