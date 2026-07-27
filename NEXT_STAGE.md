@@ -113,3 +113,37 @@ ERROR 毒訊息，跳過：b'{"alert_id": "AGT_Room_301_Bed_...", ...}'
 
 **這次沒有修**：跟片段存檔／S3 上傳兩件事無關，範圍不小（四個模組要逐一檢查與修正），
 且需要跑得夠長的影片才能實測驗證每一個，留給接手者評估優先序後另案處理。
+
+---
+
+## 4. agent P2：後端記錄 AI 判斷 + 前端顯示建議（尚未開始）
+
+**2026-07-27 確認**：stage5 只做了 agent 的 shadow 驗證（P0/P1/P4，`AGENT_SHADOW=1`），
+P2（把 agent 的判斷接進後端資料庫、前端顯示出來）**完全沒有動過**——`backend/core/models.py`
+的 `DetectEvent` 沒有任何 `ai_*` 欄位，前端也沒有任何 AI 建議相關元件。
+
+**shadow 已經真的跑過、判斷品質可用**（`ai/agent_shadow.jsonl` 為證，非空談）：
+
+```json
+{"ai_verdict": "false_alarm", "ai_confidence": 0.8,
+ "ai_reasoning": "根據影像，現場沒有任何人存在，因此可以確定並非真實的跌倒事件。"}
+```
+
+VLM 正確看出畫面沒人、agent 正確判定誤報並給出清楚理由——底層邏輯是可信的，值得接下去做。
+
+**範圍（已拍板：只做 P2 的「A 層」，不做 cutover）**：
+- **不**停掉現行 `uncertainty_router.py`／`vlm_worker.py`，agent **維持 shadow**，現行資料流不動。
+- 只做「後端記錄 + 前端顯示」，讓 AI 的判斷變成人工複判時的**參考資訊**，不接手決策權。
+
+**要做什麼（對照 `agent/docs/02-wbs.md` 的 P2 任務拆解，但拿掉 2.4/2.5 shadow 比對與 cutover）**：
+
+| 任務 | 內容 | 對照 |
+|---|---|---|
+| 後端欄位 | `DetectEvent` 加 `ai_verdict`（`true_alarm｜false_alarm｜null`）／`ai_confidence`（float）／`ai_reasoning`（text），**皆 optional、向下相容**；`EventCreateRequest` 同步加；補 DB 遷移 | 欄位名稱與型別對齊 `agent/schemas.py:116-118`，agent 端已經是這個格式，不必再轉換 |
+| 後端護欄 | **不得有任何自動關閉事件的程式路徑**——`false_alarm` 只存建議、`verdict` 留 NULL，關閉事件仍要人工按 | agent docs 的「不可退讓原則」第 2 條 |
+| 前端顯示 | 事件卡／詳情顯示「AI 建議」徽章 + `ai_reasoning`；`ai_verdict=false_alarm` 時附「確認誤報」一鍵鈕，走既有 `PATCH /events/{id}/verdict`；無 AI 建議的舊事件（`ai_verdict=null`）顯示維持原樣 | — |
+| 測試 | 三種路徑都要測：`true_alarm`／`false_alarm`／`null`（agent 判不出來）；舊格式訊息（無三欄）要照常建檔，既有 pytest 不可退 | — |
+
+**驗證方式**：先把 `ai/agent_shadow.jsonl` 已經產出的判斷手動塞一筆進資料庫確認欄位/顯示正確，
+不一定要等 agent 即時串接；真正要串接 agent 產出寫進 DB（而非只寫 log）是另一個小任務，
+可以跟這個一起做，也可以先用假資料驗證前後端再補上。
