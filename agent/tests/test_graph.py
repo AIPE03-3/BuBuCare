@@ -21,9 +21,8 @@ ALERT_MESSAGE = {
     "snapshot_path": "/abs/path/snapshot_Room_301_Bed_20260719_153000.jpg",
     "image_filename": "snapshot_Room_301_Bed_20260719_153000.jpg",
     "yolo_score": 0.72,
-    "yolo_threshold": 0.45,
+    "yolo_threshold": 0.45,   # 慢車道保留：AI 內部欄位，judge prompt 比大小用
     "vlm_summary": "【AI 信心度不足】已觸發大模型二審…",
-    "severity": "medium",
 }
 ROUTINE_MESSAGE = {
     "alert_id": "RTN_Room_301_Bed_1753000000",
@@ -78,7 +77,7 @@ class ScriptedJudge:
     def invoke(self, prompt, *args, **kwargs):
         self.calls += 1
         item = self.script.pop(0) if self.script else JudgeResult(
-            verdict="uncertain", confidence=0.0, reasoning="腳本用盡", severity="low"
+            verdict="uncertain", confidence=0.0, reasoning="腳本用盡"
         )
         if isinstance(item, Exception):
             raise item
@@ -90,7 +89,7 @@ def build(settings, fake_producer):
     """組一張跑在假替身上的圖；回傳 (跑一筆的函式, producer, vlm, judge)。"""
     def _build(vlm_script=("VLM 報告：長者倒臥於床邊地面",),
                judge_script=(JudgeResult(verdict="true_alarm", confidence=0.9,
-                                         reasoning="姿態與跌倒相符", severity="high"),),
+                                         reasoning="姿態與跌倒相符"),),
                store=None, **setting_overrides):
         import dataclasses
         cfg = dataclasses.replace(settings, **setting_overrides) if setting_overrides else settings
@@ -126,7 +125,9 @@ def test_端到端_真警報送出相容格式訊息(build):
     assert payload["snapshot_path"].endswith("snapshot_Room_301_Bed_20260719_153000.jpg")
     # vlm_summary 是 Agent 自己的判讀，不是邊緣端塞在訊息裡的那句佔位文字
     assert payload["vlm_summary"].startswith("VLM 報告")
-    assert payload["severity"] == "high"
+    # 後端已移除的兩欄不外發（1bbb585）；yolo_threshold 只留在 Kafka 1 給 judge prompt 用
+    assert "severity" not in payload
+    assert "yolo_threshold" not in payload
     # 新增欄位
     assert payload["ai_verdict"] == "true_alarm"
     assert payload["ai_confidence"] == 0.9
@@ -134,7 +135,7 @@ def test_端到端_真警報送出相容格式訊息(build):
 
 def test_端到端_誤報只送建議(build):
     run, producer, _, _ = build(judge_script=[JudgeResult(
-        verdict="false_alarm", confidence=0.8, reasoning="畫面中長者正常坐於椅上", severity="low"
+        verdict="false_alarm", confidence=0.8, reasoning="畫面中長者正常坐於椅上"
     )])
 
     run(ALERT_MESSAGE)
@@ -157,7 +158,6 @@ def test_巡檢訊息走巡檢路徑不觸發複判(build):
     assert "巡檢" in vlm.prompts[0]                # 用的是巡檢專屬 prompt
     payload = producer.sent[0][1]
     assert payload["ai_verdict"] is None          # 巡檢不做真假判定
-    assert payload["severity"] == "low"
     assert payload["vlm_summary"].startswith("【安養中心智慧環境巡檢報告】")
 
 
@@ -218,8 +218,8 @@ def test_不確定時回頭補問_VLM_後改判(build):
     run, producer, vlm, judge = build(
         vlm_script=["畫面模糊", "補充後：長者倒臥地面，助行器翻倒"],
         judge_script=[
-            JudgeResult(verdict="uncertain", confidence=0.3, reasoning="畫面模糊", severity="medium"),
-            JudgeResult(verdict="true_alarm", confidence=0.85, reasoning="補問後確認跌倒", severity="high"),
+            JudgeResult(verdict="uncertain", confidence=0.3, reasoning="畫面模糊"),
+            JudgeResult(verdict="true_alarm", confidence=0.85, reasoning="補問後確認跌倒"),
         ],
         judge_max_retries=1,
     )
@@ -232,7 +232,7 @@ def test_不確定時回頭補問_VLM_後改判(build):
 
 
 def test_補問後仍不確定就交回人工(build):
-    uncertain = JudgeResult(verdict="uncertain", confidence=0.3, reasoning="仍看不清", severity="medium")
+    uncertain = JudgeResult(verdict="uncertain", confidence=0.3, reasoning="仍看不清")
     run, producer, vlm, judge = build(
         vlm_script=["畫面模糊", "還是模糊"],
         judge_script=[uncertain, uncertain],
@@ -248,7 +248,7 @@ def test_補問後仍不確定就交回人工(build):
 def test_補問次數為零時不補問(build):
     run, producer, vlm, judge = build(
         judge_script=[JudgeResult(verdict="uncertain", confidence=0.3,
-                                  reasoning="模糊", severity="medium")],
+                                  reasoning="模糊")],
         judge_max_retries=0,
     )
 
@@ -270,7 +270,7 @@ def build_with_curation(settings, fake_producer):
             image_store=FakeStore(),
             vlm_client=ScriptedVlm(["VLM 報告：長者倒臥於地面"]),
             judge_model=ScriptedJudge(judge_script or [JudgeResult(
-                verdict=message_verdict, confidence=0.9, reasoning="理由", severity="high")]),
+                verdict=message_verdict, confidence=0.9, reasoning="理由")]),
             curator_model=ScriptedJudge(curator_script),
             sample_store=sample_store,
             producer=fake_producer,
@@ -307,7 +307,7 @@ def test_告警先送出再策展(settings, fake_producer):
         image_store=FakeStore(),
         vlm_client=ScriptedVlm(["VLM 報告：長者倒臥於地面"]),
         judge_model=ScriptedJudge([JudgeResult(
-            verdict="true_alarm", confidence=0.9, reasoning="理由", severity="high")]),
+            verdict="true_alarm", confidence=0.9, reasoning="理由")]),
         curator_model=ScriptedJudge([ALDecision(keep=True, reason="漏抓盲點", priority="high")]),
         sample_store=RecordingStore(),
         producer=RecordingProducer(),

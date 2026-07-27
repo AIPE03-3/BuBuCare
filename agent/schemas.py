@@ -6,6 +6,10 @@
 2. ProcessedReport —— Kafka 2 出去的訊息，**必須是現有格式的超集**：
    舊欄位一個不動、一個不少，新欄位全部 optional，
    backend/kafka_consumer.py 不改也能跑（Never break userspace）。
+   唯一的例外是 severity 與 yolo_threshold：後端已於 2026-07-19（commit 1bbb585）
+   把這兩欄從 detect_events 與 EventCreateRequest 整組移除，現在送過去只會被
+   Pydantic（預設 extra="ignore"）靜默丟掉。既然接收端已經沒有這兩欄，
+   「不動舊欄位」就不再適用——本 Agent 亦同步不送。
 3. 各節點的 structured output —— judge / al_curator 要 LLM 吐的形狀。
 """
 from datetime import datetime
@@ -14,7 +18,6 @@ from typing import Literal, Optional, TypedDict
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 Verdict = Literal["true_alarm", "false_alarm", "uncertain"]
-Severity = Literal["low", "medium", "high"]
 
 # 定時巡檢事件：走環境報告路徑，不做跌倒複判
 ROUTINE_CHECK_EVENT = "Routine_Environment_Sanity_Check"
@@ -48,6 +51,7 @@ class AlertMessage(BaseModel):
     camera_id: Optional[str] = None          # 邊緣端原始相機代號，保留供 log 與巡檢報告用
     image_filename: Optional[str] = None
     yolo_score: float = 0.0
+    # 只走 Kafka 1（AI 內部），judge prompt 拿它跟 yolo_score 比大小用；不外發後端。
     yolo_threshold: float = 0.5              # 巡檢訊息不帶此欄位，用預設值
     detected_at: Optional[datetime] = None   # 可能缺，缺則由 publish 以收到時間補
     clip_path: Optional[str] = None          # 可能缺；注意這是整支來源影片，不是事件片段
@@ -101,15 +105,15 @@ class ProcessedReport(BaseModel):
     """
 
     # ── 既有欄位（不得更動）──
+    # 註：severity 與 yolo_threshold 曾在此，已隨後端 2026-07-19 的清理一併移除，
+    # 見本檔頂端說明。yolo_threshold 仍在 AlertMessage（Kafka 1）上，只是不外發。
     device_id: int
     event_type: str
     clip_path: str
     detected_at: str                      # ISO 8601 字串，對齊後端 datetime 解析
     snapshot_path: str
     yolo_score: float
-    yolo_threshold: float
     vlm_summary: str                      # VLM 原始報告
-    severity: Severity                    # 改由 judge 給值（原本是 "Fall" in type 的寫死規則）
 
     # ── 新增欄位（全部 optional）──
     # None 代表「Agent 判不出來，交回人工」——等同現況，不是誤報建議
@@ -132,7 +136,6 @@ class JudgeResult(BaseModel):
     verdict: Verdict
     confidence: float = Field(ge=0, le=1)
     reasoning: str = Field(description="判定理由，繁體中文，寫給值班人員看")
-    severity: Severity
 
 
 class ALDecision(BaseModel):
@@ -168,7 +171,6 @@ class AgentState(TypedDict, total=False):
     verdict: Verdict
     confidence: float
     reasoning: str
-    severity: Severity
     al_decision: Optional[ALDecision]
 
     # 流程控制：ingest 擋掉的壞資料在這裡標記原因，後續節點直接短路

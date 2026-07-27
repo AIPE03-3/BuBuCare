@@ -29,7 +29,6 @@ STATE = {
     "verdict": "true_alarm",
     "confidence": 0.87,
     "reasoning": "VLM 確認人員倒臥於床邊地面，姿態與跌倒相符",
-    "severity": "high",
 }
 NOW = "2026-07-19T16:00:00"
 
@@ -65,9 +64,7 @@ def test_既有欄位語意不變():
     assert report.detected_at == "2026-07-19T15:30:00"
     assert report.snapshot_path == "/imgs/snapshot_101.jpg"
     assert report.yolo_score == 0.72
-    assert report.yolo_threshold == 0.5
     assert report.vlm_summary.startswith("【安養中心緊急通報】")
-    assert report.severity == "high"
 
 
 def test_舊_consumer_需要的欄位一個不少():
@@ -75,9 +72,19 @@ def test_舊_consumer_需要的欄位一個不少():
     payload = build_report(STATE, received_at=NOW).model_dump()
 
     required = ["device_id", "event_type", "clip_path", "detected_at",
-                "snapshot_path", "yolo_score", "yolo_threshold", "vlm_summary", "severity"]
+                "snapshot_path", "yolo_score", "vlm_summary"]
     for field in required:
         assert payload[field] is not None, f"缺少既有欄位 {field}"
+
+
+def test_不外發後端已移除的兩個欄位():
+    # severity / yolo_threshold 已於 2026-07-19（1bbb585）從後端整組移除。
+    # yolo_threshold 仍在 AlertMessage（Kafka 1）上供 judge prompt 比大小用，只是不外發。
+    payload = build_report(STATE, received_at=NOW).model_dump()
+
+    assert "severity" not in payload
+    assert "yolo_threshold" not in payload
+    assert STATE["alert"].yolo_threshold == 0.5     # 入口欄位仍在，沒被一起砍掉
 
 
 def test_缺_clip_path_時補現況的預設值():

@@ -11,21 +11,12 @@
 import logging
 
 from agent.prompts import build_judge_prompt
-from agent.schemas import AgentState, AlertMessage, JudgeResult
+from agent.schemas import AgentState, JudgeResult
 
 logger = logging.getLogger("agent.judge")
 
 
-def legacy_severity(event_type: str) -> str:
-    """judge 給不出 severity 時的退路：沿用 vlm_worker 的既有規則。
-
-    這條規則本身很粗糙（字串比對），但作為降級預設值是安全的：
-    跌倒類事件給 high，值班人員會優先看到。
-    """
-    return "high" if "Fall" in event_type else "low"
-
-
-def degraded_result(alert: AlertMessage, reason: str) -> dict:
+def degraded_result(reason: str) -> dict:
     """判不出來時的統一產出：uncertain + 零信心 + 說清楚為什麼。
 
     注意 verdict 不是 false_alarm——Agent 沒有「因為壞掉所以關掉事件」的權力。
@@ -34,7 +25,6 @@ def degraded_result(alert: AlertMessage, reason: str) -> dict:
         "verdict": "uncertain",
         "confidence": 0.0,
         "reasoning": f"AI 無法判定，請人工複判。原因：{reason}",
-        "severity": legacy_severity(alert.event_type),
     }
 
 
@@ -47,25 +37,24 @@ def make_judge_node(model, max_retries: int):
 
         # VLM 重試耗盡：沒有影像證據就沒有判定的基礎，不要叫 LLM 硬掰
         if not vlm_report:
-            return degraded_result(alert, "VLM 影像判讀失敗，重試已耗盡")
+            return degraded_result("VLM 影像判讀失敗，重試已耗盡")
 
         try:
             result = model.invoke(build_judge_prompt(alert, vlm_report))
         except Exception as e:
             # 地端模型吐不出合法 JSON 是常態，接住降級即可，不讓例外中斷 consumer
             logger.warning("judge 解析失敗，降級交回人工：%s", e)
-            return degraded_result(alert, f"判定結果解析失敗（{type(e).__name__}）")
+            return degraded_result(f"判定結果解析失敗（{type(e).__name__}）")
 
         if not isinstance(result, JudgeResult):
             logger.warning("judge 回傳型別非預期：%r", type(result))
-            return degraded_result(alert, "判定結果格式不符")
+            return degraded_result("判定結果格式不符")
 
         logger.info("judge 判定 %s（信心 %.2f）", result.verdict, result.confidence)
         return {
             "verdict": result.verdict,
             "confidence": result.confidence,
             "reasoning": result.reasoning,
-            "severity": result.severity,
         }
 
     return judge

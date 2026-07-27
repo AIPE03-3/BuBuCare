@@ -101,7 +101,6 @@ JUDGE_TEMPLATE = """你是安養中心的 AI 複判護理長，負責覆核邊�
    證據不足時判 uncertain，**絕對不要為了給答案而判 false_alarm**。
 3. confidence 是你對自己這個判定的信心（0~1），不是 YOLO 的分數。
 4. reasoning 用繁體中文寫給值班護理人員看，講清楚你依據影像中的什麼證據做此判定，兩三句話即可。
-5. severity：high=需立即到場處置；medium=需盡快查看；low=無立即風險。判 false_alarm 時給 low。
 """
 
 

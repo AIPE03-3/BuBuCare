@@ -20,9 +20,8 @@ REAL_FALL_ALERT = {
     "snapshot_path": "/abs/path/snapshot_Room_301_Bed_20260719_153000.jpg",
     "image_filename": "snapshot_Room_301_Bed_20260719_153000.jpg",
     "yolo_score": 0.72,
-    "yolo_threshold": 0.45,
+    "yolo_threshold": 0.45,   # 慢車道保留：AI 內部欄位，judge prompt 比大小用
     "vlm_summary": "【AI 信心度不足】已觸發大模型二審…",
-    "severity": "medium",
 }
 
 # ai/modules/sanity_check.py:35 定時巡檢（camera_id 是非數字字串、且沒有 yolo_threshold）
@@ -59,8 +58,8 @@ def test_真實巡檢訊息可通過驗證():
 
 
 def test_邊緣端多送的欄位被忽略而非報錯():
-    # snapshot_path / severity / vlm_summary / alert_id / status 都不是我們要的，
-    # 但它們的存在不該讓訊息被拒絕
+    # snapshot_path / vlm_summary / alert_id / status / severity（巡檢模組仍在送）
+    # 都不是我們要的，但它們的存在不該讓訊息被拒絕
     assert AlertMessage(**REAL_FALL_ALERT).device_id == 301
     assert AlertMessage(**REAL_ROUTINE_ALERT).device_id == 301
 
@@ -110,9 +109,7 @@ LEGACY_FIELDS = {
     "detected_at": "2026-07-19T15:30:00",
     "snapshot_path": "/data/snapshots/snapshot_101_20260719_153000.jpg",
     "yolo_score": 0.72,
-    "yolo_threshold": 0.5,
     "vlm_summary": "【安養中心緊急通報】…",
-    "severity": "high",
 }
 
 
@@ -155,16 +152,18 @@ def test_uncertain_不會出現在對外欄位():
         ProcessedReport(**LEGACY_FIELDS, ai_verdict="uncertain")
 
 
-def test_severity_只收三個等級():
-    with pytest.raises(ValidationError):
-        ProcessedReport(**{**LEGACY_FIELDS, "severity": "critical"})
+def test_不再送出後端已移除的欄位():
+    # severity / yolo_threshold 已於 2026-07-19（1bbb585）從後端整組移除，
+    # 送過去只會被 Pydantic 靜默丟掉；yolo_threshold 仍留在 Kafka 1 供 judge prompt 用
+    payload = ProcessedReport(**LEGACY_FIELDS).model_dump()
+
+    assert "severity" not in payload
+    assert "yolo_threshold" not in payload
 
 
 # ── 節點 structured output ──────────────────────────────
-def test_judge_結果的四個欄位():
-    result = JudgeResult(
-        verdict="true_alarm", confidence=0.9, reasoning="姿態與跌倒相符", severity="high"
-    )
+def test_judge_結果的三個欄位():
+    result = JudgeResult(verdict="true_alarm", confidence=0.9, reasoning="姿態與跌倒相符")
 
     assert result.verdict == "true_alarm"
 
@@ -172,16 +171,14 @@ def test_judge_結果的四個欄位():
 def test_judge_接受_uncertain():
     # Agent 內部允許 uncertain，只是不對外送（由 publish 降級成 null）
     assert JudgeResult(
-        verdict="uncertain", confidence=0.4, reasoning="畫面遮蔽", severity="medium"
+        verdict="uncertain", confidence=0.4, reasoning="畫面遮蔽"
     ).verdict == "uncertain"
 
 
 @pytest.mark.parametrize("bad_confidence", [-0.1, 1.5])
 def test_judge_信心度必須在_0_到_1_之間(bad_confidence):
     with pytest.raises(ValidationError):
-        JudgeResult(
-            verdict="true_alarm", confidence=bad_confidence, reasoning="x", severity="high"
-        )
+        JudgeResult(verdict="true_alarm", confidence=bad_confidence, reasoning="x")
 
 
 def test_主動學習決定的形狀():

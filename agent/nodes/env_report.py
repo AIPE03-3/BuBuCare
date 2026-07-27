@@ -4,7 +4,7 @@
 沿用現況功能，不加戲：巡檢事件用專屬 prompt 請 VLM 產出環境報告，
 不做 true_alarm / false_alarm 複判——巡檢本來就不是告警，沒有東西要判。
 
-因此這條路徑的產出固定是 verdict=uncertain（→ 對外 ai_verdict=null）、severity=low，
+因此這條路徑的產出固定是 verdict=uncertain（→ 對外 ai_verdict=null），
 與現況 vlm_worker 對巡檢訊息的行為一致。
 """
 import logging
@@ -33,7 +33,6 @@ def make_env_report_node(client, max_retries: int):
             "verdict": "uncertain",
             "confidence": 0.0,
             "reasoning": "定時環境巡檢，非告警事件，不做真假判定。",
-            "severity": "low",
         }
 
     return env_report

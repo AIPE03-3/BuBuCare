@@ -42,9 +42,8 @@ def build_report(state: AgentState, received_at: str) -> ProcessedReport:
         detected_at=detected_at,
         snapshot_path=state["image_path"],
         yolo_score=alert.yolo_score,
-        yolo_threshold=alert.yolo_threshold,
+        # alert.yolo_threshold 刻意不帶：那是 AI 內部欄位（judge prompt 用），後端已無此欄
         vlm_summary=state.get("vlm_report") or "【系統警告】本次未取得影像判讀。",
-        severity=state.get("severity", "low"),
         # ── 新增欄位 ──
         ai_verdict=to_ai_verdict(state.get("verdict")),
         ai_confidence=state.get("confidence"),
@@ -105,8 +104,7 @@ def make_publish_node(producer, topic: str, *, shadow: bool, shadow_log_path: st
 
         producer.send(topic, value=payload)
         producer.flush()
-        logger.info("已送出 Kafka 2：%s ai_verdict=%s severity=%s",
-                    key, report.ai_verdict, report.severity)
+        logger.info("已送出 Kafka 2：%s ai_verdict=%s", key, report.ai_verdict)
         return {"published": True}
 
     return publish

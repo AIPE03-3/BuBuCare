@@ -6,7 +6,6 @@ import pytest
 
 from agent.nodes.judge import (
     degraded_result,
-    legacy_severity,
     make_followup_node,
     make_judge_node,
     route_after_judge,
@@ -17,8 +16,8 @@ ALERT = AlertMessage(event_type="Fall_Detected", camera_id="101", yolo_score=0.7
 BASE_STATE = {"alert": ALERT, "image_path": "/img.jpg", "vlm_report": "長者倒臥於地面"}
 
 
-def result(verdict, confidence=0.9, severity="high"):
-    return JudgeResult(verdict=verdict, confidence=confidence, reasoning="理由", severity=severity)
+def result(verdict, confidence=0.9):
+    return JudgeResult(verdict=verdict, confidence=confidence, reasoning="理由")
 
 
 # ── 四種 verdict 路徑 ───────────────────────────────────
@@ -29,11 +28,10 @@ def test_判真警報(fake_structured_llm):
 
     assert out["verdict"] == "true_alarm"
     assert out["confidence"] == 0.9
-    assert out["severity"] == "high"
 
 
 def test_判誤報(fake_structured_llm):
-    model = fake_structured_llm([result("false_alarm", confidence=0.8, severity="low")])
+    model = fake_structured_llm([result("false_alarm", confidence=0.8)])
 
     out = make_judge_node(model, max_retries=1)(BASE_STATE)
 
@@ -41,7 +39,7 @@ def test_判誤報(fake_structured_llm):
 
 
 def test_判不確定(fake_structured_llm):
-    model = fake_structured_llm([result("uncertain", confidence=0.3, severity="medium")])
+    model = fake_structured_llm([result("uncertain", confidence=0.3)])
 
     out = make_judge_node(model, max_retries=1)(BASE_STATE)
 
@@ -90,9 +88,12 @@ def test_任何異常路徑都不會判成誤報(fake_structured_llm, broken_sta
     assert out["verdict"] != "false_alarm"
 
 
-def test_降級時_severity_沿用既有規則():
-    assert degraded_result(ALERT, "x")["severity"] == "high"          # Fall → high
-    assert legacy_severity("Routine_Environment_Sanity_Check") == "low"
+def test_降級產出只有三個欄位且不含後端已移除的欄位():
+    # severity 已隨後端 2026-07-19（1bbb585）移除，降級路徑不再需要 legacy_severity 退路
+    out = degraded_result("x")
+
+    assert set(out) == {"verdict", "confidence", "reasoning"}
+    assert out["verdict"] == "uncertain"
 
 
 # ── 補問迴圈的分支 ──────────────────────────────────────
