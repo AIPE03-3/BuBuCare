@@ -147,12 +147,18 @@ _CLIP_DIR = cfg("CLIP_DIR") or os.path.join(
 # 機器照樣跑得動、不會在跌倒當下噴錯，只是前端暫時拿不到影片。
 _CLIP_S3_BUCKET = cfg("CLIP_S3_BUCKET").strip()
 _CLIP_S3_PREFIX = cfg("CLIP_S3_PREFIX", "videos").strip("/")
-# AWS 憑證的變數名沿用後端那組（backend/core/config.py 也是讀這兩個名字），
-# 不是 boto3 標準的 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY——故必須顯式傳進 client，
-# 光靠 boto3 預設憑證鏈是抓不到的。留空則傳 None，退回預設鏈（EC2/GCP VM 的 IAM role 走這條）。
-_S3_REGION = cfg("S3_REGION")
-_S3_ACCESS_KEY = cfg("ACCESS_KEY_ID")
-_S3_SECRET_KEY = cfg("SECRET_ACCESS_KEY")
+# AWS 憑證：本檔只做一件 S3 動作——把事件片段 upload_file 上去，需要 PutObject（寫）。
+# 後端 backend/core/s3.py 只做 presigned GET（讀），兩邊刻意用不同金鑰＝最小權限，
+# 不是重複設定：
+#   · S3_RW_*（讀寫）      → 本檔上傳片段用。2026-07-27 實測 put/head/get/delete 全通。
+#   · ACCESS_KEY_ID 等（唯讀）→ 後端簽 presigned URL 用，一行不動。同日實測該組簽出的
+#                              URL 對本檔上傳的物件回 HTTP 200，前端拿得到可播網址。
+# 沒設 S3_RW_* 的機器（Mac / CI）自動 fallback 回舊名，行為與改動前完全一樣。
+# 變數名都不是 boto3 標準的 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY，故必須顯式傳進
+# client；留空則傳 None，退回預設憑證鏈（EC2/GCP VM 的 IAM role 走這條）。
+_S3_REGION = cfg("S3_RW_REGION") or cfg("S3_REGION")
+_S3_ACCESS_KEY = cfg("S3_RW_ACCESS_KEY_ID") or cfg("ACCESS_KEY_ID")
+_S3_SECRET_KEY = cfg("S3_RW_SECRET_ACCESS_KEY") or cfg("SECRET_ACCESS_KEY")
 
 
 def _downscale_for_clip(frame):
