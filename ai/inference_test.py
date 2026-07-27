@@ -25,7 +25,10 @@ from triton_pose_client import TritonPoseModel          # Triton 版 yolo_pose c
 from triton_detr_client import TritonDetrModel          # Triton 版 rt_detr client（環境物件偵測）
 from triton_act_client import TritonActModel            # Triton 版 action_transformer client（時序跌倒分類）
 
-from av_reader import open_source                        # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
+from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
+from backend_devices import (                             # 從後端裝置表取真實攝影機清單
+    build_camera_channels, BackendUnavailable, BACKEND_API_URL,
+)
 
 # =========================================================================
 # 🛠️ MLOps 基礎建設：Kafka 初始化
@@ -159,14 +162,45 @@ def camera_worker(camera_id, video_source):
     
     print(f"🚀 鏡頭頻道 [{camera_id}] 啟動拉流：{video_source}")
     # 影片檔（AV1）走 PyAV 解碼、webcam index 走 cv2；介面與 cv2.VideoCapture 相同。
-    cap = open_source(video_source)
-    if not cap.isOpened(): 
-        print(f"❌ 鏡頭頻道 [{camera_id}] 無法開啟影像源: {video_source}")
-        return
+    # 即時串流（rtsp/rtmp/http）要斷線自動重連；影片檔維持「播完就結束」，不無限重播。
+    _is_stream = is_stream_source(video_source)
+    _backoff_max = float(os.environ.get("RTSP_RECONNECT_MAX_BACKOFF", "30"))
 
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    if fps <= 0 or np.isnan(fps): fps = 30.0
-    frame_delay = 1.0 / fps  
+    def _frame_delay_of(c):
+        f = c.get(cv2.CAP_PROP_FPS)
+        if f <= 0 or np.isnan(f): f = 30.0
+        return 1.0 / f
+
+    def _reconnect():
+        """指數退避重連：1→2→4→8→16→30s 封頂，無限重試，拿到可用 reader 才回。
+
+        每次重試都要新建 reader，不能沿用舊的：AVStreamReader 判定斷流後 _consec_fail
+        永不歸零、PrefetchReader 的 _eof_seen 也是永久閂鎖，舊物件已經死透。
+        """
+        delay, attempt, t_down = 1.0, 1, time.time()
+        while True:
+            new_cap = open_source(video_source)
+            if new_cap.isOpened():
+                print(f"✅ [{camera_id}] 重連成功（第 {attempt} 次嘗試，中斷 {time.time() - t_down:.0f}s）：{video_source}")
+                return new_cap
+            # 開失敗也要 release：DECODE_PREFETCH 下建構子已經起了背景執行緒，
+            # 不 release 就是每次重試漏一條 thread + 一個 socket。
+            new_cap.release()
+            print(f"🔁 [{camera_id}] 重連第 {attempt} 次失敗，{delay:.0f}s 後再試（退避上限 {_backoff_max:.0f}s）：{video_source}")
+            time.sleep(delay)
+            delay = min(delay * 2, _backoff_max)
+            attempt += 1
+
+    cap = open_source(video_source)
+    if not cap.isOpened():
+        if not _is_stream:
+            print(f"❌ 鏡頭頻道 [{camera_id}] 無法開啟影像源: {video_source}")
+            return
+        cap.release()
+        print(f"🔌 [{camera_id}] 首次連線失敗（攝影機可能還沒開機），進入自動重連：{video_source}")
+        cap = _reconnect()
+
+    frame_delay = _frame_delay_of(cap)
 
     frame_window = deque(maxlen=30)
     vlm_triggered = False
@@ -218,6 +252,25 @@ def camera_worker(camera_id, video_source):
         ret, frame = cap.read()
         
         if not ret:
+            # 即時串流的 (False, None) 不是「播完了」，是上游斷了（攝影機重開機、網路抖、
+            # 交換器重啟）。丟掉死掉的 reader、退避重連，不能像影片檔那樣收工。
+            if _is_stream:
+                print(f"🔌 [{camera_id}] 串流中斷，開始自動重連：{video_source}")
+                cap.release()
+                cap = _reconnect()
+                frame_delay = _frame_delay_of(cap)   # 重連後 fps 可能重新協商過
+                # 時序連續性已斷 → 清空餵 AcT 的 30 幀視窗。把斷線前最後一幀直接接上斷線後
+                # 第一幀，等於偽造一個瞬間姿態跳變，那正是 AcT 判定跌倒的特徵，會誤報。
+                # 既有的 len<30 → "Buffering" 路徑會自然接手，累滿 30 幀後恢復判定。
+                frame_window.clear()
+                last_pose_feat = np.zeros(34, dtype=np.float32)
+                has_seen_person = False
+                # 別讓中斷時間污染下一段區間 FPS（否則會印出荒謬的 <1 fps 像是退化）。
+                # normal_h_reference / frame_count / ever_detected_fall / 六個偵測器物件
+                # 一律保留：相機沒換人也沒移位，重設只會讓防線失效或對同一起事件重複發報。
+                _fps_t0 = time.time(); _fps_n = 0
+                print(f"♻️ [{camera_id}] 時序視窗已清空，重新累積 30 幀後恢復 AcT 判定")
+                continue
             print(f"⏳ [{camera_id}] 影像流讀取結束，強行等待後端 MLOps 管線與 VLM 二審完成...")
             time.sleep(12) 
             with frames_lock: backup_frame = output_frames.get(camera_id, None)
@@ -532,11 +585,43 @@ if __name__ == "__main__":
     # 💡 業界測試多路併發：可直接在此擴充相機與不同的測試影片
     # 測試影片放在 ai/test_demo/，以 __file__ 為基準解析絕對路徑，不受從哪個目錄啟動影響。
     _AI_DIR = os.path.dirname(os.path.abspath(__file__))
-    camera_channels = {
+    _HARDCODED_CHANNELS = {
         "Room_301_Bed": os.path.join(_AI_DIR, "test_demo", "test1.mp4"),
         "Room_302_Bed": os.path.join(_AI_DIR, "test_demo", "test2.mp4"),
         "Room_303_Bed": os.path.join(_AI_DIR, "test_demo", "test3.mp4"),
     }
+    # 相機清單來源開關：
+    #   CAMERA_SOURCE=backend（預設）→ 啟動時打後端 GET /devices，只取 status=active 且
+    #     stream_url 非空的裝置，房號用 device_id 對齊（Room_<device_id>_Bed）。真攝影機走這條。
+    #   CAMERA_SOURCE=hardcoded → 位元級沿用上面三支 mp4（沒有後端的離線 demo / 純量測用）。
+    _CAMERA_SOURCE = os.environ.get("CAMERA_SOURCE", "backend").strip().lower()
+    if _CAMERA_SOURCE not in ("backend", "hardcoded"):
+        print(f"❌ CAMERA_SOURCE={_CAMERA_SOURCE} 無效（可用值：backend / hardcoded）")
+        raise SystemExit(1)
+
+    # 下面的 SINGLE_SOURCE / STRESS_CAM_COUNT 會「整包換掉」camera_channels，此時去打後端
+    # 只是白等（量測流程在後端沒開時也該能跑），直接略過抓取。RTSP_TEST_URL 是加掛一路，不算。
+    _overrides_replace_all = bool(os.environ.get("SINGLE_SOURCE") or
+                                  os.environ.get("STRESS_CAM_COUNT"))
+
+    if _CAMERA_SOURCE == "hardcoded" or _overrides_replace_all:
+        camera_channels = dict(_HARDCODED_CHANNELS)
+    else:
+        try:
+            camera_channels = build_camera_channels()
+        except BackendUnavailable as e:
+            print("=" * 70)
+            print(f"❌ [CAMERA_SOURCE=backend] 無法從後端取得相機清單：{e}")
+            print(f"   後端位址：{BACKEND_API_URL}（可用 BACKEND_API_URL 覆蓋）")
+            print("   排除方式：")
+            print("     1) 後端沒開 → docker compose up -d backend，再 curl 該位址的 /health")
+            print("     2) 帳密沒設 → 在 repo 根目錄 .env 補 BACKEND_API_USER / BACKEND_API_PASSWORD")
+            print("     3) 清單是空的 → cd backend && python -m init_db，或用 admin 打 POST /devices")
+            print("        新增一台 status=active 且 stream_url 非空的裝置")
+            print("     4) 先不接後端、跑離線 demo → CAMERA_SOURCE=hardcoded python ai/inference_test.py")
+            print("=" * 70)
+            raise SystemExit(1)
+        print(f"📡 [CAMERA_SOURCE=backend] 由後端取得 {len(camera_channels)} 路鏡頭：{camera_channels}")
     # 單源量測開關（比照其他開關：未設 = 原三路行為，不留死改動）：
     # SINGLE_SOURCE=<檔案路徑或 rtsp URL> 時，改成「只掛一路」指向該來源，量單路乾淨 FPS
     #（避免三/四路併發共享 GPU 稀釋數字）。相機名固定 Room_301_Bed（device_id=301，已在後端註冊）。

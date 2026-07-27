@@ -276,6 +276,15 @@ class PrefetchReader:
 _STREAM_PREFIXES = ("rtsp://", "rtp://", "rtmp://", "http://", "https://")
 
 
+def is_stream_source(video_source) -> bool:
+    """是否為即時串流來源（rtsp/rtp/rtmp/http(s)）。
+
+    camera_worker 用它決定「讀不到畫面」的意思：影片檔＝播完了，收工；即時串流＝上游
+    斷了，要自動重連。判定邏輯只留這一份，open_source 的 dispatch 也走同一個函式。
+    """
+    return not isinstance(video_source, int) and str(video_source).startswith(_STREAM_PREFIXES)
+
+
 def open_source(video_source):
     """依影像源型別選 reader：
 
@@ -294,7 +303,7 @@ def open_source(video_source):
         if isinstance(video_source, int):
             return cv2.VideoCapture(video_source)
         s = str(video_source)
-        if s.startswith(_STREAM_PREFIXES):
+        if is_stream_source(video_source):
             return AVStreamReader(s)
         return AVFrameReader(s)
 
