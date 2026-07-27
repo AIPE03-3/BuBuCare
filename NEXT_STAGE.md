@@ -64,3 +64,52 @@
 
 **跟第 1 項的關聯**：兩件事都在同一段觸發程式碼裡（`:501-524`），一起做比較省事 ——
 冷卻計時器決定「這次要不要發」，片段存檔決定「發出去的 clip_path 指向什麼」。
+
+---
+
+## 3. 三個模組疑似跟 chair_slip 修復前同款契約破口（會被後端 422 丟棄）
+
+**2026-07-27 用 `test4.mp4`（4.9 分鐘）第一次跑完整管線時發現**。之前所有測試影片都太短
+（test1/2/3 僅 7.8~9.2 秒），跑不到這幾個模組的計時器門檻（15~22 秒起跳），所以這個破口
+**一直沒被任何測試曝露過**。
+
+**已用實測證據確認（不是推測）**：`ai/modules/micro_motion.py:45-58`（模組 F，夜間躁動）
+在偵測到躁動時，繞過 `route_by_confidence()`，自己組一份 payload 直接
+`producer.send('processed-reports', ...)`：
+
+```python
+agitation_payload = {
+    "alert_id": f"AGT_{self.camera_id}_{int(time.time())}",   # ← 契約沒有這欄
+    "device_id": numeric_id, "event_type": "agitation",
+    "detected_at": ..., "camera_id": self.camera_id,          # ← 契約沒有這欄
+    "yolo_score": ..., "vlm_summary": ..., "severity": "medium",
+    "status": "UNREAD"                                         # ← 契約沒有這欄
+    # 缺 clip_path / snapshot_path / yolo_threshold —— 9 欄契約少了 3 個必要欄位
+}
+```
+
+後端 log 實測結果：
+
+```
+"POST /events HTTP/1.1" 422 Unprocessable Entity
+ERROR 毒訊息，跳過：b'{"alert_id": "AGT_Room_301_Bed_...", ...}'
+```
+
+這正是 `ai/modules/chair_slip.py:40-49` 註解裡記載、stage2 已修過的**同一種破口**
+（「早期版本曾在此直接 producer.send() 一份自訂 payload...會被後端 422 退件」）。
+`chair_slip.py` 的修法是範本：**模組只偵測、回傳訊號，外發統一交回 `inference_test.py`
+主迴圈的 `route_by_confidence()` 組 9 欄 payload**。
+
+**同一段程式碼裡另外兩個模組，程式碼型態跟 micro_motion 一模一樣（自己組 payload 直送
+`processed-reports`），推測有相同問題，但這次測試沒有實際觸發到它們，未經實測確認**：
+
+| 模組 | 位置 | 送去哪 |
+|---|---|---|
+| `ai/modules/wandering.py`（模組 E，遊走） | `:36-48` | 直送 `processed-reports`，推測同款破口 |
+| `ai/modules/bed_exit.py`（模組 A，離床） | `:40-52` | 直送 `processed-reports`，推測同款破口 |
+
+`ai/modules/sanity_check.py`（模組 G，巡檢）送的是 `nursing-home-alerts`
+（`:36-49`），會先經過 VLM 二審那層重新組包，**影響可能不同，也未經實測，一併列入待查**。
+
+**這次沒有修**：跟片段存檔／S3 上傳兩件事無關，範圍不小（四個模組要逐一檢查與修正），
+且需要跑得夠長的影片才能實測驗證每一個，留給接手者評估優先序後另案處理。
