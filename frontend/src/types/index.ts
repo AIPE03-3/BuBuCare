@@ -229,7 +229,6 @@ export interface Camera {
 
 export interface VlmResult {
   confidence: number;
-  severity: '高' | '中' | '低';
   description: string;
   suggestion: string;
 }

@@ -66,13 +66,14 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
   };
 
   // vlm_summary 為純文字描述，null＝YOLO 高信心直通（整個 vlm_result 回 null）。
-  // severity／suggestion 後端無對應欄位：severity 固定「中」（避免 UI 誤標高危），suggestion 留空。
+  // suggestion 後端無對應欄位，留空。
+  // severity 已於 2026-07-19（後端 commit 1bbb585）從 detect_events 與事件 API 整組移除，
+  // 嚴重度概念改用 verdict_by / resolved_by 取代；這裡原本寫死「中」，沒有任何元件讀它，一併刪除。
   const vlm_result: VlmResult | null =
     raw.vlm_summary === null
       ? null
       : {
           confidence: raw.yolo_score,
-          severity: '中',
           description: raw.vlm_summary,
           suggestion: '',
         };

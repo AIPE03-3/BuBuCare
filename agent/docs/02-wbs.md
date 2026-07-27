@@ -34,7 +34,7 @@
 |---|---|---|---|
 | 1.1 | `ingest` 節點：訊息驗證、經 ImageStore 解析圖檔（缺圖跳過記 log，不認識具體後端） | nodes/ingest.py + 測試 | 現有 vlm_worker 處理的訊息樣本 100% 通過；缺圖不 crash；僅依賴 ImageStore 介面 |
 | 1.2 | `vlm_analyze` 工具節點：Ollama llava 呼叫、重試 2 次、逾時保護 | nodes/vlm.py + 測試 | mock ollama 下重試/逾時路徑皆有測試 |
-| 1.3 | `judge` 節點：structured output（verdict/confidence/reasoning/severity）+ uncertain 補問迴圈 | nodes/judge.py + 測試 | fake LLM 下四種 verdict 路徑皆可走通；uncertain 重試耗盡 → ai_verdict=null |
+| 1.3 | `judge` 節點：structured output（verdict/confidence/reasoning）+ uncertain 補問迴圈 | nodes/judge.py + 測試 | fake LLM 下四種 verdict 路徑皆可走通；uncertain 重試耗盡 → ai_verdict=null |
 | 1.4 | `env_report` 節點：巡檢事件分流（維持現況功能） | 巡檢路徑 + 測試 | `Routine_Environment_Sanity_Check` 訊息產出巡檢報告、不觸發複判 |
 | 1.5 | `publish` 節點 + `graph.py` 組圖 + `main.py` consumer 迴圈 | 可執行的完整服務 | 端到端：餵一筆 Kafka 1 測試訊息 → Kafka 2 收到相容格式訊息 |
 | 1.6 | Shadow mode 開關（`AGENT_SHADOW=1`：只寫 log 不 publish） | 開關 + 結果記錄檔 | shadow 下 Kafka 2 零訊息、判定記錄完整落地（JSON lines） |

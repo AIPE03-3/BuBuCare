@@ -75,7 +75,6 @@ class AgentState(TypedDict):
     verdict: Literal["true_alarm", "false_alarm", "uncertain"]
     confidence: float              # Agent 對自己判定的信心 0~1
     reasoning: str                 # 判定理由（繁中，給人看）
-    severity: Literal["low", "medium", "high"]
     al_decision: ALDecision | None # 主動學習收錄決定
 
     # 流程控制
@@ -104,7 +103,7 @@ ingest ─┬─(drop：壞資料/缺圖)─────────────
 |---|---|---|
 | `ingest` | 純函式 | Pydantic 驗證訊息、經 ImageStore 解析圖檔（等待 ≤2s）、壞資料進 DLQ log |
 | `vlm_analyze` | 工具節點 | 呼叫 Ollama `llava`（沿用現有 prompt 精神），失敗重試 2 次 |
-| `judge` | **LLM 節點** | 綜合 yolo_score、VLM 報告、事件類型 → structured output（verdict/confidence/reasoning/severity）。`uncertain` 且未達補問上限 → 走 `followup` 回 `vlm_analyze` |
+| `judge` | **LLM 節點** | 綜合 yolo_score、VLM 報告、事件類型 → structured output（verdict/confidence/reasoning）。`uncertain` 且未達補問上限 → 走 `followup` 回 `vlm_analyze` |
 | `followup` | 純函式 | 組追問內容、累加補問次數 |
 | `env_report` | 工具節點 | 巡檢報告整理（沿用現況功能，不加戲）；不做真假判定 |
 | `publish` | 純函式 | 組 Kafka 2 訊息（現有格式超集）、冪等去重、flush、記 log |

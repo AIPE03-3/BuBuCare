@@ -2,6 +2,13 @@
 
 > 原則：Kafka 2 輸出 = 現有格式的**超集**。舊欄位一個不動、一個不少，新欄位全部 optional。
 > `backend/kafka_consumer.py` 與既有 `POST /events` 在不改動的情況下必須照常運作。
+>
+> **2026-07-27 例外**：`severity` 與 `yolo_threshold` 已從 Kafka 2 輸出移除。後端在
+> 2026-07-19（commit `1bbb585`）就把這兩欄從 `detect_events` 與 `EventCreateRequest`
+> 整組拿掉了（理由見 `backend/docs/superpowers/specs/2026-07-19-event-table-redesign-design.md`：
+> 「不再需要」，嚴重度概念改用 `verdict_by` / `resolved_by` 取代）。接收端自己都沒有這兩欄，
+> 繼續送不叫相容，只是被 Pydantic（預設 `extra="ignore"`）靜默丟掉。
+> `yolo_threshold` 仍留在 **Kafka 1**（AI 內部），見 §1。
 
 ## 1. Kafka 1 輸入：`nursing-home-alerts`（既有，不改）
 
@@ -23,9 +30,8 @@ Kafka 1 上有**兩種格式**，來自兩個不同的發送者：
   "snapshot_path": "/abs/path/snapshot_Room_301_Bed_20260719_153000.jpg",  // 邊緣端本機絕對路徑
   "image_filename": "snapshot_Room_301_Bed_20260719_153000.jpg",
   "yolo_score": 0.72,
-  "yolo_threshold": 0.45,
-  "vlm_summary": "【AI 信心度不足】已觸發大模型二審…",   // 佔位文字，會被 Agent 的判讀覆蓋
-  "severity": "medium"
+  "yolo_threshold": 0.45,               // 只走 Kafka 1（AI 內部），judge prompt 比大小用，不外發後端
+  "vlm_summary": "【AI 信心度不足】已觸發大模型二審…"    // 佔位文字，會被 Agent 的判讀覆蓋
 }
 ```
 
@@ -57,7 +63,8 @@ Kafka 1 上有**兩種格式**，來自兩個不同的發送者：
 2. 沒有才從 `camera_id` 抽數字（算法與邊緣端一致：`Room_301_Bed` → `301`）
 3. 兩者都給不出編號 → 驗證失敗進 DLQ，**不硬塞假的 device_id**
 
-多餘欄位（`snapshot_path`、`severity`、`alert_id`、`status`…）一律忽略，不因其存在而拒收。
+多餘欄位（`snapshot_path`、`alert_id`、`status`、`severity`…）一律忽略，不因其存在而拒收。
+（跌倒/滑落告警已不再送 `severity`；`ai/modules/sanity_check.py` 的巡檢訊息還在送，忽略即可。）
 驗證失敗 → 記入 DLQ log（JSON lines），不 crash、不阻塞後續訊息。
 
 ## 2. Kafka 2 輸出：`processed-reports`（超集擴充）
@@ -71,9 +78,8 @@ Kafka 1 上有**兩種格式**，來自兩個不同的發送者：
   "detected_at": "2026-07-19T15:30:00", // ISO 8601
   "snapshot_path": "/data/snapshots/snapshot_101_20260719_153000.jpg",
   "yolo_score": 0.72,
-  "yolo_threshold": 0.5,
   "vlm_summary": "【安養中心緊急通報…】…",  // VLM 原始報告，欄位語意不變
-  "severity": "high",                   // 改由 judge 節點給值（原本是 "Fall" in type 的寫死規則）
+  // severity 與 yolo_threshold 曾在此，已隨後端 2026-07-19 的清理移除（見本檔開頭說明）
 
   // ===== 新增欄位：全部 optional，舊 consumer 忽略也不壞 =====
   "ai_verdict": "true_alarm",           // "true_alarm" | "false_alarm" | null（uncertain 降級）
@@ -160,7 +166,9 @@ class JudgeResult(BaseModel):
     verdict: Literal["true_alarm", "false_alarm", "uncertain"]
     confidence: float = Field(ge=0, le=1)
     reasoning: str                      # 繁中
-    severity: Literal["low", "medium", "high"]
 ```
+
+（原本還有 `severity`，隨後端 2026-07-19 的清理一併移除；judge 不再需要產這個值，
+`legacy_severity()` 那條退路也跟著刪了。）
 
 解析失敗或重試耗盡 → 對外一律降級為 `ai_verdict=null`（交回人工），不丟例外中斷 consumer。

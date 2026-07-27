@@ -185,7 +185,7 @@ Agent 存在的目的是幫值班人員濾掉誤報，目前它每一筆都往�
 |---|---|---|
 | 圖檔路徑寫死個人機器路徑 | `ai/vlm_worker.py:74` | P0.2 環境變數化 |
 | **所有慢車道事件都被記到裝置 101**（比原本描述的更嚴重，見下） | `ai/vlm_worker.py:67,149` | ✅ 已修：AlertMessage 優先讀 `device_id`，抽不出編號才進 DLQ |
-| severity 用 `"Fall" in alert_type` 字串判斷 | `ai/vlm_worker.py:170` | 改由 judge 節點的 structured output 給值 |
+| severity 用 `"Fall" in alert_type` 字串判斷 | `ai/vlm_worker.py:170` | ✅ 已解：欄位整個不存在了。後端 2026-07-19（`1bbb585`）就把 severity 從 `detect_events` 與 `EventCreateRequest` 移除，2026-07-27 補做 AI 端清理，judge 不再產這個值 |
 | 主動學習 0.35–0.85 寫死區間 | `ai/vlm_worker.py:136` | ✅ 已修：P4 以 al_curator 取代 |
 
 ### 補充：裝置歸屬錯誤比原本記錄的嚴重（2026-07-20 核對程式碼發現）
