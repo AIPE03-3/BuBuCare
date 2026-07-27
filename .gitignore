@@ -67,6 +67,10 @@ runs/
 # 主動學習資料集（重訓用的圖與標註，機器產物）
 ai/active_learning_dataset/
 
+# agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
+ai/agent_shadow.jsonl
+ai/agent_dlq.jsonl
+
 # ⚠️ ClearML server 設定：apiserver.conf 內含明文預設密碼，不可進 repo
 ai/clearml_server_config/
 
