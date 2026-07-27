@@ -83,3 +83,7 @@ ai/clearml_server_config/
 
 # 編輯/轉檔備份檔（如 config.pbtxt.onnx.bak）
 *.bak
+# Triton CPU 對照用的 model repository（由 ai/make_cpu_repo.sh 產生，內含 hardlink 的模型權重）
+ai/triton_repo_cpu/
+# GPU/CPU 效能對照的原始量測結果（報告本體 ai/BENCHMARK_GPU_VS_CPU.md 要進版控）
+ai/bench_results/
