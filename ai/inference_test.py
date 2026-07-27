@@ -71,9 +71,19 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
       - 其餘（信心不足 / 遮擋難判）
         → (nursing-home-alerts, 待審 payload)：走 Kafka → vlm_worker 二審 → 回 processed-reports。
 
-    兩個 payload 的欄位名與型別（device_id(int)/event_type/detected_at(ISO)/snapshot_path/
-    vlm_summary/severity …）是後端契約，維持不動。第 2 層 LangGraph Uncertainty Router
-    之後可直接 import 本函式接管路由決策，介面不變（VLMModel.infer 已隔離、與此對齊）。
+    兩個 payload 的欄位**不一樣**，因為去向不一樣：
+      - 快速道走 processed-reports，會被後端 consumer 直接轉成 POST /events，所以只帶
+        後端認得的欄位（device_id(int)/event_type/detected_at(ISO)/snapshot_path/
+        yolo_score/vlm_summary，外加後端忽略但 AI 端自己要用的 image_filename）。
+      - 慢速道走 nursing-home-alerts，收件人是 vlm_worker / agent（都是 AI 內部），
+        所以多帶一個 yolo_threshold —— agent 的 judge prompt 要拿它跟 yolo_score 比大小
+        （見 agent/prompts.py:describe_score_vs_threshold，那是防地端小模型比錯的防呆）。
+        二審完成後 vlm_worker 重組外發 payload 時不會把它帶去後端。
+      - severity 兩條都不送：後端已於 2026-07-19（commit 1bbb585）移除該欄位，
+        嚴重度概念改用 verdict_by / resolved_by 取代。
+
+    第 2 層 LangGraph Uncertainty Router 之後可直接 import 本函式接管路由決策，
+    介面不變（VLMModel.infer 已隔離、與此對齊）。
 
     `clip_path` 收的是**事件片段**的位置（見 write_event_clip）。以前這裡收的是
     `video_source`——影片檔時代那就是那支 mp4 還說得過去，但接上 RTSP 之後會變成一個
@@ -83,6 +93,7 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
 
     if is_fast_track:
         # 🟢 分流 A：快速道路（Critical_Fast_Track）——高信心/明確滑落，直入後端落庫。
+        # 這條直接進後端，只帶後端要的欄位；不帶 yolo_threshold（AI 內部用的門檻值）。
         payload = {
             "device_id": numeric_id,
             "event_type": event_label,
@@ -91,13 +102,12 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
             "snapshot_path": snapshot_full_path,
             "image_filename": snapshot_name,
             "yolo_score": final_score,
-            "yolo_threshold": yolo_thresh,
             "vlm_summary": "【緊急通報】邊緣端偵測到輪椅意外滑落/嚴重跌倒！請立刻前往救援。",
-            "severity": "high",
         }
         return TOPIC_PROCESSED_REPORTS, payload
 
     # 🔵 分流 B：慢速道路（Pending_VLM_Review）——信心不足/遮擋難判，送 VLM 二審。
+    # 收件人是 AI 內部（vlm_worker / agent），故多帶 yolo_threshold 供二審端比對信心用。
     payload = {
         "device_id": numeric_id,
         "event_type": event_label,
@@ -106,9 +116,8 @@ def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
         "snapshot_path": snapshot_full_path,
         "image_filename": snapshot_name,
         "yolo_score": final_score,
-        "yolo_threshold": yolo_thresh,
+        "yolo_threshold": yolo_thresh,   # 只在 AI 內部流通，二審端不會把它外發後端
         "vlm_summary": "【AI 信心度不足】已觸發大模型二審，正在分析影像特徵並生成詳細報告...",
-        "severity": "medium",
     }
     return TOPIC_NURSING_HOME_ALERTS, payload
 

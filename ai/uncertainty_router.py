@@ -3,16 +3,18 @@ processed-reports(後端落庫) 之間,接管「何時找 VLM 二審、帶什麼
 
 為什麼是這一層(而不是整支移植 Albert 的 StateGraph):
   - Albert(origin/albert_chiang:Fall/tools/vlm_worker.py)的 StateGraph 外發 payload 多了
-    fall_reason_item/item_description、少了 severity/yolo_threshold,且在 worker 端重新
-    RTDETR(...) 本地跑一次偵測當分流依據。本機三顆模型都上 Triton、AcT 信心在 inference_test
-    端已算好隨事件帶出,且後端 EventCreateRequest(backend/events/router.py) 沒有那兩個欄位
-    (Pydantic 預設 ignore 會靜默丟掉)。故取其形(StateGraph 節點化 + conditional router)、
-    不取其實(payload/模型)。
+    fall_reason_item/item_description,且在 worker 端重新 RTDETR(...) 本地跑一次偵測當分流
+    依據。本機三顆模型都上 Triton、AcT 信心在 inference_test 端已算好隨事件帶出,且後端
+    EventCreateRequest(backend/events/router.py) 沒有那兩個欄位(Pydantic 預設 ignore
+    會靜默丟掉)。故取其形(StateGraph 節點化 + conditional router)、不取其實(payload/模型)。
 
 紅線(硬約束):吃的事件 topic(nursing-home-alerts)、吐的 processed-reports payload 欄位
-(device_id/event_type/clip_path/detected_at/snapshot_path/yolo_score/yolo_threshold/
-vlm_summary/severity)一個都不動 —— 後端完全感覺不到本層存在。本 Router 只回填
-vlm_summary/severity/should_send;最終 payload 的「組裝與外發」留在 vlm_worker 主迴圈。
+(device_id/event_type/clip_path/detected_at/snapshot_path/yolo_score/vlm_summary)
+一個都不動 —— 後端完全感覺不到本層存在。本 Router 只回填 vlm_summary/should_send;
+最終 payload 的「組裝與外發」留在 vlm_worker 主迴圈。
+
+註:進來的事件會多帶一個 yolo_threshold(inference_test 慢速道給的門檻值),那是 AI 內部
+欄位、不外發後端;severity 則已隨後端 2026-07-19 的清理(commit 1bbb585)整組移除。
 
 兩個定案:
   - 一律二審:巡檢/其餘全走 vlm_review,不加 discard 出口(長照寧可誤審不漏報);
@@ -55,7 +57,6 @@ class RouterState(TypedDict, total=False):
     yolo_score: float            # 事件帶進來的信心(不重算,不本地載模型)
     route: str                   # 分流結果:vlm_review(目前唯一二審出口)
     vlm_summary: str             # VLM 判讀文字 → 回填外發 payload 的 vlm_summary
-    severity: str                # low/medium/high → 回填外發 payload 的 severity
     should_send: bool            # False = 不外發(唯一出口:找不到圖)
     # 方案 B:VLM 判出的跌倒關鍵物,只留在狀態內給主動學習用,不進外發 payload。
     fall_reason_item: str
@@ -154,7 +155,7 @@ def route_decision(state: RouterState) -> str:
 
 
 def vlm_review_node(state: RouterState) -> Dict[str, Any]:
-    """VLM 二審:依 alert_type 組 prompt A/B、呼叫 VLM、觸發主動學習、回填 vlm_summary/severity。"""
+    """VLM 二審:依 alert_type 組 prompt A/B、呼叫 VLM、觸發主動學習、回填 vlm_summary。"""
     alert_type = state["alert_type"]
     cam_id = state["cam_id"]
     env_clues = state["env_clues"]
@@ -231,12 +232,8 @@ def vlm_review_node(state: RouterState) -> Dict[str, Any]:
         print(f"❌ VLM 推理失敗: {str(e)}")
         raw_report = f"【系統警告】二審推理中斷。房間: {cam_id}，原因: {str(e)}"
 
-    # severity 對齊後端契約語意:event_type 實際是小寫 "fall"/"chair_slip"。
-    severity = "high" if str(alert_type).lower() in ("fall", "chair_slip") else "low"
-
     return {
         "vlm_summary": raw_report,
-        "severity": severity,
         "fall_reason_item": fall_reason_item,   # 方案 B:留狀態,不外發
         "item_description": item_description,    # 方案 B:留狀態,不外發
     }

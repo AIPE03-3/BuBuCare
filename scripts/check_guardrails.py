@@ -51,12 +51,20 @@ PLACEHOLDER_RE = re.compile(
 TEXT_EXTS = {".py", ".sh", ".yml", ".yaml", ".conf", ".toml", ".env", ".json"}
 
 # ⚠️ 後端契約：inference_test.route_by_confidence() 送出的 payload 欄位。
-# 後端 consumer 照這組欄位解析並寫 PostgreSQL，少一個就 422 退件。
-# 動這組＝動契約，必須先跟後端組講好，不是改了跑得動就算數。
+# 這組是 AI 端每則事件都必須送齊的欄位。後端 EventCreateRequest（backend/events/router.py）
+# 認得其中 7 欄：device_id/event_type/clip_path/detected_at 必填（少送才會 422），
+# snapshot_path/yolo_score/vlm_summary 選填；image_filename 後端忽略，但 AI 端自己要用。
+# 注意後端沒設 model_config，Pydantic 預設 extra="ignore" → 多送不會 422，只會被靜默丟掉。
+# 所以這裡擋的是「少送」，不是「多送」。動這組＝動契約，必須先跟後端組講好。
 CONTRACT_KEYS = {
     "device_id", "event_type", "clip_path", "detected_at", "snapshot_path",
-    "image_filename", "yolo_score", "yolo_threshold", "vlm_summary", "severity",
+    "image_filename", "yolo_score", "vlm_summary",
 }
+# 只在 AI 內部流通、刻意不外發後端的欄位，允許在 payload 裡額外出現。
+# yolo_threshold 只出現在慢速道（nursing-home-alerts → vlm_worker / agent）：agent 的
+# judge prompt 要拿它跟 yolo_score 比大小（見 agent/prompts.py 的 describe_score_vs_threshold，
+# 那是防地端小模型自己比錯大小的防呆）。二審端重組外發 payload 時不會把它帶去後端。
+INTERNAL_ONLY_KEYS = {"yolo_threshold"}
 CONTRACT_FILE = "ai/inference_test.py"
 CONTRACT_FUNC = "route_by_confidence"
 
@@ -173,14 +181,17 @@ def check_contract(root: str, files: list[str], problems: list[str]) -> None:
             if not any(getattr(t, "id", None) == "payload" for t in sub.targets):
                 continue
             keys = {k.value for k in sub.value.keys if isinstance(k, ast.Constant)}
-            if keys != CONTRACT_KEYS:
-                missing = CONTRACT_KEYS - keys
-                extra = keys - CONTRACT_KEYS
+            missing = CONTRACT_KEYS - keys
+            extra = keys - CONTRACT_KEYS - INTERNAL_ONLY_KEYS
+            if missing or extra:
                 problems.append(
                     f"❌ 動到後端契約：{CONTRACT_FILE} 的 {CONTRACT_FUNC}() payload 欄位變了\n"
                     + (f"   少了：{sorted(missing)}\n" if missing else "")
                     + (f"   多了：{sorted(extra)}\n" if extra else "")
-                    + "   → 這組欄位是後端 consumer 解析並寫 PostgreSQL 的依據，少一個就 422 退件。\n"
+                    + "   → 少了：這組是 AI 端每則事件都要送齊的欄位，其中 device_id/event_type/\n"
+                      "     clip_path/detected_at 是後端必填，少送會被 422 退件。\n"
+                      "   → 多了：後端 Pydantic 預設 extra=\"ignore\"，多送不會 422，但會被靜默丟掉，\n"
+                      "     等於白送。純 AI 內部用的欄位請加進 INTERNAL_ONLY_KEYS 並註明用途。\n"
                       "     要改必須先跟後端組談好、兩邊同時改。改了跑得動 ≠ 沒破壞契約。\n"
                       "     若確定後端已同步更新，改 scripts/check_guardrails.py 的 CONTRACT_KEYS。"
                 )

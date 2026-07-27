@@ -31,11 +31,11 @@ print("🚀 [護理長 LangGraph Agent 上線] 監聽中... Uncertainty Router �
 # 📥 主數據流監聽循環
 # =========================================================================
 # 決策(prompt 分流 / VLM 呼叫 / 主動學習 / 關鍵物解析)交給 Router;worker 這裡只做
-# 「拿事件 → 丟進 Router → 用 Router 回填的 vlm_summary/severity 組最終契約 payload → 外發」。
+# 「拿事件 → 丟進 Router → 用 Router 回填的 vlm_summary 組最終契約 payload → 外發」。
 for message in consumer:
     event_data = message.value
 
-    # 🧠 Router 接管:回填 vlm_summary / severity / should_send（找不到圖時 should_send=False）。
+    # 🧠 Router 接管:回填 vlm_summary / should_send（找不到圖時 should_send=False）。
     result = router_app.invoke({"event_data": event_data})
 
     if not result.get("should_send", False):
@@ -44,6 +44,8 @@ for message in consumer:
 
     # =========================================================================
     # 📢 外發 Kafka 2 管道（完全對齊後端 EventCreateRequest 規格）——契約邊界,欄位不動。
+    # 事件帶進來的 yolo_threshold 是 AI 內部欄位(給二審端比對信心用),刻意不放進外發 payload;
+    # severity 則已隨後端 2026-07-19 的清理(commit 1bbb585)移除,後端不再有該欄位。
     # =========================================================================
     # device_id 是契約欄位(int),直接沿用事件帶進來的值。
     try:
@@ -66,9 +68,7 @@ for message in consumer:
         "detected_at": iso_detected_at,                                 # timestamp -> detected_at (ISO)
         "snapshot_path": result["img_path"],                            # saved_image_path -> snapshot_path
         "yolo_score": clean_yolo_score,                                 # confidence(字串) -> yolo_score (float)
-        "yolo_threshold": event_data.get("yolo_threshold", 0.5),        # 選填 threshold
         "vlm_summary": result["vlm_summary"],                           # Router 回填的 VLM 判讀文字
-        "severity": result["severity"],                                 # Router 回填(跌倒/滑落=high,其餘=low)
     }
     # 注意:Router 內部另有 fall_reason_item/item_description(方案 B,給主動學習用),
     # 刻意不放進 final_report —— 後端 EventCreateRequest 無此欄位,守住後端零感知。
