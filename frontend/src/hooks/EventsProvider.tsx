@@ -208,20 +208,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     setHazardEvents((prev) => prev.map((e) => (e.id === id ? { ...e, status: 'resolved' } : e)));
   }
 
-  // DEV-TEST：一鍵清空所有事件與警示相關狀態，把前端還原成無資料。移除測試功能時刪除此函式與 context 曝光。
-  function clearTestEvents() {
-    if (ackToastTimerRef.current) clearTimeout(ackToastTimerRef.current);
-    preAckSnapshotRef.current.clear();
-    setEvents([]);
-    setOffset(0);
-    setConfirmedAlerts([]);
-    setLastAckedId(null);
-    setAckToastEvent(null);
-    setLastAckedEvent(null);
-    setAlertLog([]);
-    setHazardEvents([]);
-  }
-
   const value: EventsContextValue = {
     events,
     now,
@@ -242,9 +228,6 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     undoAcknowledge,
     refreshEvents,
     restoreEvent,
-    // DEV-TEST：測試按鈕注入事件，直接複用真後端事件進場邏輯。移除測試功能時刪掉這兩行即可。
-    injectTestEvent: handleIncomingEvent,
-    clearTestEvents,
   };
 
   return (

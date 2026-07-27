@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getCameras } from '../api/cameras';
-import { DevTestPanel } from '../components/DevTestPanel'; // DEV-TEST：測試按鈕面板，移除測試功能時連同下方使用處一併刪除
 import { MonitorIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
 import { formatTime } from '../utils/time';
@@ -133,9 +132,6 @@ export function Home() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* DEV-TEST：測試按鈕面板（模擬通知／清除測試資料），移除測試功能時刪除此區塊 */}
-      <DevTestPanel />
-
       {/* 主版面：左 2/3（鏡頭＋三張統計卡）／右 1/3（切換選單＋log，隨左欄拉滿高） */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* 左 2/3 */}

@@ -28,10 +28,6 @@ export interface EventsContextValue {
   refreshEvents: () => Promise<void>;
   // 恢復事件：誤報紀錄中的事件拉回事件中心（處理中），清誤報判定與類型並重啟時限。
   restoreEvent: (eventId: string) => void;
-  // DEV-TEST：測試按鈕用，模擬後端推來一筆事件（走與真後端相同的 handleIncomingEvent）。移除測試功能時連同實作一併刪除。
-  injectTestEvent: (event: CareEvent) => void;
-  // DEV-TEST：一鍵清空所有事件與警示狀態，把前端還原成無資料。移除測試功能時連同實作一併刪除。
-  clearTestEvents: () => void;
 }
 
 export const EventsContext = createContext<EventsContextValue | null>(null);
