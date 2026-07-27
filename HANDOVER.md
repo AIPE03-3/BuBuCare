@@ -19,9 +19,18 @@ RTSP 之後會變成一個 `rtsp://` 網址 —— 前端點下去根本沒有�
 
 | 檔案 | 改動 |
 |---|---|
-| `ai/inference_test.py` | 片段緩衝、寫檔、S3 選配上傳（+166 行） |
-| `.env.example` | 新增 5 個 `CLIP_*` 環境變數說明 |
+| `ai/inference_test.py` | 片段緩衝、寫檔、S3 選配上傳 |
+| `ai/backend_devices.py` | 公開 `cfg` alias（1 行），讓設定取值方式統一 |
+| `.env.example` | 新增 5 個 `CLIP_*` 設定說明 |
 | `.gitignore` | 加 `ai/clips/`（執行時產物） |
+
+相關 commit：
+
+```
+347fffd feat(ai): 跌倒事件存下前後 5 秒片段，clip_path 改指向它
+60c180f docs: 補事件片段存檔的交接紀錄
+02a4f61 fix(ai): 片段存檔的設定改走 .env，S3 憑證顯式傳進 boto3
+```
 
 **後端契約完全沒動**：`route_by_confidence()` 兩個 payload 的欄位一個字沒改，
 `scripts/check_guardrails.py` 的 AST 檢查通過。只把函式的關鍵字參數
@@ -36,24 +45,33 @@ RTSP 之後會變成一個 `rtsp://` 網址 —— 前端點下去根本沒有�
 
 | 位置 | 內容 |
 |---|---|
-| [:116-138](ai/inference_test.py#L116) | `CLIP_*` 環境變數與預設值 |
-| [:141](ai/inference_test.py#L141) | `_downscale_for_clip()` —— 緩衝幀等比降寬 |
-| [:153](ai/inference_test.py#L153) | `_video_fourcc()` —— OpenCV 4.x / 5.x API 適配 |
-| [:163](ai/inference_test.py#L163) | `write_event_clip()` —— 寫 mp4 +（選配）上傳 S3 |
+| [:116-146](ai/inference_test.py#L116) | `CLIP_*` 設定與 S3 憑證（全走 `cfg`，見下方「設定怎麼讀」） |
+| [:149](ai/inference_test.py#L149) | `_downscale_for_clip()` —— 緩衝幀等比降寬 |
+| [:161](ai/inference_test.py#L161) | `_video_fourcc()` —— OpenCV 4.x / 5.x API 適配 |
+| [:171](ai/inference_test.py#L171) | `write_event_clip()` —— 寫 mp4 +（選配）上傳 S3 |
 
-### `camera_worker` 內（[:247](ai/inference_test.py#L247)）
+### `camera_worker` 內（[:260](ai/inference_test.py#L260)）
 
 | 位置 | 內容 |
 |---|---|
-| [:293](ai/inference_test.py#L293) | 緩衝初始化：`pre_clip_buffer` / `post_clip_buffer` / 旗標 |
-| [:414](ai/inference_test.py#L414) | 每幀塞緩衝、後段收滿即丟背景執行緒寫檔 |
-| [:670](ai/inference_test.py#L670) | 觸發時算路徑、拍前段快照、開始錄後段 |
-| [:363](ai/inference_test.py#L363) | 斷線重連：依新 fps 重算幀數、中止進行中的錄影 |
-| [:392](ai/inference_test.py#L392) | 影片檔播完的收尾補寫 |
+| [:306](ai/inference_test.py#L306) | 緩衝初始化：`pre_clip_buffer` / `post_clip_buffer` / 旗標 |
+| [:427](ai/inference_test.py#L427) | 每幀塞緩衝、後段收滿即丟背景執行緒寫檔 |
+| [:683](ai/inference_test.py#L683) | 觸發時算路徑、拍前段快照、開始錄後段 |
+| [:376](ai/inference_test.py#L376) | 斷線重連：依新 fps 重算幀數、中止進行中的錄影 |
+| [:405](ai/inference_test.py#L405) | 影片檔播完的收尾補寫 |
+
+### 設定怎麼讀（踩過一次的坑）
+
+本專案的 `.env` **不會進到 `os.environ`**：[ai/backend_devices.py:24](ai/backend_devices.py#L24)
+刻意用 `dotenv_values` 讀成 dict，避免後端的 `DB_PASSWORD` / `SECRET_KEY` 被灌進 AI 行程。
+
+所以在 `ai/` 底下取設定值**必須走 `cfg()`**（[ai/backend_devices.py:33](ai/backend_devices.py#L33)，
+規則是「真實環境變數優先於 `.env`」）。第一版的 `CLIP_*` 用了 `os.environ.get()`，
+結果在 `.env` 裡怎麼設都沒反應、只有從 shell `export` 才生效，`02a4f61` 修掉。
 
 ---
 
-## 環境變數（全部可不設）
+## 設定項（可寫在 `.env`，全部可不設）
 
 | 變數 | 預設 | 說明 |
 |---|---|---|
@@ -63,6 +81,12 @@ RTSP 之後會變成一個 `rtsp://` 網址 —— 前端點下去根本沒有�
 | `CLIP_DIR` | `ai/clips` | 片段輸出目錄 |
 | `CLIP_S3_BUCKET` | 未設 | **設了才上傳**，見下方「已知限制」 |
 | `CLIP_S3_PREFIX` | `videos` | S3 key 前綴 |
+
+上傳用的 AWS 憑證**沿用後端那三個名字**，不必另外設：`S3_REGION` /
+`ACCESS_KEY_ID` / `SECRET_ACCESS_KEY`。注意這不是 boto3 標準的
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`，所以程式碼是顯式傳進
+`boto3.client()` 的；三個都留空則傳 `None`，退回 boto3 預設憑證鏈
+（EC2 / GCP VM 的 IAM role 走這條）。
 
 ---
 
@@ -136,10 +160,11 @@ full_10_sec_frames = list(pre_video_buffer) + post_video_buffer   # ← 這裡
 ## 驗證到什麼程度
 
 **已驗證**
-- `python3 -m py_compile ai/inference_test.py` 通過
-- `python3 scripts/check_guardrails.py` 通過（278 個檔案，含 payload 契約 AST 檢查）
+- `python3 -m py_compile` 通過（`inference_test.py` / `backend_devices.py`）
+- `python3 scripts/check_guardrails.py` 通過（279 個檔案，含 payload 契約 AST 檢查）
 - AST 靜態檢查：兩個 payload 都是 `str(clip_path)`、函式內無未定義名稱
 - 緩衝時間軸以純 Python 模擬驗證（見上一節）
+- `cfg()` 實測讀得到 `.env` 的 `S3_REGION` / `ACCESS_KEY_ID` / `SECRET_ACCESS_KEY`
 
 **未驗證 —— 交接重點**
 **沒有實際執行過整條管線。** 開發機的 venv 沒有 `cv2`，且真的要跑需要
@@ -147,6 +172,8 @@ Triton 三顆模型 + Kafka + 影像源。
 
 最沒把握的是**編碼器那段**：`avc1` 能不能開、退 `mp4v` 的路徑對不對，
 只有真的跑一次才知道。**請優先驗這個。**
+
+S3 上傳那段同樣沒跑過（`CLIP_S3_BUCKET` 未設，且權限未確認 —— 見「已知限制」）。
 
 ### 建議的第一次測試
 
@@ -165,7 +192,7 @@ CAMERA_SOURCE=hardcoded SINGLE_SOURCE=ai/test_demo/test1.mp4 python ai/inference
 
 ## 已知限制
 
-### `clip_path` 目前是本地路徑，前端仍看不到影片
+### 🚧 `clip_path` 目前是本地路徑，前端仍看不到影片（未完成，卡在權限）
 
 後端 `GET /events/{id}/media` 走 `backend/core/s3.py` 的 `generate_presigned_url()`，
 它對**非 `s3://` 開頭的值一律回 `None`**（`backend/tests/test_event_media.py` 有
@@ -173,10 +200,38 @@ CAMERA_SOURCE=hardcoded SINGLE_SOURCE=ai/test_demo/test1.mp4 python ai/inference
 
 `CLIP_S3_BUCKET` 沒設時，`clip_path` 塞的是本地路徑 → 前端拿到 null。
 
-**要接通前端**：在 `.env` 補 `CLIP_S3_BUCKET=<bucket 名>`，並確保該機器有 AWS 憑證
-（沿用後端那組 `S3_REGION` / AWS 標準憑證鏈），`clip_path` 就會變成 `s3://...`。
-
 這樣設計的原因：沒有憑證的機器照樣跑得動、不會在跌倒當下噴錯，只是暫時沒影片。
+
+#### 接通前端還缺什麼
+
+**1. `.env` 補 `CLIP_S3_BUCKET`**
+repo 三處都指向 `aipe03-3`：albert 分支的 `bucket_name = "aipe03-3"`、
+[backend/core/config.py:57](backend/core/config.py#L57) 註解、
+[backend/tests/test_event_media.py:52](backend/tests/test_event_media.py#L52)。
+幾乎確定是它，但未經確認，故**尚未寫入 `.env`**。
+
+**2. 確認憑證有 `PutObject` 權限 ← 真正的卡點**
+
+[gcp_vm_environment/test_sample/test_readonly_s3.py:21](gcp_vm_environment/test_sample/test_readonly_s3.py#L21)
+有一行被註解掉的上傳測試，旁邊寫著 `#已確認會access denied`；那支用的憑證變數叫
+`AWS_RO_ACCESS`（RO = read only）。
+
+**`.env` 裡的 `ACCESS_KEY_ID` 是不是同一組唯讀憑證，目前不知道。** 這無法從程式碼判定，
+必須問後端組或 AWS 管理者：
+
+> 我們 `.env` 那組 `ACCESS_KEY_ID`，對 `aipe03-3` bucket 有沒有 **PutObject** 權限？
+
+#### ⚠️ 順序很重要：權限沒確認前，先**不要**設 `CLIP_S3_BUCKET`
+
+| 狀態 | `clip_path` 的值 | 前端點下去 |
+|---|---|---|
+| 現在（沒設） | 本地路徑 | 後端回 `null`，前端知道「這筆沒影片」 |
+| 設了但沒寫入權限 | `s3://aipe03-3/...` | 上傳失敗但地址已發出，後端照樣換出網址 → **壞連結** |
+
+現在是「誠實地沒有」，設錯會變成「假裝有、其實是空的」，更難查。
+
+若答案是「只能讀」，選項是請他們開一組有寫入權限的金鑰，或改由後端代為上傳
+（AI 端只把檔案送給後端）—— 後者是另一個設計題目，要跟後端組談。
 
 ### 每幀多一次 resize
 
