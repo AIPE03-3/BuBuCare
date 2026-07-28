@@ -9,6 +9,10 @@
 出了 Prometheus 導入設計、**agent P2 後端記錄 + 前端顯示已完成並合併**（PR #14），
 過程中順手修了 VLM（`llava:latest`）同張圖同提示會隨機拒答的問題。
 
+**同日稍晚**：接回 main 的 `stream_channel` 改名（後端原本三個端點全 500，事件卡在
+Kafka 進不了資料庫）、補上偵測畫面推流讓前端「偵測」真的看得到姿態框，
+並確立「**事件片段與快照刻意不畫框**」為組長決策（見第 8 項，不要修好它）。
+
 ---
 
 ## 待辦總覽
@@ -21,8 +25,70 @@
 | 4 | Prometheus 導入 | 📐 只出設計，未接線 |
 | 5 | 事件冷卻計時器 | ⏸ 本輪不執行（卡多人追蹤）|
 | 6 | agent P2（後端記錄 + 前端顯示 AI 判斷）| ✅ 已完成並合併（PR #14） |
+| 7 | 接回 main 的 `stream_channel` 改名（解後端全面 500）| ✅ 已完成並實測 |
+| 8 | 偵測畫面推流 `cam_out`（前端「偵測」畫面）| ✅ 已完成並實測 |
 
 第 5、6 兩項互不依賴，可分頭進行。
+
+---
+
+## 7.【已完成】接回 main 的 `stream_channel` 改名 —— 後端從全面 500 救回來
+
+`devices` 的欄位改名（`stream_url` → `stream_channel`，`origin/main` `51871e5`，PR #15）
+已經施作在**共用的正式 RDS** 上，但本測試分支的後端 model 還停在舊名字，導致
+`GET /devices`、`GET /events`、`POST /events` **全部 500**——前端事件中心整頁空白，
+AI 偵測到的跌倒卡在 Kafka 進不了資料庫（20 分鐘內重試失敗 68 次）。
+
+**壞得很安靜**：四個容器全綠、AI 端 log 一路正常，只有翻後端日誌才看得到。
+
+合併 `origin/main` 之後，還要補三個 **git 自動合併成功、但語意已壞**的地方——兩邊改的是
+同一個檔的不同段落，diff 上看不出問題，一執行就 `TypeError: 'stream_url' is an invalid
+keyword argument`：`devices/router.py` 的 `POST /devices`、`init_db.py` 的種子、
+`test_devices_create.py`。種子同時改成種**頻道名**而非完整 `rtsp://` 網址（種完整網址
+正是這次改名要根除的錯誤用法：那種位址只在填寫者自己的機器上有效）。
+
+順手修掉的第二個 bug：`TRITON_*_URL` 是全檔唯一還用 `os.environ.get` 直接讀的設定，
+繞過了 `cfg()`，所以寫進根目錄 `.env` **完全沒有效果**；加上預設值是被 backend 佔用的
+8000，後果是每一幀都打到 FastAPI 拿 404 然後靜默降級——影片照跑、FPS 照印、零紅字，
+**姿態偵測全程失效**。已改走 `cfg()`、預設 8010。
+
+---
+
+## 8.【已完成】偵測畫面推流：前端「偵測」看得到真的姿態框
+
+kelly 已經做好前端「即時／偵測」切換鈕、後端 `stream_channel_detect`、MediaMTX 的
+`cam_out` 頻道，但 `cam_out` 是 `source: publisher`（開著門等人推），**沒有任何程式在推**，
+所以切到「偵測」永遠是空的。設定檔註解原本寫「正式來源是 albert 的推論程式，尚未實作」。
+
+新增 [`ai/detect_publisher.py`](ai/detect_publisher.py)，把 `inference_test.py` 早就畫好的
+`annotated_frame` 多開一條出口推回 MediaMTX。**用 PyAV 不用 ffmpeg 子程序**：PyAV 已是
+本專案相依（`av_reader.py` 拉流就是用它）且自帶 libx264，而這台 5060 Ti 沒有 ffmpeg
+也無法自行安裝——走子程序方案等於功能不能用。
+
+### ⚠️ 事件片段與快照「刻意」維持無框，不要修好它
+
+**這是組長的決策，不是缺陷**：警示彈窗要人當下確認，畫面上有框會干擾判讀。要看框請走
+即時串流的「偵測」那一半，UI 上已經分好了。
+
+所以：**不要把 `annotated_frame` 接進 `write_event_clip()` 或快照存檔**。
+兩條路實測確認是分開的——同一次跑，`cam_out` 讀回來有骨架與 `person 0.90` 的框，
+事件片段同一時段的畫面乾淨無框。
+
+### 實測踩到的坑：時間戳不能直接用真實時鐘
+
+平順推流時完全正常（連推 263 幀沒事），但**推論速度一抖動就整條斷掉**：libx264 以
+`rate=fps` 開，muxer 會把 pts 換算回 `1/fps` 的刻度，相鄰兩幀若擠進同一格就 DTS 撞號，
+RTSP muxer 回 `Invalid argument(22)`。改成「真實時鐘與最小間隔取大值」。
+用爆量＋停頓的不規則節奏重測 200 幀：送出 191、丟 9、零中斷。
+
+**這個坑值得記**：happy path 測起來完全正常，只有在速度抖動的那一瞬間才炸。
+
+### 開關與已知限制
+
+- `DETECT_STREAM=1` 才推，未設＝位元級原行為（已實測）。
+- 與 `NO_RENDER=1` 互斥（那個開關跳過畫框，等於沒畫面可推），偵測到會明講並停用。
+- 這台機器沒有 MediaMTX，驗證時是臨時抓 v1.19.3 binary 起在本機跑的；要在這台看到
+  即時畫面，得先把 MediaMTX 常駐起來並設 `MEDIAMTX_BASE_URL`（目前刻意留空＝灰色占位框）。
 
 ---
 
