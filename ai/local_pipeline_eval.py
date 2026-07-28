@@ -288,6 +288,39 @@ def report_metrics(records, segments, fps, mode=DEFAULT_TRIGGER_MODE):
               f"（最慢 {max(latencies):.2f} 秒）")
 
 
+def scene_histogram(frame):
+    """算一幀的正規化 RGB 直方圖，用來比較相鄰幀的畫面差異。"""
+    small = cv2.resize(frame, (64, 48))
+    hist = cv2.calcHist([small], [0, 1, 2], None, [8, 8, 8], [0, 256] * 3).flatten()
+    total = hist.sum()
+    return hist / total if total else hist
+
+
+def is_scene_cut(current_hist, previous_hist, threshold):
+    """直方圖交集低於門檻 → 判定畫面已切換。
+
+    ⚠️ **這是評估用的補償手段，不要搬進 inference_test.py。**
+
+    用途：test4.mp4 這類剪接素材，AcT 的 30 幀視窗會跨越剪接點，讓「上一段的姿態」
+    污染「下一段的判斷」（實測剪接後 3 秒內誤報率 68.6%，區外 54.1%）。
+
+    ⚠️ **`--cut-handling reset`（清空視窗）實測是壞主意**，用 exclude 不要用 reset：
+    清空後要 30 個處理幀（3 秒）才能重新填滿，這期間 AcT 完全不作用；而剪接點就在
+    每段跌倒之前，等於把「跌倒剛發生」的那 3 秒判斷能力砍掉。實測 F1 反而變差：
+    current 0.542→0.465、geo-first 0.625→0.460。誤報是降了，真跌倒也一起漏了。
+    正確做法是 `exclude`——把污染幀排除在指標之外，不去干預判斷本身。
+
+    為什麼不能上正式管線：真實 RTSP 沒有剪接點，但有一堆會造成直方圖劇變的正常事件
+    ——攝影機切換夜視/日視（IR filter）、關燈、有人走近遮住鏡頭、掉包後畫面跳躍。
+    每誤判一次就清空視窗，代價是「AcT 有 3 秒完全不作用」的防護空窗；若剛好在切夜視
+    的瞬間有人跌倒就是漏報。test4 自己就同時有夜視與彩色兩種成像，可見這不是假設。
+
+    正式管線 :480 的 frame_window.clear() 是由**斷線重連**這個明確事件觸發的，
+    不是靠猜畫面內容——有訊號可依據，才不會誤判。兩者性質完全不同。
+    """
+    return float(1.0 - np.minimum(current_hist, previous_hist).sum()) > threshold
+
+
 def pick_device():
     """Mac 用 MPS、有 CUDA 用 CUDA、都沒有退 CPU（同 inference_test.py:48）。"""
     if torch.backends.mps.is_available():
@@ -497,6 +530,15 @@ def main():
                         help="人工標註的真跌倒時間段檔案，給了才算召回率／誤報率")
     parser.add_argument("--csv", default=None,
                         help="逐幀原始數據輸出成 CSV，方便自己交叉分析")
+    parser.add_argument("--cut-handling", default="none",
+                        choices=["none", "exclude", "reset"],
+                        help="剪接素材的處理方式：none=不處理／"
+                             "exclude=把剪接後 3 秒的幀排除在指標外（建議）／"
+                             "reset=清空 AcT 視窗（實測會讓 F1 變差，見 is_scene_cut docstring）")
+    parser.add_argument("--reset-on-cut", action="store_true",
+                        help="等同 --cut-handling reset（保留舊名稱）")
+    parser.add_argument("--cut-threshold", type=float, default=0.45,
+                        help="畫面切換的直方圖差異門檻，預設 0.45")
     parser.add_argument("--trigger-mode", default=DEFAULT_TRIGGER_MODE,
                         choices=sorted(TRIGGER_MODES),
                         help="觸發策略：current=正式管線現況／"
@@ -571,6 +613,12 @@ def main():
     trigger_count = 0
     fps_value = 0.0
     paused = False
+    previous_hist = None
+    cut_count = 0
+    last_cut_frame = None
+    cut_handling = "reset" if args.reset_on_cut else args.cut_handling
+    # 剪接後多久內的幀算被污染：AcT 視窗 30 個處理幀，跳幀時對應原始幀要 ×2
+    cut_pollution_span = WINDOW_SIZE * (1 if args.no_skip else 2)
 
     try:
         while True:
@@ -590,6 +638,20 @@ def main():
             # 跳幀（:536）。省一半算力，AcT 的 30 幀視窗因此涵蓋約 2 秒實際時間
             if not args.no_skip and frame_count % 2 != 0:
                 continue
+
+            # 畫面切換偵測。只在剪接素材上開，理由見 is_scene_cut()。
+            if cut_handling != "none":
+                current_hist = scene_histogram(frame)
+                if previous_hist is not None and is_scene_cut(current_hist, previous_hist,
+                                                              args.cut_threshold):
+                    cut_count += 1
+                    last_cut_frame = frame_count
+                    if cut_handling == "reset":
+                        frame_window.clear()
+                        # 身高基準也一起重置：新場景的人距離鏡頭可能完全不同，
+                        # 沿用舊基準會讓遮擋判斷（h/normal_h）整段失準
+                        normal_height_reference = None
+                previous_hist = current_hist
 
             image_height = frame.shape[0]
             result = pose_model(frame, verbose=False, conf=args.conf)[0]
@@ -631,7 +693,12 @@ def main():
                 "frame": frame_count,
                 "time_s": round(frame_count / source_fps, 2),
                 "triggered": should_trigger,
-                "evaluable": len(frame_window) == WINDOW_SIZE and has_seen_person,
+                # exclude 模式：剪接後 3 秒內視窗仍混著上一段的姿態，這種幀的判斷
+                # 結果不能代表系統能力，排除在指標之外（比清空視窗誠實——清空會製造
+                # 一段 AcT 完全不作用的空窗，反而砍掉真跌倒，實測 F1 更差）
+                "evaluable": (len(frame_window) == WINDOW_SIZE and has_seen_person
+                              and not (cut_handling == "exclude" and last_cut_frame is not None
+                                       and frame_count - last_cut_frame <= cut_pollution_span)),
                 "act_fall": pred_class == 0,
                 "act_conf": round(act_confidence, 4),
                 "lying": pose_state["is_lying"],
@@ -716,6 +783,9 @@ def main():
     print(f"\n{'=' * 56}")
     print(f"讀取到第 {frame_count} 幀，實際處理 {processed_count} 幀")
     print(f"觸發跌倒 {trigger_count} 次｜曾偵測到人：{'是' if has_seen_person else '否'}")
+    if cut_handling != "none":
+        action = "清空 AcT 視窗" if cut_handling == "reset" else "把後續 3 秒的幀排除在指標外"
+        print(f"偵測到畫面切換 {cut_count} 次，每次都{action}")
     if normal_height_reference:
         print(f"身高基準（遮擋判斷用）：{normal_height_reference:.0f} px")
     if writer:
