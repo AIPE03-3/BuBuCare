@@ -108,22 +108,18 @@ def _rtsp_url_of(channel: str) -> str:
     return f"rtsp://{MEDIAMTX_HOST}:{MEDIAMTX_RTSP_PORT}/{channel}"
 
 
-def build_camera_channels(base_url: str = None, username: str = None,
-                          password: str = None, timeout: float = None) -> dict:
-    """登入 → 取清單 → 過濾 → 組成 {camera_id: rtsp_url}。
+def _channels_from(devices: list, field: str) -> dict:
+    """共用的過濾與組址邏輯：{camera_id: rtsp_url}。
 
-    只取 status=active 且 stream_channel 非空的裝置：inactive/fault 是人為停用或報修中，
-    不該讓 worker 去無限重連；stream_channel 空的是還沒接攝影機的裝置（例如純事件用的 1/2）。
+    只取 status=active 且該欄位非空的裝置：inactive/fault 是人為停用或報修中，
+    不該讓 worker 去無限重連；欄位空的是還沒接該條串流的裝置（例如純事件用的 1/2）。
 
     頻道名一律由後端資料庫決定，不能自己用 device_id 推算（301 對到 cam_in、302 對到
     phone_a 這種對應關係後端說換就換，AI 端只負責照抄）。
     """
-    token = login(base_url, username, password, timeout)
-    devices = fetch_devices(token, base_url, timeout)
-
     channels = {}
     for d in devices:
-        channel = (d.get("stream_channel") or "").strip()
+        channel = (d.get(field) or "").strip()
         if d.get("status") != "active" or not channel:
             continue
         # 過渡相容：舊資料/尚未 migrate 的環境可能還是完整 URL。這段是暫時的，
@@ -133,11 +129,41 @@ def build_camera_channels(base_url: str = None, username: str = None,
             channels[camera_id_of(d["device_id"])] = channel
         else:
             channels[camera_id_of(d["device_id"])] = _rtsp_url_of(channel)
+    return channels
 
+
+def build_camera_channels(base_url: str = None, username: str = None,
+                          password: str = None, timeout: float = None,
+                          devices: list = None) -> dict:
+    """登入 → 取清單 → 過濾 → 組成 {camera_id: rtsp_url}（AI 要拉的原味畫面）。
+
+    devices 可由呼叫端先抓好傳進來，避免同一次啟動為了原味/偵測兩份清單登入兩次；
+    不傳＝自己登入抓，與加這個參數之前行為完全相同。
+    """
+    if devices is None:
+        devices = fetch_devices(login(base_url, username, password, timeout),
+                                base_url, timeout)
+    channels = _channels_from(devices, "stream_channel")
     if not channels:
         raise BackendUnavailable(
             f"後端有 {len(devices)} 台裝置，但沒有任何一台同時滿足 status=active 且 stream_channel 非空")
     return channels
+
+
+def build_detect_channels(base_url: str = None, username: str = None,
+                          password: str = None, timeout: float = None,
+                          devices: list = None) -> dict:
+    """偵測頻道 {camera_id: rtsp_url}：AI 畫框後要**推回去**的地方（cam_out 等）。
+
+    與 build_camera_channels 的方向相反 —— 那個是「去哪裡拉」，這個是「推到哪裡」。
+
+    刻意不 raise：偵測推流是選配功能。沒有任何一台設定 stream_channel_detect 時回空 dict，
+    讓 AI 照常跑（只是前端切到「偵測」會沒畫面），不該因為沒設這個就讓跌倒偵測起不來。
+    """
+    if devices is None:
+        devices = fetch_devices(login(base_url, username, password, timeout),
+                                base_url, timeout)
+    return _channels_from(devices, "stream_channel_detect")
 
 
 def camera_id_of(device_id: int) -> str:
