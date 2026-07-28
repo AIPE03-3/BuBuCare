@@ -255,6 +255,62 @@ python3 scripts/check_guardrails.py
 
 ---
 
+## 承接自前一次交接：S3 上傳權限未確認（**不是本次改動，但仍未解決**）
+
+> 這段原本在 `HANDOVER.md`（事件片段存檔那次的交接紀錄）。該檔已於本分支移除、
+> 文件收斂成一份，故把**唯一還沒解決的阻塞問題**整段搬過來，避免資訊只剩在 git history。
+> 對應 `NEXT_STAGE.md` 待辦①。與本次 hazard 改動無關，`clip_path` 的 S3 行為一行沒動。
+
+### 🚧 `clip_path` 目前是本地路徑，前端仍看不到跌倒影片
+
+後端 `GET /events/{id}/media` 走 `backend/core/s3.py` 的 `generate_presigned_url()`，
+它對**非 `s3://` 開頭的值一律回 `None`**（`backend/tests/test_event_media.py` 有
+「舊本機路徑 → clip_url 給 null」的測試案例）。
+
+`CLIP_S3_BUCKET` 沒設時，`clip_path` 塞的是本地路徑 → 前端拿到 null。
+
+這樣設計的原因：沒有憑證的機器照樣跑得動、不會在跌倒當下噴錯，只是暫時沒影片。
+
+#### 接通前端還缺什麼
+
+**1. `.env` 補 `CLIP_S3_BUCKET`**
+
+repo 三處都指向 `aipe03-3`：albert 分支的 `bucket_name = "aipe03-3"`、
+[backend/core/config.py:57](backend/core/config.py#L57) 註解、
+[backend/tests/test_event_media.py:52](backend/tests/test_event_media.py#L52)。
+幾乎確定是它，但未經確認，故**尚未寫入 `.env`**。
+
+**2. 確認憑證有 `PutObject` 權限 ← 真正的卡點**
+
+[gcp_vm_environment/test_sample/test_readonly_s3.py:21](gcp_vm_environment/test_sample/test_readonly_s3.py#L21)
+有一行被註解掉的上傳測試，旁邊寫著 `#已確認會access denied`；那支用的憑證變數叫
+`AWS_RO_ACCESS`（RO = read only）。
+
+**`.env` 裡的 `ACCESS_KEY_ID` 是不是同一組唯讀憑證，目前不知道。** 這無法從程式碼判定，
+必須問後端組或 AWS 管理者：
+
+> 我們 `.env` 那組 `ACCESS_KEY_ID`，對 `aipe03-3` bucket 有沒有 **PutObject** 權限？
+
+#### ⚠️ 順序很重要：權限沒確認前，先**不要**設 `CLIP_S3_BUCKET`
+
+| 狀態 | `clip_path` 的值 | 前端點下去 |
+|---|---|---|
+| 現在（沒設） | 本地路徑 | 後端回 `null`，前端知道「這筆沒影片」 |
+| 設了但沒寫入權限 | `s3://aipe03-3/...` | 上傳失敗但地址已發出，後端照樣換出網址 → **壞連結** |
+
+現在是「誠實地沒有」，設錯會變成「假裝有、其實是空的」，更難查。
+
+若答案是「只能讀」，選項是請他們開一組有寫入權限的金鑰，或改由後端代為上傳
+（AI 端只把檔案送給後端）—— 後者是另一個設計題目，要跟後端組談。
+
+> 完整的前一次交接紀錄（片段緩衝設計、編碼器 fallback、每幀 resize 的成本、
+> 為什麼沒做冷卻計時器）仍可從 git 取出：
+> ```bash
+> git show f9d8937~1:HANDOVER.md
+> ```
+
+---
+
 ## 合併注意
 
 - 兩個 commit 可分開 cherry-pick：`f9d8937`（死碼清理）與功能無耦合。

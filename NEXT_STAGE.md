@@ -13,7 +13,8 @@
 
 **① S3 權限確認**（外部行動，不是 code）
 問後端組／AWS 管理者：`.env` 的 `ACCESS_KEY_ID` 對 `aipe03-3` bucket 有沒有
-`PutObject` 權限。權限確認前**絕對不要設** `CLIP_S3_BUCKET`（見 `HANDOVER.md`「已知限制」，
+`PutObject` 權限。權限確認前**絕對不要設** `CLIP_S3_BUCKET`（見
+`HANDOVER-hazard-detection.md`「承接自前一次交接」，
 設了但沒權限＝上傳失敗但已發出壞連結，比現在「誠實沒有」更難查）。
 
 **② 三個模組契約破口修復**（code 工作，對應第 3 項）
@@ -56,10 +57,12 @@
 
 ## 2.【已完成：片段錄製；S3 上傳待①權限確認】跌倒瞬間前後各 5 秒的影片片段存檔
 
-> ✅ **片段錄製（前5秒＋後5秒＋mp4寫檔）已完成並實測驗證**——見 `HANDOVER.md`
-> 交接紀錄與 `test-main-stage6-clip-s3` tag（編碼器fallback、前後切分邏輯、視覺比對、
+> ✅ **片段錄製（前5秒＋後5秒＋mp4寫檔）已完成並實測驗證**——見
+> `test-main-stage6-clip-s3` tag（編碼器fallback、前後切分邏輯、視覺比對、
 > 9欄契約、S3未設時的降級行為，皆已用真實管線跑過驗證，不用重做）。
-> ⏳ **唯一沒完成的是 S3 上傳本身**——卡在權限未確認（見 `HANDOVER.md`「已知限制」與待辦總覽①），
+> 當時的完整交接紀錄可從 git 取出：`git show f9d8937~1:HANDOVER.md`。
+> ⏳ **唯一沒完成的是 S3 上傳本身**——卡在權限未確認（見
+> `HANDOVER-hazard-detection.md`「承接自前一次交接」與待辦總覽①），
 > `clip_path` 目前仍是本地路徑，前端還看不到影片。以下是原始需求記錄（保留供參考）：
 
 **現況**：Kafka payload 的 `clip_path` 現在塞的是**影像來源本身**
