@@ -46,8 +46,31 @@ ai/.venv/bin/python ai/local_pipeline_eval.py 影片路徑 --save
 ```
 
 播放中按 **q** 離開、**空白鍵** 暫停／繼續。
+
+## 量化評估（需要標註檔）
+
+```bash
+# 用人工標註的「真跌倒時間段」算召回率／誤報率／反應延遲
+ai/.venv/bin/python ai/local_pipeline_eval.py 影片 --labels 標註檔 --no-show
+
+# 從第 2400 幀（或 --start 2:00）開始播，不用每次從頭看
+ai/.venv/bin/python ai/local_pipeline_eval.py 影片 --start 2:00
+
+# 逐幀原始數據存 CSV，可以自己用 Excel 交叉分析
+ai/.venv/bin/python ai/local_pipeline_eval.py 影片 --csv out.csv --no-show
+```
+
+標註檔格式寬鬆，一行一段或全部黏在一起都可以，解析器用 regex 掃：
+
+```
+0:03-0:09  0:13-0:20  0:35-0:42
+frame 6380-6450          ← 也接受直接寫幀號
+# 井號開頭的行會被忽略
+```
 """
 import argparse
+import csv
+import re
 import sys
 import time
 from collections import deque
@@ -103,6 +126,111 @@ class ActionTransformer(nn.Module):
         x = self.embedding(x)
         x = self.transformer(x)
         return self.fc(x.mean(dim=1))
+
+
+def parse_time_to_seconds(text):
+    """接受 `M:SS`、`MM:SS`、純秒數 `95`。解析不了回 None。"""
+    text = str(text).strip()
+    match = re.fullmatch(r"(\d+):(\d{1,2})(?:\.(\d+))?", text)
+    if match:
+        fraction = float(f"0.{match.group(3)}") if match.group(3) else 0.0
+        return int(match.group(1)) * 60 + int(match.group(2)) + fraction
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_label_file(path, fps):
+    """讀人工標註的真跌倒時間段，回傳 [(起幀, 迄幀), …]（已排序、已合併重疊）。
+
+    刻意用 regex 掃描整份內容而不是逐行解析：手寫標註常常是「全部黏成一行」或
+    分隔符不一致，寬鬆解析省得為了格式來回。支援兩種寫法：
+      - `0:03-0:09`     時間（分:秒）
+      - `frame 120-360` 直接寫幀號
+    `#` 開頭的行視為註解。
+    """
+    lines = []
+    for raw_line in Path(path).read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.strip()
+        if not stripped.startswith("#"):
+            lines.append(stripped)
+    text = "\n".join(lines)
+
+    segments = []
+    for match in re.finditer(r"frame\s+(\d+)\s*[-~]\s*(\d+)", text, re.IGNORECASE):
+        segments.append((int(match.group(1)), int(match.group(2))))
+    # 時間格式。先把 frame 那種挖掉，免得數字被重複吃進來
+    text_without_frames = re.sub(r"frame\s+\d+\s*[-~]\s*\d+", " ", text, flags=re.IGNORECASE)
+    for match in re.finditer(r"(\d+:\d{1,2})\s*[-~]\s*(\d+:\d{1,2})", text_without_frames):
+        start_sec = parse_time_to_seconds(match.group(1))
+        end_sec = parse_time_to_seconds(match.group(2))
+        if start_sec is None or end_sec is None:
+            continue
+        segments.append((int(round(start_sec * fps)), int(round(end_sec * fps))))
+
+    if not segments:
+        return []
+    # 合併重疊或相鄰的段，避免同一次跌倒被拆成兩段害召回率失真
+    segments.sort()
+    merged = [list(segments[0])]
+    for start, end in segments[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [tuple(seg) for seg in merged]
+
+
+def in_any_segment(frame_index, segments):
+    """該幀是否落在任一標註段內。"""
+    return any(start <= frame_index <= end for start, end in segments)
+
+
+def report_metrics(records, segments, fps):
+    """用人工標註算出真正的指標。
+
+    三個指標各自回答不同問題，缺一不可：
+      - 段級召回率：**每一次真跌倒有沒有被抓到**（漏一次可能出人命，這是最重要的）
+      - 幀級誤報率：正常時段有多少幀在亂報（決定護理師會不會被吵到關掉系統）
+      - 反應延遲：從跌倒開始到第一次報出來隔多久（急救場景延遲就是傷害）
+    """
+    print(f"\n{'=' * 60}")
+    print(f"量化評估（依標註 {len(segments)} 段真跌倒）")
+    print(f"{'=' * 60}")
+
+    triggered_frames = {r["frame"] for r in records if r["triggered"]}
+
+    hit_count = 0
+    latencies = []
+    print("\n── 每段是否抓到 ──")
+    for index, (start, end) in enumerate(segments, 1):
+        hits = sorted(f for f in triggered_frames if start <= f <= end)
+        time_label = f"{start / fps:>6.1f}s~{end / fps:<6.1f}s"
+        if not hits:
+            print(f"  {index:>2}. {time_label} ❌ 完全沒報（漏報）")
+            continue
+        hit_count += 1
+        latency = (hits[0] - start) / fps
+        latencies.append(latency)
+        print(f"  {index:>2}. {time_label} ✅ 首次觸發延遲 {latency:>5.2f} 秒")
+
+    # 誤報只算「有效幀」：視窗沒滿或根本沒看到人的幀，系統本來就不該報，
+    # 拿它們當分母會把誤報率洗淡，看起來比實際好。
+    negatives = [r for r in records if not in_any_segment(r["frame"], segments) and r["evaluable"]]
+    false_positives = [r for r in negatives if r["triggered"]]
+
+    print("\n── 總結 ──")
+    print(f"  段級召回率：{hit_count}/{len(segments)} ({hit_count / len(segments):.1%})"
+          f"  ← 漏掉 {len(segments) - hit_count} 次真跌倒")
+    if latencies:
+        print(f"  平均反應延遲：{sum(latencies) / len(latencies):.2f} 秒"
+              f"（最慢 {max(latencies):.2f} 秒）")
+    if negatives:
+        print(f"  幀級誤報率：{len(false_positives)}/{len(negatives)} "
+              f"({len(false_positives) / len(negatives):.1%})  ← 正常時段有多少幀在亂報")
+    else:
+        print("  幀級誤報率：無可評估的正常時段")
 
 
 def pick_device():
@@ -245,6 +373,16 @@ def draw_overlay(frame, info):
     cv2.putText(frame, info["status_text"], (40, 60),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3, cv2.LINE_AA)
 
+    # 右上角時間戳＋幀號：標註真跌倒時段時，暫停後直接抄這裡的數字
+    stamp = f"frame {info['frame']} | {info['timestamp']}"
+    (stamp_w, _), _ = cv2.getTextSize(stamp, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+    cv2.putText(frame, stamp, (width - stamp_w - 20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+    # 有標註檔時，落在真跌倒時段的幀在時間戳下方標 GT，肉眼即可比對系統判斷對不對
+    if info.get("in_truth_segment"):
+        cv2.putText(frame, "GT: FALL", (width - stamp_w - 20, 68),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 215, 255), 2, cv2.LINE_AA)
+
     # 左下角逐行列出判斷依據，一眼看出「為什麼是這個結論」
     lines = [
         f"AcT: {info['act_label']}  conf={info['act_confidence']:.2f}",
@@ -288,6 +426,12 @@ def main():
                         help="不開視窗，只印判斷結果（無 GUI 的環境或只想存檔時用）")
     parser.add_argument("--print-every", type=int, default=10,
                         help="--no-show 時每幾個處理幀印一行，預設 10")
+    parser.add_argument("--start", default=None,
+                        help="從指定位置開始播，接受 2:00（時間）或 2400（幀號）")
+    parser.add_argument("--labels", default=None,
+                        help="人工標註的真跌倒時間段檔案，給了才算召回率／誤報率")
+    parser.add_argument("--csv", default=None,
+                        help="逐幀原始數據輸出成 CSV，方便自己交叉分析")
     args = parser.parse_args()
 
     pose_path, act_path = Path(args.pose_weights), Path(args.act_weights)
@@ -313,6 +457,26 @@ def main():
     source_fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     frame_delay = 1.0 / (source_fps * max(args.speed, 0.01))
 
+    segments = []
+    if args.labels:
+        segments = parse_label_file(args.labels, source_fps)
+        if not segments:
+            print(f"⚠️ 標註檔解析不到任何時間段：{args.labels}")
+        else:
+            covered = sum(end - start for start, end in segments) / source_fps
+            print(f"🏷  標註 {len(segments)} 段真跌倒，共 {covered:.0f} 秒")
+
+    start_frame = 0
+    if args.start:
+        seconds = parse_time_to_seconds(args.start)
+        if seconds is None:
+            print(f"❌ 看不懂 --start 的值：{args.start}")
+            return 1
+        # 帶冒號一律當時間，純數字當幀號（6.2 分鐘的片子，2400 一定是幀不是秒）
+        start_frame = int(round(seconds * source_fps)) if ":" in str(args.start) else int(seconds)
+        capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        print(f"⏩ 從第 {start_frame} 幀（{start_frame / source_fps:.1f} 秒）開始")
+
     writer = None
     if args.save:
         out_dir = Path(args.out)
@@ -326,8 +490,9 @@ def main():
         )
 
     frame_window = deque(maxlen=WINDOW_SIZE)
-    frame_count = 0
+    frame_count = start_frame
     processed_count = 0
+    records = []
     has_seen_person = False
     ever_detected_fall = False
     normal_height_reference = None
@@ -358,8 +523,10 @@ def main():
             result = pose_model(frame, verbose=False, conf=args.conf)[0]
             pose_state = extract_pose_state(result, normal_height_reference, image_height)
 
-            # 身高基準取前期幾幀（:689 用 10<frame_count<40），之後拿來判斷「突然變矮」
-            if normal_height_reference is None and 10 < frame_count < 40 and pose_state["valid"]:
+            # 身高基準取前期幾幀，之後拿來判斷「突然變矮」（遮擋防線的分母）。
+            # 正式管線用 10<frame_count<40 的原始幀號（:689），跳幀後約等於第 5~20 個處理幀。
+            # 這裡改用處理幀計數：--start 跳著播時原始幀號早就超過 40，用它會永遠取不到基準。
+            if normal_height_reference is None and 5 <= processed_count <= 20 and pose_state["valid"]:
                 if result.boxes is not None and len(result.boxes) > 0:
                     best_idx = select_main_person(
                         result.boxes.conf.cpu().numpy(), result.boxes.xywh.cpu().numpy()
@@ -384,6 +551,24 @@ def main():
                     print(f"🚨 第 {frame_count} 幀觸發跌倒｜AcT conf={act_confidence:.2f}"
                           f"｜lying={pose_state['is_lying']}｜occluded={pose_state['is_occluded']}")
                 ever_detected_fall = True
+
+            # 逐幀留底給指標計算與 CSV。evaluable＝視窗滿且看過人，
+            # 也就是「系統本來就該有能力判斷」的幀；誤報率只拿這種幀當分母才誠實。
+            records.append({
+                "frame": frame_count,
+                "time_s": round(frame_count / source_fps, 2),
+                "triggered": should_trigger,
+                "evaluable": len(frame_window) == WINDOW_SIZE and has_seen_person,
+                "act_fall": pred_class == 0,
+                "act_conf": round(act_confidence, 4),
+                "lying": pose_state["is_lying"],
+                "occluded": pose_state["is_occluded"],
+                "feature_valid": pose_state["valid"],
+                "person_count": pose_state["person_count"],
+                "pose_conf": round(pose_state["best_conf"], 4),
+                "body_angle": round(pose_state["body_angle"], 1) if pose_state["body_angle"] is not None else "",
+                "aspect_ratio": round(pose_state["aspect_ratio"], 3),
+            })
 
             # 顯示用的鎖存：正式管線觸發後永久停在 FALL（ever_detected_fall），
             # --no-latch 讓它只在當幀觸發時才紅，反覆測比較方便
@@ -417,6 +602,10 @@ def main():
                 "is_occluded": pose_state["is_occluded"],
                 "feature_valid": pose_state["valid"],
                 "fps": fps_value,
+                "frame": frame_count,
+                "timestamp": f"{int(frame_count / source_fps) // 60:02d}:"
+                             f"{int(frame_count / source_fps) % 60:02d}",
+                "in_truth_segment": in_any_segment(frame_count, segments) if segments else False,
             })
 
             if writer:
@@ -452,12 +641,24 @@ def main():
         cv2.destroyAllWindows()
 
     print(f"\n{'=' * 56}")
-    print(f"讀取 {frame_count} 幀，實際處理 {processed_count} 幀")
+    print(f"讀取到第 {frame_count} 幀，實際處理 {processed_count} 幀")
     print(f"觸發跌倒 {trigger_count} 次｜曾偵測到人：{'是' if has_seen_person else '否'}")
     if normal_height_reference:
         print(f"身高基準（遮擋判斷用）：{normal_height_reference:.0f} px")
     if writer:
         print(f"→ 已存標註影片到 {args.out}")
+
+    if args.csv and records:
+        csv_path = Path(args.csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", newline="", encoding="utf-8") as handle:
+            writer_csv = csv.DictWriter(handle, fieldnames=list(records[0].keys()))
+            writer_csv.writeheader()
+            writer_csv.writerows(records)
+        print(f"→ 逐幀數據已存 {csv_path}（{len(records)} 列）")
+
+    if segments and records:
+        report_metrics(records, segments, source_fps)
     return 0
 
 
