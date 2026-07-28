@@ -92,5 +92,5 @@ class TritonDetrModel:
         pred[..., [0, 2]] *= w  # 正規化 x -> 原圖寬
         pred[..., [1, 3]] *= h  # 正規化 y -> 原圖高
 
-        # DETR 無 mask，回 masks=None；下游疊圖處已有 getattr(..., 'masks', None) guard。
+        # DETR 無分割頭，恆回 masks=None；下游只讀 .boxes，不吃 mask。
         return Results(frame, path="", names=self.names, boxes=pred, masks=None)

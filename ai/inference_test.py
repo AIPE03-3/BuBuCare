@@ -342,12 +342,12 @@ def camera_worker(camera_id, video_source):
     #（不被 source fps 綁住）；不設則保留原節流、量「貼齊 source fps 的穩態處理速率」。
     _fps_no_throttle = bool(os.environ.get("FPS_NO_THROTTLE"))
     _fps_log_every = int(os.environ.get("FPS_LOG_EVERY", "60"))
-    # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/mask 疊圖/putText/copy），
+    # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/putText/copy），
     # 這些只為 GUI 顯示，HEADLESS 壓測根本不看畫面卻每幀白燒 CPU。快照存檔仍保留（事件證據）。
     _no_render = bool(os.environ.get("NO_RENDER"))
     # 提速：DETR_EVERY_N=N（N>1）把 rt_detr 環境物件偵測降頻成「每 N 個處理幀才跑一次」，
     # 其餘幀復用上次結果。detr 佔 ~30% 幀時間，但它偵測的全是靜態家具（bed/chair/couch…），
-    # results_env 三個下游用途（bed_box 離床、chair_box 座椅滑落、mask 疊圖）都只是
+    # results_env 兩個下游用途（bed_box 離床、chair_box 座椅滑落）都只是
     #「空間參考框」，家具不會動、幾秒不更新沒差；pose 則必須每幀跑（要餵連續 30 幀給 AcT，
     # 時序不能有洞）故完全不動。未設＝1＝位元級原本的每幀行為，隨時可退回。
     _detr_every_n = max(1, int(os.environ.get("DETR_EVERY_N", "1")))
@@ -509,22 +509,17 @@ def camera_worker(camera_id, video_source):
             results_env = _cached_results_env
         _detr_proc_idx += 1
 
-        detected_objects = []
-        bed_box_xyxy = None  
-        
-        # 👈 核心修改：利用 YOLO-Seg 的方式解析不規則輪廓與物件
+        bed_box_xyxy = None
+
+        # 從 rt_detr 結果取床的框，交給模組 A（離床偵測）當空間參考框。
+        # 座椅/沙發的框由 modules/chair_slip.py 自己從 results_env 找，這裡不重複解析。
         if results_env and len(results_env[0].boxes) > 0:
-            for i, box in enumerate(results_env[0].boxes):
+            for box in results_env[0].boxes:
                 cls_id = int(box.cls[0].item())
-                lbl_name = yolo_env_model.names[cls_id]
-                
-                # 篩選長照中心核心目標環境物件 (新增不規則類別如被子、水漬等擴充，此處維持你的基礎列表)
-                if lbl_name in ["wheelchair", "bed", "chair", "couch", "bottle", "cup"] and lbl_name not in detected_objects:
-                    detected_objects.append(lbl_name)
-                    
-                if lbl_name == "bed": 
+                if yolo_env_model.names[cls_id] == "bed":
                     bed_box_xyxy = box.xyxy.cpu().numpy()[0]
-                    
+
+
         current_pose_feat = np.zeros(34, dtype=np.float32)
         is_current_frame_valid = False
         is_physically_lying = False  
@@ -723,26 +718,12 @@ def camera_worker(camera_id, video_source):
                 # 畫面上的 VLM 狀態依落點提示：快速道 vs 送二審佇列。
                 vlm_report = "Fast-track Sent" if topic == TOPIC_PROCESSED_REPORTS else "VLM Queued..."
 
-        # === Step D: 畫布渲染（✅ 自動半透明疊加不規則物件輪廓） ===
+        # === Step D: 畫布渲染（骨架框 + 狀態文字） ===
         # NO_RENDER=1（HEADLESS 壓測）：整段純畫圖只為 GUI 顯示，跳過以省 CPU；偵測/外發/快照不受影響。
+        # 註：環境物件不疊圖。rt_detr 無分割頭（triton_detr_client 恆回 masks=None），
+        #     要疊只能改畫 boxes；YOLO-Seg 時代的輪廓疊圖已移除。
         if not _no_render:
             annotated_frame = results_pose[0].plot(boxes=True, labels=True, conf=0.45)
-
-            # 👈 核心修改：在畫布上動態疊加 YOLO-Seg 的彩色半透明不規則輪廓
-            if results_env and getattr(results_env[0], 'masks', None) is not None:
-                masks = results_env[0].masks.data.cpu().numpy()
-                for i, mask in enumerate(masks):
-                    cls_id = int(results_env[0].boxes.cls[i].item())
-                    lbl_name = yolo_env_model.names[cls_id]
-
-                    if lbl_name in ["wheelchair", "bed", "chair", "couch", "bottle", "cup"]:
-                        # 將 Mask 縮放回原始影像尺寸
-                        mask_resized = cv2.resize(mask, (img_w, img_h))
-                        # 建立綠色遮罩圖層
-                        color_mask = np.zeros_like(frame, dtype=np.uint8)
-                        color_mask[mask_resized > 0.5] = [0, 255, 0] # 綠色實例輪廓
-                        # 以 0.4 的透明度疊加到主畫面
-                        annotated_frame = cv2.addWeighted(annotated_frame, 1.0, color_mask, 0.4, 0)
 
             if draw_border: cv2.rectangle(annotated_frame, (0, 0), (img_w, img_h), color, 12)
             cv2.putText(annotated_frame, status_text, (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3, cv2.LINE_AA)
