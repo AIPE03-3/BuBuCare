@@ -104,6 +104,31 @@ COLOR_FALL = (0, 0, 255)      # 紅
 COLOR_NORMAL = (0, 255, 0)    # 綠
 COLOR_BUFFER = (0, 255, 255)  # 黃
 
+# 觸發策略。用兩個布林旗標描述差異，而不是寫三份 if/else——三種模式的差別本來就只有
+# 這兩個問題的答案，攤成資料表之後 decide_trigger 只需要一份邏輯。
+#
+#   act_alone          ：幾何完全正常時，AcT 能不能自己決定要報？
+#   occluded_needs_act ：OCCLUDED 要不要 AcT 附議才算數？
+#                        （現況它是無條件放行，誤判一次就報一次）
+# test4.mp4（20 段人工標註真跌倒）實測，三者用同一支影片同一份標註：
+#
+#   模式         段級召回      幀級誤報   平均延遲
+#   current      95.0% (19/20)  56.5%    0.26s
+#   geo-first    90.0% (18/20)  12.1%    0.64s   ← 誤報降 4.7 倍，只多漏 1 段
+#   geo-strict   65.0% (13/20)   7.1%    0.91s   ← 不要用，理由見下
+TRIGGER_MODES = {
+    # 正式管線現況（inference_test.py:744-749）
+    "current": {"act_alone": True, "occluded_needs_act": False},
+    # AcT 不能單獨觸發。誤報主因就是「幾何正常但 AcT 說跌倒」（佔誤報 78.7%），砍掉這條
+    "geo-first": {"act_alone": False, "occluded_needs_act": False},
+    # ⚠ 實測失敗的方案，保留是為了記錄「試過、不行」，不要再走一次。
+    # 動機是 OCCLUDED 涉及 geo-first 殘餘誤報的 87%（人蹲下/坐下/彎腰/走到家具後面
+    # 都會「變矮且偏下」）。但真跌倒時 OCCLUDED 本來就常成立（人倒下被家具擋住），
+    # 要求 AcT 附議等於連真跌倒一起砍——換來 5 個百分點的誤報改善，代價是 5 次漏報。
+    "geo-strict": {"act_alone": False, "occluded_needs_act": True},
+}
+DEFAULT_TRIGGER_MODE = "current"
+
 
 class ActionTransformer(nn.Module):
     """時序跌倒分類器。
@@ -187,7 +212,7 @@ def in_any_segment(frame_index, segments):
     return any(start <= frame_index <= end for start, end in segments)
 
 
-def report_metrics(records, segments, fps):
+def report_metrics(records, segments, fps, mode=DEFAULT_TRIGGER_MODE):
     """用人工標註算出真正的指標。
 
     三個指標各自回答不同問題，缺一不可：
@@ -196,7 +221,7 @@ def report_metrics(records, segments, fps):
       - 反應延遲：從跌倒開始到第一次報出來隔多久（急救場景延遲就是傷害）
     """
     print(f"\n{'=' * 60}")
-    print(f"量化評估（依標註 {len(segments)} 段真跌倒）")
+    print(f"量化評估（依標註 {len(segments)} 段真跌倒｜策略 {mode}）")
     print(f"{'=' * 60}")
 
     triggered_frames = {r["frame"] for r in records if r["triggered"]}
@@ -343,21 +368,31 @@ def run_act(act_model, window, device):
     return pred_class, confidence
 
 
-def decide_trigger(pose_state, window_len, pred_class, act_confidence, has_seen_person):
-    """觸發條件，對齊 :744-749。回傳 (should_trigger, is_ai_thinking_fall)。"""
+def decide_trigger(pose_state, window_len, pred_class, act_confidence, has_seen_person,
+                   mode=DEFAULT_TRIGGER_MODE):
+    """觸發條件。`mode="current"` 與正式管線 :744-749 完全等價。
+
+    回傳 (should_trigger, is_ai_thinking_fall)。
+    """
+    rules = TRIGGER_MODES[mode]
     window_full = window_len == WINDOW_SIZE
     is_ai_thinking_fall = window_full and pred_class == 0 and act_confidence > AI_THINKING_CONF
     if not has_seen_person:
         return False, is_ai_thinking_fall
 
-    # 幾何先行：躺平或疑似遮擋時，視窗還沒滿也先報（急救場景不等 30 幀）
     if pose_state["is_lying"] or pose_state["is_occluded"]:
-        if not window_full or is_ai_thinking_fall or pose_state["is_occluded"]:
+        # 視窗還沒滿就先報：跌倒是急救場景，不能等湊滿 30 幀。三種模式都保留這條安全網
+        if not window_full:
+            return True, is_ai_thinking_fall
+        if is_ai_thinking_fall:
+            return True, is_ai_thinking_fall
+        # OCCLUDED 的無條件放行：geo-strict 把它收掉，其餘模式維持現況
+        if pose_state["is_occluded"] and not rules["occluded_needs_act"]:
             return True, is_ai_thinking_fall
         return False, is_ai_thinking_fall
 
-    # 幾何沒事，但 AcT 高信心認為跌倒 → 也報
-    if window_full and pred_class == 0 and act_confidence > DIRECT_TRIGGER_CONF:
+    # 幾何沒事，只有 AcT 說跌倒
+    if rules["act_alone"] and window_full and pred_class == 0 and act_confidence > DIRECT_TRIGGER_CONF:
         return True, is_ai_thinking_fall
     return False, is_ai_thinking_fall
 
@@ -432,6 +467,10 @@ def main():
                         help="人工標註的真跌倒時間段檔案，給了才算召回率／誤報率")
     parser.add_argument("--csv", default=None,
                         help="逐幀原始數據輸出成 CSV，方便自己交叉分析")
+    parser.add_argument("--trigger-mode", default=DEFAULT_TRIGGER_MODE,
+                        choices=sorted(TRIGGER_MODES),
+                        help="觸發策略：current=正式管線現況／"
+                             "geo-first=AcT 不能單獨觸發／geo-strict=OCCLUDED 也要 AcT 附議")
     args = parser.parse_args()
 
     pose_path, act_path = Path(args.pose_weights), Path(args.act_weights)
@@ -451,6 +490,9 @@ def main():
     pose_model = YOLO(str(pose_path))
     pose_model.to(device)
     act_model = load_act_model(act_path, device)
+    print(f"🎚  觸發策略：{args.trigger_mode}"
+          f"（AcT 可單獨觸發={TRIGGER_MODES[args.trigger_mode]['act_alone']}，"
+          f"OCCLUDED 需 AcT 附議={TRIGGER_MODES[args.trigger_mode]['occluded_needs_act']}）")
     print("🔥 兩顆模型就緒（rt_detr 那條防線本地不跑，見檔頭說明）")
     print("▶️  播放中：q 離開、空白鍵暫停／繼續\n")
 
@@ -543,7 +585,8 @@ def main():
                 pred_class, act_confidence = run_act(act_model, frame_window, device)
 
             should_trigger, _ = decide_trigger(
-                pose_state, len(frame_window), pred_class, act_confidence, has_seen_person
+                pose_state, len(frame_window), pred_class, act_confidence, has_seen_person,
+                mode=args.trigger_mode,
             )
             if should_trigger:
                 trigger_count += 1
@@ -658,7 +701,7 @@ def main():
         print(f"→ 逐幀數據已存 {csv_path}（{len(records)} 列）")
 
     if segments and records:
-        report_metrics(records, segments, source_fps)
+        report_metrics(records, segments, source_fps, args.trigger_mode)
     return 0
 
 
