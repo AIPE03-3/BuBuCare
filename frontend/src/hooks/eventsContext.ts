@@ -22,6 +22,9 @@ export interface EventsContextValue {
   lastAckedId: string | null;
   clearLastAckedId: () => void;
   handleResolveViaFeedback: (event: CareEvent, label: FalseReportLabel, note: string) => Promise<void>;
+  // agent P2：一鍵採納 AI「可能為誤報」建議 —— 即人工複判「確認誤報」，走既有 verdict+resolve 流程，
+  // 不是 AI 自動關閉事件（AI 只給建議，這仍是人在螢幕上按下去的動作）。
+  handleConfirmAiFalseAlarm: (event: CareEvent) => Promise<void>;
   lastAckedEvent: CareEvent | null;
   undoAcknowledge: (event: CareEvent) => void;
   // 重新向後端取事件清單（存完通報單／結案後呼叫，通報階段與狀態以後端為準）。

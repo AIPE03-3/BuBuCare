@@ -1,4 +1,4 @@
-"""初始化正式資料庫（PostgreSQL）：建表 → 種 demo 資料 → 建初始帳號。
+"""初始化正式資料庫（PostgreSQL）：建表 → 補舊表欄位 → 種 demo 資料 → 建初始帳號。
 
 可重複執行：已存在的一律略過，不會報錯。
 新環境（組員的機器、驗收主機、未來部署）第一次跑這支就能讓事件流程動起來。
@@ -6,7 +6,7 @@
 用法（先 cd backend）：
     python -m init_db
 """
-from core.database import SessionLocal, Base, engine
+from core.database import SessionLocal, Base, engine, run_column_migrations
 from core.models import Company, Location, Device, Staff, User
 from core.security import hash_password
 
@@ -101,6 +101,7 @@ def seed_accounts(db):
 
 if __name__ == "__main__":
     create_tables()
+    run_column_migrations()
 
     db = SessionLocal()
     try:

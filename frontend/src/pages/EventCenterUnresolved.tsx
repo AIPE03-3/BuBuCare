@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CountdownTimer } from '../components/CountdownTimer';
 import { EventStatusBadge } from '../components/EventStatusBadge';
+import { AiSuggestionBadge } from '../components/AiSuggestionBadge';
 import { FlagIcon } from '../components/icons';
 import { ResponsiveEventList, type EventListColumn } from '../components/ResponsiveEventList';
 import { useEvents } from '../hooks/eventsContext';
@@ -22,7 +23,7 @@ export function EventCenterUnresolved({
   showPending?: boolean;
   showAssignee?: boolean;
 } = {}) {
-  const { events, now, handleAcknowledgeEvent } = useEvents();
+  const { events, now, handleAcknowledgeEvent, handleConfirmAiFalseAlarm } = useEvents();
   // 接手送出中的事件 id：送出期間停用該列按鈕，避免連點對同一筆送出兩次判定。
   const [claimingId, setClaimingId] = useState<string | null>(null);
   const visibleEvents = events.filter((event) =>
@@ -78,13 +79,14 @@ export function EventCenterUnresolved({
       key: 'status',
       header: '事件狀態',
       cell: (event) => (
-        <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex flex-wrap items-center gap-1.5">
           <EventStatusBadge event={event} now={now} />
           {hasEscalatedFlag(event) && (
             <span title="事件曾升級並通知當日值班組長">
               <FlagIcon aria-hidden="true" className="h-4 w-4 text-[var(--danger)]" />
             </span>
           )}
+          {event.ai_verdict && <AiSuggestionBadge event={event} />}
           {/* 接手鈕併在徽章旁，不另開一欄——否則非待處理的列會排滿無意義的「—」 */}
           {showPending && event.status === 'pending' && (
             <button
@@ -100,6 +102,19 @@ export function EventCenterUnresolved({
               className="rounded-lg bg-[var(--success)] px-2.5 py-1 text-xs font-medium text-white transition-colors duration-150 hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--success)] focus-visible:ring-offset-2"
             >
               {claimingId === event.id ? '接手中…' : '接手'}
+            </button>
+          )}
+          {/* agent P2：AI 建議可能為誤報時，一鍵採納（沿用既有 verdict+resolve 流程） */}
+          {showPending && event.status === 'pending' && event.ai_verdict === 'false_alarm' && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleConfirmAiFalseAlarm(event);
+              }}
+              className="rounded-lg border border-[var(--offline)] px-2.5 py-1 text-xs font-medium text-[var(--offline)] transition-colors duration-150 hover:bg-[var(--bg-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--offline)] focus-visible:ring-offset-2"
+            >
+              確認誤報
             </button>
           )}
         </span>

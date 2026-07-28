@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -25,3 +25,26 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_column_migrations():
+    """補齊「舊表」缺的欄位——create_all 只建不存在的表，不會回頭改既有表的欄位。
+
+    正式 RDS 上的 detect_events 表在加這三欄前就已經在用、有資料，所以 models.py
+    的新欄位需要這裡手動 ALTER TABLE 補上。全新資料庫則是空轉（create_all 建表時就含這些欄位）。
+    """
+    with engine.begin() as conn:
+        conn.execute(text(
+            "DO $$ BEGIN "
+            "CREATE TYPE ai_event_verdict AS ENUM ('true_alarm', 'false_alarm'); "
+            "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+        ))
+        conn.execute(text(
+            "ALTER TABLE detect_events ADD COLUMN IF NOT EXISTS ai_verdict ai_event_verdict"
+        ))
+        conn.execute(text(
+            "ALTER TABLE detect_events ADD COLUMN IF NOT EXISTS ai_confidence FLOAT"
+        ))
+        conn.execute(text(
+            "ALTER TABLE detect_events ADD COLUMN IF NOT EXISTS ai_reasoning TEXT"
+        ))

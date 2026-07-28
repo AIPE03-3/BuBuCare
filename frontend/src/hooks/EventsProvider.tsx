@@ -170,6 +170,13 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     dismissConfirmedAlert(event.id);
   }
 
+  // agent P2：人工點「確認誤報」採納 AI 建議 —— 沿用標記誤報同一條路徑（verdict=false_alarm + resolve），
+  // 差別只在誤報類型固定填「其他」、備註帶入 AI 給的理由，方便誤報紀錄詳情頁回溯「當初為什麼標」。
+  async function confirmAiFalseAlarm(event: CareEvent) {
+    const note = event.ai_reasoning ? `AI 建議：${event.ai_reasoning}` : 'AI 建議判定為誤報';
+    await resolveViaFeedback(event, '其他', note);
+  }
+
   // 恢復事件：誤報紀錄中的事件拉回事件中心（處理中），清掉誤報判定與類型並重啟 24 小時時限。
   function restoreEvent(eventId: string) {
     const resolveDeadline = new Date(Date.now() + RESOLVE_WINDOW_MS).toISOString();
@@ -224,6 +231,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     lastAckedId,
     clearLastAckedId,
     handleResolveViaFeedback: resolveViaFeedback,
+    handleConfirmAiFalseAlarm: confirmAiFalseAlarm,
     lastAckedEvent,
     undoAcknowledge,
     refreshEvents,

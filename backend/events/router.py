@@ -37,6 +37,11 @@ class EventCreateRequest(BaseModel):
     snapshot_path: Optional[str] = None
     yolo_score: Optional[float] = None
     vlm_summary: Optional[str] = None
+    # agent P2：LangGraph agent（目前 shadow）的建議判斷，僅供人工複判參考；三欄皆選填，
+    # 舊格式訊息（無此三欄）照常建檔，欄位落 NULL
+    ai_verdict: Optional[Literal["true_alarm", "false_alarm"]] = None
+    ai_confidence: Optional[float] = None
+    ai_reasoning: Optional[str] = None
 
 
 # ════════════════════════════════════════════════════════
