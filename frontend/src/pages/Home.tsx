@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getCameras } from '../api/cameras';
 import { DevTestPanel } from '../components/DevTestPanel'; // DEV-TEST：測試按鈕面板，移除測試功能時連同下方使用處一併刪除
+import { LiveStream } from '../components/LiveStream';
 import { MonitorIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
 import { formatTime } from '../utils/time';
-import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, type AlertLogEntry, type Camera, type CareEvent } from '../types';
+import { ALERT_LOG_ACTION_LABEL, type AlertLogEntry, type Camera, type CareEvent } from '../types';
 
 // 切換鏡頭畫面選單。桌機置於右欄頂端、手機緊接鏡頭下方，故抽成元件於兩處各渲染一次
 // （以 lg:hidden／hidden lg:block 控制，同一時間僅一個可見，不會重複讀屏）。
@@ -140,14 +141,16 @@ export function Home() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* 左 2/3 */}
         <div className="flex flex-col gap-6 lg:col-span-2">
-          {/* 即時影像：灰色占位框（不接真串流，比照全案影像慣例），左上角浮貼所選鏡頭名 */}
-          <div className="relative flex aspect-video w-full items-center justify-center rounded-2xl bg-[var(--bg-surface-2)] text-center text-sm text-[var(--text-muted)]">
+          {/* 即時影像，左上角浮貼所選鏡頭名 */}
+          {/* ⚠ 暫時寫死網址：資料庫的頻道名尚未填入（等 AI 端改讀 stream_channel 後才 UPDATE），
+              此處僅為驗證 LiveStream 元件本身。Task 6 會改為吃 camera.stream_url，屆時必須刪除這一行。 */}
+          <div className="relative aspect-video w-full overflow-hidden rounded-2xl">
+            <LiveStream whepUrl="http://192.168.54.110:8889/cam_in/whep" />
             {selectedCamera && (
               <span className="absolute left-3 top-3 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
                 {selectedCamera.zone}（{selectedCamera.name}）
               </span>
             )}
-            {CAMERA_LABEL.LIVE_PLACEHOLDER}
           </div>
 
           {/* 手機：切換選單緊接鏡頭下方（桌機隱藏，改由右欄頂端顯示） */}
