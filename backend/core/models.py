@@ -66,7 +66,7 @@ class Device(Base):  # 攝影機裝置
 
     device_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     device_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # location_id 和 stream_url 是 spec 裡唯二可空的欄位：裝置剛建檔時可能還沒定位置、還沒接串流
+    # location_id 和兩個 stream 欄位都可空：裝置剛建檔時可能還沒定位置、還沒接串流
     location_id: Mapped[Optional[int]] = mapped_column(ForeignKey("locations.location_id"), nullable=True)
     # Enum：固定選項的欄位。PostgreSQL 建真 ENUM 型別，DB 層直接擋壞值
     # create_constraint=True：讓沒有原生 ENUM 的資料庫（如測試用的 SQLite）補上 CHECK 約束，行為跟正式環境一樣嚴格
@@ -74,7 +74,14 @@ class Device(Base):  # 攝影機裝置
         Enum("active", "inactive", "fault", name="device_status", create_constraint=True),
         nullable=False, default="active"
     )
-    stream_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # 兩個欄位存的都是「頻道名」（如 cam_in），不是完整網址——主機位址在 .env，
+    # 由各消費端自己接上：瀏覽器組 http://…:8889/<頻道>/whep、AI 端組 rtsp://…:8554/<頻道>。
+    # 存頻道名而非網址的理由：換場地／換電腦只有主機位址會變，頻道名永遠不變。
+    # （曾因舊名 stream_url 誤導，被填入 rtsp://127.0.0.1:8554/... 這種只在填寫者本機有效的位址。）
+    # stream_channel        = 原味頻道（進 AI 前）
+    # stream_channel_detect = 偵測頻道（AI 畫框後），沒接 AI 的鏡頭留 NULL
+    stream_channel: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stream_channel_detect: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False)
 
     # 關聯屬性：程式可直接寫 device.location.location_name，SQLAlchemy 依 location_id 自動查

@@ -32,8 +32,10 @@ from triton_act_client import TritonActModel            # Triton 版 action_tran
 
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
-    build_camera_channels, BackendUnavailable, BACKEND_API_URL, cfg,
+    build_camera_channels, build_detect_channels, fetch_devices, login,
+    BackendUnavailable, BACKEND_API_URL, cfg,
 )
+from detect_publisher import make_publisher               # 把畫好框的畫面推回 MediaMTX 偵測頻道
 
 # =========================================================================
 # 🛠️ MLOps 基礎建設：Kafka 初始化
@@ -143,6 +145,12 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
 # （刻意不注入 os.environ，見 backend_devices 檔頭），只讀 os.environ 會完全看不到 .env 的設定。
 _CLIP_PRE_SEC = float(cfg("CLIP_PRE_SEC", "5"))
 _CLIP_POST_SEC = float(cfg("CLIP_POST_SEC", "5"))
+# 畫面上「FALL DETECTED!」紅框在最後一次觸發後還要顯示多久。
+# 為什麼需要這個而不是「偵測到就一直紅」：紅框原本掛在 ever_detected_fall 這個只進不出的
+# 旗標上，第一次觸發之後畫面就永遠是紅的，值班人員再也無法從畫面判斷現在有沒有事——
+# 接真攝影機（worker 一跑好幾天）等於這個指示燈失效。實測用手機當攝影機時複現。
+# 也不能純粹看當下那一幀：偵測會逐幀跳動，紅框會閃爍到無法判讀。故用「保持數秒」。
+_FALL_DISPLAY_HOLD_SEC = float(cfg("FALL_DISPLAY_HOLD_SEC", "10"))
 # 緩衝存的是「原始幀」（塞在跳幀之前），1080p 全解析度下前後 10 秒每台相機要吃 ~1.8GB，
 # 多路併發直接 OOM。故片段緩衝獨立降寬——推論吃的仍是原圖，完全不受影響。
 # H.264 要求邊長為偶數，故抹掉奇數位。設 0＝不縮放（記憶體自負）。
@@ -259,9 +267,14 @@ print("📦 正在載入 Triton 三顆模型（yolo_pose / rt_detr / action_tran
 #   - TritonPoseModel / TritonDetrModel 回標準 ultralytics Results，下游 .keypoints/.plot()
 #     與 .boxes/.names 完全不用改；
 #   - TritonActModel 回原始 logits (1,2) ndarray，下游 torch.softmax/argmax 幾乎不用改。
-TRITON_POSE_URL = os.environ.get("TRITON_POSE_URL", "http://127.0.0.1:8000/yolo_pose")
-TRITON_DETR_URL = os.environ.get("TRITON_DETR_URL", "http://127.0.0.1:8000/rt_detr")
-TRITON_ACT_URL = os.environ.get("TRITON_ACT_URL", "http://127.0.0.1:8000/action_transformer")
+# 位址走 cfg()（環境變數優先、其次 repo 根目錄的 .env），與本檔其他設定一致。
+# ⚠ 預設埠是 8010 不是 8000：8000 在本專案被 backend 佔用。曾經預設 8000，結果是每一幀
+# 都打到 FastAPI、拿回 {"detail":"Not Found"} 後靜默降級 —— 影片照跑、FPS 照印、沒有紅字，
+# 但姿態偵測全程失效。這種失敗方式從輸出完全看不出來，所以預設值必須是對的那個。
+TRITON_HOST = cfg("TRITON_HOST", "http://127.0.0.1:8010").rstrip("/")
+TRITON_POSE_URL = cfg("TRITON_POSE_URL") or f"{TRITON_HOST}/yolo_pose"
+TRITON_DETR_URL = cfg("TRITON_DETR_URL") or f"{TRITON_HOST}/rt_detr"
+TRITON_ACT_URL = cfg("TRITON_ACT_URL") or f"{TRITON_HOST}/action_transformer"
 yolo_pose_model = TritonPoseModel(TRITON_POSE_URL)   # 人體姿態打 Triton yolo_pose
 yolo_env_model = TritonDetrModel(TRITON_DETR_URL)    # 環境物件偵測打 Triton rt_detr
 
@@ -282,9 +295,9 @@ frames_lock = threading.Lock()
 # =========================================================================
 # 📹 核心：多鏡頭平行巡邏的 Edge Worker
 # =========================================================================
-def camera_worker(camera_id, video_source):
+def camera_worker(camera_id, video_source, detect_url=None):
     global producer, device, yolo_pose_model, yolo_env_model, transformer_model, output_frames, frames_lock
-    
+
     print(f"🚀 鏡頭頻道 [{camera_id}] 啟動拉流：{video_source}")
     # 影片檔（AV1）走 PyAV 解碼、webcam index 走 cv2；介面與 cv2.VideoCapture 相同。
     # 即時串流（rtsp/rtmp/http）要斷線自動重連；影片檔維持「播完就結束」，不無限重播。
@@ -328,6 +341,13 @@ def camera_worker(camera_id, video_source):
     source_fps = _fps_of(cap)
     frame_delay = 1.0 / source_fps
 
+    # ── 📤 偵測畫面推流（前端「即時／偵測」切換鈕的「偵測」那一半）────────
+    # 推的是下面 Step D 畫好的 annotated_frame。沒設 DETECT_STREAM=1、該相機沒有
+    # stream_channel_detect、或機器上沒有 ffmpeg 時一律回 None，迴圈內就不會推。
+    # ⚠ 這條出口與事件片段/快照完全無關：那兩者刻意維持無框的原始畫面（組長決策：
+    #    彈窗當下有框會干擾人工確認），別把 annotated_frame 接進 write_event_clip。
+    detect_pub = make_publisher(camera_id, detect_url, fps=source_fps)
+
     # ── 📼 事件片段緩衝（觸發前 PRE 秒 / 後 POST 秒）──────────────────────
     # 緩衝塞在 `frame_count % 2` 跳幀之前，存的是原始幀：存已處理幀的話同樣的秒數
     # 只會收到一半份量的畫面，寫出來的片段時間軸整個對不上。
@@ -361,6 +381,13 @@ def camera_worker(camera_id, video_source):
     # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/mask 疊圖/putText/copy），
     # 這些只為 GUI 顯示，HEADLESS 壓測根本不看畫面卻每幀白燒 CPU。快照存檔仍保留（事件證據）。
     _no_render = bool(os.environ.get("NO_RENDER"))
+    if _no_render and detect_pub is not None:
+        # 偵測推流推的就是 Step D 畫出來的那張圖，NO_RENDER 等於把來源整個關掉。
+        # 這兩個開關同時設一定是誤會，講明白比默默推出一片空白好。
+        print(f"⚠️ [{camera_id}] NO_RENDER=1 會跳過畫框渲染，偵測推流沒有畫面可推 → 停用推流"
+              f"（要推流請拿掉 NO_RENDER）")
+        detect_pub.close()
+        detect_pub = None
     # 提速：DETR_EVERY_N=N（N>1）把 rt_detr 環境物件偵測降頻成「每 N 個處理幀才跑一次」，
     # 其餘幀復用上次結果。detr 佔 ~30% 幀時間，但它偵測的全是靜態家具（bed/chair/couch…），
     # results_env 三個下游用途（bed_box 離床、chair_box 座椅滑落、mask 疊圖）都只是
@@ -375,7 +402,8 @@ def camera_worker(camera_id, video_source):
     _fps_run_t0 = time.time()
     
     # 💡 狀態旗標
-    ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標
+    ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標（「曾經發生過」，只進不出）
+    fall_display_until = 0.0    # 畫面紅框顯示到這個時刻為止（見 _FALL_DISPLAY_HOLD_SEC）
     
     # 💡 白名單內唯一的外掛模組（其餘五個已刪，見檔頭與 CLAUDE.md）
     # 間隔拉長的原因：巡檢原本靠 `not is_leaving_bed and not is_wandering` 兩個旗標抑制，
@@ -583,7 +611,16 @@ def camera_worker(camera_id, video_source):
                             hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + kp[12][1]) / 2.0
                             if not (shoulder_x == 0 or hip_x == 0):
                                 body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
-                                if body_angle < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
+                                # body_angle 是「肩→髖」向量與水平線的夾角，值域 0~180°：
+                                #   站立 → 髖在肩正下方 → 約 90°
+                                #   躺著、頭朝右 → 約 0°
+                                #   躺著、頭朝左 → 約 180°   ← 只寫 `< 40` 會整個漏掉這一半
+                                # 取 min(a, 180-a) 換算成「離水平多遠」，兩個躺向都涵蓋。
+                                # 門檻 40 沒動：頭朝右那半的判定與改動前完全相同。
+                                # 實測抓到的：手機當攝影機時量到 167~177°，體角判定形同虛設，
+                                # 全靠長寬比在撐；人朝鏡頭方向倒下（人形框不會變寬）就會漏報。
+                                tilt_from_horizontal = min(body_angle, 180.0 - body_angle)
+                                if tilt_from_horizontal < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
                         except Exception: pass
                             
                         # 跌倒防線 B (幾何遮擋防禦)
@@ -638,10 +675,16 @@ def camera_worker(camera_id, video_source):
         # =========================================================================
         # 🚦 終極決策中樞
         # =========================================================================
-        if should_trigger_fall or ever_detected_fall:
+        # 觸發時記兩件事：ever_detected_fall（「這一路曾經發生過」，供串流結束總結與巡檢
+        # 抑制用，語意本來就是永久的）與 fall_display_until（畫面紅框要顯示到什麼時候）。
+        # 兩者刻意分開：顯示要反映「現在」，而不是「歷史上曾經」。
+        if should_trigger_fall:
+            ever_detected_fall = True
+            fall_display_until = time.time() + _FALL_DISPLAY_HOLD_SEC
+
+        if time.time() < fall_display_until:
             status_text = "FALL DETECTED!"
             color = (0, 0, 255)
-            ever_detected_fall = True
 
         else:
             if len(frame_window) < 30:
@@ -739,6 +782,11 @@ def camera_worker(camera_id, video_source):
             if is_current_frame_valid: last_valid_annotated_frame = annotated_frame.copy()
             with frames_lock: output_frames[camera_id] = annotated_frame.copy()
 
+            # 同一張畫好框的畫面，多送一份到 MediaMTX 的偵測頻道給前端看。
+            # publish() 保證不阻塞也不拋例外：滿了就丟幀，優先保住推論的節奏。
+            if detect_pub is not None:
+                detect_pub.publish(annotated_frame)
+
         # FPS_NO_THROTTLE=1：量純 GPU 吞吐上限時，略過貼齊 source fps 的節流睡眠。
         if not _fps_no_throttle:
             t_elapsed = time.time() - t_start
@@ -746,6 +794,8 @@ def camera_worker(camera_id, video_source):
             if t_sleep > 0: time.sleep(t_sleep)
 
     cap.release()
+    if detect_pub is not None:
+        detect_pub.close()
 
 # =========================================================================
 # 🏢 主執行緒專職 GUI 與排列控制
@@ -761,7 +811,7 @@ if __name__ == "__main__":
     }
     # 相機清單來源開關：
     #   CAMERA_SOURCE=backend（預設）→ 啟動時打後端 GET /devices，只取 status=active 且
-    #     stream_url 非空的裝置，房號用 device_id 對齊（Room_<device_id>_Bed）。真攝影機走這條。
+    #     stream_channel 非空的裝置，房號用 device_id 對齊（Room_<device_id>_Bed）。真攝影機走這條。
     #   CAMERA_SOURCE=hardcoded → 位元級沿用上面三支 mp4（沒有後端的離線 demo / 純量測用）。
     _CAMERA_SOURCE = os.environ.get("CAMERA_SOURCE", "backend").strip().lower()
     if _CAMERA_SOURCE not in ("backend", "hardcoded"):
@@ -773,11 +823,18 @@ if __name__ == "__main__":
     _overrides_replace_all = bool(os.environ.get("SINGLE_SOURCE") or
                                   os.environ.get("STRESS_CAM_COUNT"))
 
+    # 偵測頻道（AI 畫框後要推回去的地方）。只有 CAMERA_SOURCE=backend 這條路拿得到，
+    # 因為它是資料庫欄位；離線 demo / 壓測沒有後端可問，維持不推流。
+    detect_channels = {}
+
     if _CAMERA_SOURCE == "hardcoded" or _overrides_replace_all:
         camera_channels = dict(_HARDCODED_CHANNELS)
     else:
         try:
-            camera_channels = build_camera_channels()
+            # 一次登入 + 一次 GET /devices，原味與偵測兩份清單共用，不重複問後端。
+            _devices = fetch_devices(login())
+            camera_channels = build_camera_channels(devices=_devices)
+            detect_channels = build_detect_channels(devices=_devices)
         except BackendUnavailable as e:
             print("=" * 70)
             print(f"❌ [CAMERA_SOURCE=backend] 無法從後端取得相機清單：{e}")
@@ -786,11 +843,13 @@ if __name__ == "__main__":
             print("     1) 後端沒開 → docker compose up -d backend，再 curl 該位址的 /health")
             print("     2) 帳密沒設 → 在 repo 根目錄 .env 補 BACKEND_API_USER / BACKEND_API_PASSWORD")
             print("     3) 清單是空的 → cd backend && python -m init_db，或用 admin 打 POST /devices")
-            print("        新增一台 status=active 且 stream_url 非空的裝置")
+            print("        新增一台 status=active 且 stream_channel 非空的裝置")
             print("     4) 先不接後端、跑離線 demo → CAMERA_SOURCE=hardcoded python ai/inference_test.py")
             print("=" * 70)
             raise SystemExit(1)
         print(f"📡 [CAMERA_SOURCE=backend] 由後端取得 {len(camera_channels)} 路鏡頭：{camera_channels}")
+        if detect_channels:
+            print(f"📤 其中 {len(detect_channels)} 路有偵測頻道（畫框後推回）：{detect_channels}")
     # 單源量測開關（比照其他開關：未設 = 原三路行為，不留死改動）：
     # SINGLE_SOURCE=<檔案路徑或 rtsp URL> 時，改成「只掛一路」指向該來源，量單路乾淨 FPS
     #（避免三/四路併發共享 GPU 稀釋數字）。相機名固定 Room_301_Bed（device_id=301，已在後端註冊）。
@@ -828,7 +887,9 @@ if __name__ == "__main__":
     
     threads = []
     for cam_id, stream_src in camera_channels.items():
-        t = threading.Thread(target=camera_worker, args=(cam_id, stream_src))
+        # detect_channels 對不到就是 None＝這路不推流（沒設偵測頻道，或走離線 demo）。
+        t = threading.Thread(target=camera_worker,
+                             args=(cam_id, stream_src, detect_channels.get(cam_id)))
         t.daemon = True; threads.append(t); t.start()
 
     # Headless 壓測開關（未設 = 原本 GUI 行為，不留死改動）：HEADLESS=1 時主執行緒不畫

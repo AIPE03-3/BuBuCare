@@ -1,5 +1,5 @@
 [
-  { "id": 3,  "name": "鏡頭3",  "zone": "走廊A",       "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
-  { "id": 11, "name": "鏡頭11", "zone": "浴室B",       "floor": null, "stream_url": null, "stream_source": null, "status": "online" },
-  { "id": 7,  "name": "鏡頭7",  "zone": "302廁所入口", "floor": null, "stream_url": null, "stream_source": null, "status": "offline" }
+  { "id": 3,  "name": "鏡頭3",  "zone": "走廊A",       "floor": null, "stream_url": null, "stream_url_detect": null, "status": "online" },
+  { "id": 11, "name": "鏡頭11", "zone": "浴室B",       "floor": null, "stream_url": null, "stream_url_detect": null, "status": "online" },
+  { "id": 7,  "name": "鏡頭7",  "zone": "302廁所入口", "floor": null, "stream_url": null, "stream_url_detect": null, "status": "offline" }
 ]
