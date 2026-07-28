@@ -16,7 +16,8 @@ def test_get_devices_returns_seed_device(client, auth_headers):
         "device_name": "交誼廳-01",
         "location": "交誼廳",
         "floor": None,          # 種子 Location 沒設樓層
-        "stream_url": None,
+        "stream_url": None,     # 種子未填頻道名，且測試環境沒設 MEDIAMTX_BASE_URL
+        "stream_url_detect": None,
         "status": "active",
     }
 

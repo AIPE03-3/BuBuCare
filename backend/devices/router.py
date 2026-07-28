@@ -4,11 +4,26 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from core import config  # import 模組而非常數：讓測試能用 monkeypatch 換掉 MEDIAMTX_BASE_URL
 from core.database import get_db
 from core.dependencies import get_current_user, require_admin
 from core.models import Device
 
 router = APIRouter()
+
+
+def whep_url(channel: str | None) -> str | None:
+    """把資料庫裡的頻道名，接上 .env 的 MediaMTX 位址，組成瀏覽器可用的 WHEP 網址。
+
+    頻道名對齊 AI 端命名：cam_in（進 AI 前的原味）／cam_out（AI 畫框後）。
+    傑雅版原本叫 my_camera_tapo，語意等同 cam_in；改名理由是 cam_in/cam_out 描述的是
+    「在 AI 的哪一端」，換攝影機廠牌也不會過期。
+
+    位址或頻道名任一為空 → 回 None，代表「這個環境沒有這條串流」，前端據此退回占位框。
+    """
+    if not config.MEDIAMTX_BASE_URL or not channel:
+        return None
+    return f"{config.MEDIAMTX_BASE_URL.rstrip('/')}/{channel}/whep"
 
 
 def serialize_device(device: Device) -> dict:
@@ -19,7 +34,8 @@ def serialize_device(device: Device) -> dict:
         "device_name": device.device_name,
         "location": device.location.location_name if device.location else None,
         "floor": device.location.floor if device.location else None,
-        "stream_url": device.stream_url,
+        "stream_url": whep_url(device.stream_url),
+        "stream_url_detect": whep_url(device.stream_url_detect),
         "status": device.status,
     }
 
