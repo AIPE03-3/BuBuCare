@@ -74,11 +74,14 @@ class Device(Base):  # 攝影機裝置
         Enum("active", "inactive", "fault", name="device_status", create_constraint=True),
         nullable=False, default="active"
     )
-    # 兩個串流欄位存的都是「頻道名」（如 cam_in），不是完整網址；主機位址在 .env
-    # stream_url        = 原味頻道（進 AI 前）
-    # stream_url_detect = 偵測頻道（AI 畫框後），沒接 AI 的鏡頭留 NULL
-    stream_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    stream_url_detect: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # 兩個欄位存的都是「頻道名」（如 cam_in），不是完整網址——主機位址在 .env，
+    # 由各消費端自己接上：瀏覽器組 http://…:8889/<頻道>/whep、AI 端組 rtsp://…:8554/<頻道>。
+    # 存頻道名而非網址的理由：換場地／換電腦只有主機位址會變，頻道名永遠不變。
+    # （曾因舊名 stream_url 誤導，被填入 rtsp://127.0.0.1:8554/... 這種只在填寫者本機有效的位址。）
+    # stream_channel        = 原味頻道（進 AI 前）
+    # stream_channel_detect = 偵測頻道（AI 畫框後），沒接 AI 的鏡頭留 NULL
+    stream_channel: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    stream_channel_detect: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.company_id"), nullable=False)
 
     # 關聯屬性：程式可直接寫 device.location.location_name，SQLAlchemy 依 location_id 自動查
