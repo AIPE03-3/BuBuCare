@@ -14,8 +14,16 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
 };
 
 // 潛在危險（物件偵測）可辨識的危險物品類型；跌倒事件此欄為 null。
-export type HazardObject = '刀具' | '熱源' | '藥品' | '玻璃碎片' | '積水' | '其他';
-export const HAZARD_OBJECTS: HazardObject[] = ['刀具', '熱源', '藥品', '玻璃碎片', '積水', '其他'];
+// 值＝AI 端 rt_detr 的 COCO class name 原字串，三層（AI／後端／前端）傳同一個 key 不做翻譯，
+// 顯示文字一律走 HAZARD_OBJECT_LABEL（同 STATUS_LABEL／EVENT_TYPE_LABEL 慣例），元件外禁止另寫死。
+// ⚠ 僅列 COCO 80 類中實際存在、且模型真的會回報的類別。藥品／玻璃碎片／積水不在 COCO，
+//   需等重訓模型才能加；先寫進來只會變成永不觸發的死選項。
+export type HazardObject = 'knife' | 'scissors';
+export const HAZARD_OBJECT_LABEL: Record<HazardObject, string> = {
+  knife: '刀具',
+  scissors: '剪刀',
+};
+export const HAZARD_OBJECTS: HazardObject[] = ['knife', 'scissors'];
 
 // 通報狀態：獨立於事件生命週期 status（pending/in_progress/resolved）之外的上報流程追蹤。
 // 初報→續報→結報。null＝尚未通報。

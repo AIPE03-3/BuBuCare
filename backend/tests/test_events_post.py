@@ -35,6 +35,33 @@ def test_裝置不存在_400(client):
 
 def test_缺必填欄位_422(client):
     body = dict(VALID_BODY)
-    del body["clip_path"]  # clip_path 是必填
+    del body["detected_at"]  # detected_at 是必填
     res = client.post("/events", json=body, headers=API_KEY_HEADERS)
     assert res.status_code == 422
+
+
+# ── clip_path：Pydantic 層放行（hazard 沒有影片），業務規則在 service 層擋 ──
+
+def test_跌倒缺clip_path_400(client):
+    """跌倒有明確事發時刻、一定錄得到片段，沒帶就是判斷層漏送，當場擋下。"""
+    body = dict(VALID_BODY)
+    del body["clip_path"]
+    res = client.post("/events", json=body, headers=API_KEY_HEADERS)
+    assert res.status_code == 400
+
+
+def test_hazard缺clip_path_201(client):
+    """潛在危險是持續狀態（桌上有把刀），沒有「事發前後 N 秒」可錄，只有快照。"""
+    body = {
+        "device_id": 1,
+        "event_type": "hazard",
+        "detected_at": "2026-07-28T09:00:00",
+        "snapshot_path": "s3://snaps/knife.jpg",
+        "hazard_object": "knife",
+    }
+    res = client.post("/events", json=body, headers=API_KEY_HEADERS)
+    assert res.status_code == 201
+    data = res.json()
+    assert data["event_type"] == "hazard"
+    assert data["clip_path"] is None
+    assert data["hazard_object"] == "knife"   # 存 COCO class name 原字串，不翻中文

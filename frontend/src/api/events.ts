@@ -40,7 +40,7 @@ export interface RawEventPayload {
   vlm_summary: string | null;   // VLM 情境描述純文字（後端 DB 為 Text 欄位）
   report_stage: string | null;  // 最新一筆通報單的類型（initial/follow_up/final），無通報單為 null
   last_report_at: string | null; // 最新一筆通報單的儲存時間，續報期限由此起算
-  hazard_object?: string | null; // 潛在危險事件才有；後端實際欄位未定，先預留（見 DevTestPanel）
+  hazard_object: string | null; // 潛在危險事件才有（COCO class name）；跌倒事件為 null
 }
 
 /**
@@ -80,9 +80,10 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
 
   return {
     id: raw.event_id,
-    // hazard＝物件偵測（危險物品）；其餘一律當跌倒。後端 hazard 實際字串未定，先以 'hazard' 對應（見 DevTestPanel）。
+    // hazard＝物件偵測（危險物品）；其餘一律當跌倒。
     event_type: raw.event_type === 'hazard' ? 'hazard' : 'fall',
-    // 危險物品類型：僅取後端有效值，其餘一律 null（跌倒事件亦為 null）。
+    // 危險物品類型：僅取前端認得的 class name，其餘一律 null（跌倒事件亦為 null）。
+    // 白名單過濾的用意：模型日後重訓長出新類別時，前端在補上 label 前不會顯示看不懂的英文原字串。
     hazard_object: HAZARD_OBJECTS.find((o) => o === raw.hazard_object) ?? null,
     camera,
     occurred_at: normalizeBackendTime(raw.detected_at),

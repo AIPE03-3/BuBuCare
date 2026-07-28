@@ -4,7 +4,7 @@ import { getCameras } from '../api/cameras';
 import { MonitorIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
 import { formatTime } from '../utils/time';
-import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, type AlertLogEntry, type Camera, type CareEvent } from '../types';
+import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, HAZARD_OBJECT_LABEL, type AlertLogEntry, type Camera, type CareEvent } from '../types';
 
 // 切換鏡頭畫面選單。桌機置於右欄頂端、手機緊接鏡頭下方，故抽成元件於兩處各渲染一次
 // （以 lg:hidden／hidden lg:block 控制，同一時間僅一個可見，不會重複讀屏）。
@@ -62,7 +62,7 @@ function AlertLogCard({ entry, onClick }: { entry: AlertLogEntry; onClick?: () =
         </span>
         <span className="truncate text-sm text-[var(--text-primary)]">
           {entry.cameraName}
-          {entry.hazardObject && `・${entry.hazardObject}`}
+          {entry.hazardObject && `・${HAZARD_OBJECT_LABEL[entry.hazardObject]}`}
         </span>
       </div>
       <span className="shrink-0 text-xs text-[var(--text-muted)]">{formatTime(entry.at)}</span>

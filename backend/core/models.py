@@ -111,7 +111,10 @@ class DetectEvent(Base):  # 跌倒事件主表
         Enum("true_alarm", "false_alarm", name="event_verdict", create_constraint=True), nullable=True
     )
 
-    clip_path: Mapped[str] = mapped_column(String(255), nullable=False)  # 事件影像片段
+    # 事件影像片段。可空是為了 hazard（潛在危險）：那是「桌上有把刀」這種持續狀態，
+    # 沒有「事發前後 N 秒」可錄，只有快照。跌倒/滑落仍強制要有，由 service 層把關
+    # （見 handle_incoming_event）——DB 放寬到 nullable，業務規則寫在服務層。
+    clip_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     snapshot_path: Mapped[Optional[str]] = mapped_column(String(255))    # 截圖
     detected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     # 前端第一次回報收到（ack）的時間；NULL = 尚未收到，重推機制據此判斷要不要補推
@@ -127,6 +130,11 @@ class DetectEvent(Base):  # 跌倒事件主表
 
     yolo_score: Mapped[Optional[float]] = mapped_column(Float)      # 該事件 YOLO 打的分數
     vlm_summary: Mapped[Optional[str]] = mapped_column(Text)        # VLM 情境描述
+
+    # 潛在危險（event_type="hazard"）偵測到的物品，存 COCO class name 原字串（knife/scissors）。
+    # 不存中文：顯示文字是前端的事（前端 HAZARD_OBJECT_LABEL 負責翻譯），三層傳同一個 key。
+    # 跌倒事件為 NULL。不做 Enum 是因為值域會隨模型重訓長出新類別，不該每次都動 DB 型別。
+    hazard_object: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # 顯示事件位置走這個關聯（凍住的 location_id），不要繞去 device.location（那是裝置現況）
     location: Mapped[Optional["Location"]] = relationship("Location")

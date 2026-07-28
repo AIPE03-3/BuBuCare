@@ -98,10 +98,15 @@ class AlertMessage(BaseModel):
 # 2. Kafka 2 輸出（現有格式的超集）
 # ════════════════════════════════════════════════════════
 class ProcessedReport(BaseModel):
-    """送往 processed-reports 的訊息。
+    """送往 processed-reports 的訊息（**跌倒/滑落這條**）。
 
     上半部欄位的名稱、型別、語意與 vlm_worker.py 現況完全一致；
     下半部是新增的 ai_* 欄位，全部 optional，舊 consumer 忽略也不壞。
+
+    ⚠ 這不是 processed-reports 上唯一的訊息形狀：AI 端的潛在危險事件
+    （event_type="hazard"，見 ai/inference_test.py:build_hazard_payload）也直接送這個
+    topic，且不經 agent，形狀不同（clip_path 為 None、多一個 hazard_object）。
+    後端 consumer 原樣轉發不驗 schema，故兩種並存沒問題；但別把本類別當成該 topic 的全集。
     """
 
     # ── 既有欄位（不得更動）──

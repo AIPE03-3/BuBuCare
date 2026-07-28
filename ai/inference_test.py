@@ -59,6 +59,82 @@ FAST_TRACK_CONF = 0.90  # 規格：AcT 信心 ≥0.9 直入 PG、<0.9 走 VLM �
 TOPIC_PROCESSED_REPORTS = "processed-reports"   # 高信心快速道 + 二審完成 → 後端 consumer 寫 PG
 TOPIC_NURSING_HOME_ALERTS = "nursing-home-alerts"  # 低信心 → VLM 二審佇列
 
+# =========================================================================
+# ⚠️ 潛在危險物品偵測（event_type="hazard"）
+# =========================================================================
+# 跟跌倒是**兩種不同形狀的事件**，別套同一套邏輯：
+#   - 跌倒＝瞬間事件：有明確事發時刻，錄前後 N 秒成 clip，靠 vlm_triggered 一次性閂鎖擋重複。
+#   - 危險物品＝持續狀態：刀放在桌上會「每一幀都偵測到」，且被收走後再出現應該要能再報。
+#     故它沒有 clip（沒有「事發前後」可錄，只存快照），去重也不能用永不重置的閂鎖，
+#     必須用「出現→確認→消失」的狀態機（見 camera_worker 內 _hazard_state）。
+#
+# 類別限定 COCO 80 類內真的有的東西。藥品/玻璃碎片/積水不在 COCO，得等重訓才有
+# （同 wheelchair 的處境，見 triton_detr_client 檔頭）——不要先寫進來變成永不觸發的死碼。
+# 熱源家電（oven/toaster/microwave）刻意不收：那是固定家電，只要在畫面裡就永遠偵測得到，
+# 收了等於永久亮著的告警，要做得先設計區域白名單或時段規則。
+HAZARD_CLASSES = {"knife", "scissors"}
+
+# 三個門檻都走 cfg() 而不是 os.environ.get：專案的 .env 是用 dotenv_values 讀成 dict、
+# 刻意不注入 os.environ（見 backend_devices 檔頭），只讀 os.environ 會看不到 .env 的設定。
+# 這些是長期調校參數（要寫進 .env 常駐），不同於 DETR_EVERY_N/NO_RENDER 那種臨時壓測開關。
+#
+# 危險物品的信心門檻。比環境家具的 0.35 嚴：家具偵錯了頂多空間參考框歪一點，
+# 危險物品偵錯了是直接推一則告警去吵護理師，誤報成本高得多。
+HAZARD_CONF = float(cfg("HAZARD_CONF", "0.5"))
+# 連續看到 N 次才確認成立（防單幀閃爍誤報）。
+HAZARD_CONFIRM_FRAMES = int(cfg("HAZARD_CONFIRM_FRAMES", "5"))
+# 連續 M 次沒看到才判定物品已移除（防短暫遮擋就誤判消失，導致一移開就重報）。
+HAZARD_GONE_FRAMES = int(cfg("HAZARD_GONE_FRAMES", "30"))
+
+
+def camera_numeric_id(camera_id):
+    """相機代號取數字當 device_id（Room_301_Bed → 301）；取不到退 1（同原地端行為）。"""
+    try:
+        return int(''.join(filter(str.isdigit, camera_id)))
+    except ValueError:
+        return 1
+
+
+def save_event_snapshot(camera_id, frame):
+    """事件快照落地，回 (檔名, 完整路徑, 時間戳字串)。
+
+    時間戳一併回傳是因為跌倒的 clip 檔名要跟快照對齊（同一起事件的兩個檔看得出是一組）。
+    """
+    time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    name = f"snapshot_{camera_id}_{time_str}.jpg"   # 帶秒級時間戳，檔名不重複
+    snapshot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
+    os.makedirs(snapshot_dir, exist_ok=True)
+    full_path = os.path.join(snapshot_dir, name)
+    cv2.imwrite(full_path, frame)
+    return name, full_path, time_str
+
+
+def build_hazard_payload(*, hazard_class, numeric_id, detected_at,
+                         snapshot_full_path, snapshot_name, score):
+    """組一則潛在危險事件，固定走快速道（processed-reports）→ 後端直接落庫。
+
+    不做信心分流（不同於 route_by_confidence）：物件偵測是「畫面裡有沒有這個東西」的
+    明確判斷，不像跌倒那樣需要 VLM 讀情境（是真跌倒還是自己蹲下）。送 VLM 二審只會
+    多一層延遲跟成本，換不到任何額外資訊。
+
+    `clip_path` 固定為 None：持續狀態沒有「事發前後 N 秒」可錄，只帶快照。後端已放寬
+    此欄位為選填（僅 hazard 可空，跌倒仍強制要有，見 events/service.py）。
+
+    `hazard_object` 直接送 COCO class name（英文），不在這裡翻中文——顯示文字是前端的事
+    （前端 HAZARD_OBJECT_LABEL 負責），三層之間傳同一個 key，不做語意轉換。
+    """
+    return TOPIC_PROCESSED_REPORTS, {
+        "device_id": numeric_id,
+        "event_type": "hazard",
+        "hazard_object": hazard_class,
+        "clip_path": None,
+        "detected_at": detected_at,
+        "snapshot_path": snapshot_full_path,
+        "image_filename": snapshot_name,
+        "yolo_score": score,
+        "vlm_summary": f"【潛在危險】偵測到 {hazard_class}，請確認是否需要移除。",
+    }
+
 
 def route_by_confidence(*, act_confidence, is_chair_slipped, is_occluded_fall,
                         event_label, numeric_id, clip_path, detected_at,
@@ -353,6 +429,9 @@ def camera_worker(camera_id, video_source):
     _detr_every_n = max(1, int(os.environ.get("DETR_EVERY_N", "1")))
     _detr_proc_idx = 0          # 已處理幀計數（只給 detr 降頻用，與 FPS 計數解耦）
     _cached_results_env = None  # 上次 detr 結果，跳過的幀復用
+    # ⚠️ 潛在危險物品狀態機：key=COCO class name，value={streak/missing/reported}。
+    # 每支相機各自一份（區域獨立：A 房的刀跟 B 房的刀是兩回事）。
+    _hazard_state = {}
     _fps_t0 = time.time()
     _fps_n = 0            # 本區間已處理幀數
     _fps_proc_total = 0   # 累計已處理幀數
@@ -505,9 +584,62 @@ def camera_worker(camera_id, video_source):
             # 失敗時的 None 也一併寫回快取：Triton 斷線就該讓下游看到 None，
             # 不能拿幾幀前的舊框假裝偵測還活著（保住原本的斷線降級語意）。
             _cached_results_env = results_env
+            _detr_updated = True   # 這幀 detr 真的跑了，危險物品狀態機可以推進
         else:
             results_env = _cached_results_env
+            _detr_updated = False  # 復用快取，狀態機不動（理由見下方狀態機註解）
         _detr_proc_idx += 1
+
+        # =====================================================================
+        # ⚠️ 潛在危險物品狀態機：出現 → 確認 → 報一次 → 消失 → 可再報
+        # =====================================================================
+        # 只在 detr 真的更新的幀推進。降頻（DETR_EVERY_N>1）時 results_env 是復用上一次的
+        # 結果，每幀都算會讓 streak 用同一批偵測結果灌水，HAZARD_CONFIRM_FRAMES 就形同虛設。
+        if _detr_updated and results_env is not None:
+            # 這輪看到的危險物品：class name -> 最高信心。
+            # 同類取最高分而非各報一則：畫面裡兩把刀，護理師要的是「這裡有刀」一則通知。
+            seen_now = {}
+            for box in results_env[0].boxes:
+                cls_name = yolo_env_model.names[int(box.cls[0].item())]
+                score = float(box.conf[0].item())
+                if cls_name in HAZARD_CLASSES and score >= HAZARD_CONF:
+                    seen_now[cls_name] = max(score, seen_now.get(cls_name, 0.0))
+
+            # 1) 這輪沒看到的既有狀態：累積 missing，滿了就整筆刪除。
+            #    刪除＝忘記「已報過」，所以物品被收走後再出現能重新告警（跌倒的 vlm_triggered
+            #    是永不重置的閂鎖，那套在這裡會變成「一輩子只報第一把刀」）。
+            for cls_name in list(_hazard_state):
+                if cls_name in seen_now:
+                    continue
+                state = _hazard_state[cls_name]
+                state["missing"] += 1
+                if state["missing"] >= HAZARD_GONE_FRAMES:
+                    del _hazard_state[cls_name]
+
+            # 2) 這輪看到的：累積 streak，連續看到夠多次才確認成立、發一則。
+            for cls_name, score in seen_now.items():
+                state = _hazard_state.setdefault(cls_name, {"streak": 0, "missing": 0, "reported": False})
+                state["streak"] += 1
+                state["missing"] = 0
+                if state["reported"] or state["streak"] < HAZARD_CONFIRM_FRAMES:
+                    continue
+
+                # 確認成立：標記已報，物品消失（狀態被刪）前不再重複發，避免每幀洗版。
+                state["reported"] = True
+                if producer is None:
+                    continue
+                snapshot_name, snapshot_full_path, _ = save_event_snapshot(camera_id, frame)
+                topic, payload = build_hazard_payload(
+                    hazard_class=cls_name,
+                    numeric_id=camera_numeric_id(camera_id),
+                    detected_at=datetime.now().isoformat(),  # 符合後端解析的 ISO 時間字串
+                    snapshot_full_path=snapshot_full_path,
+                    snapshot_name=snapshot_name,
+                    score=score,
+                )
+                producer.send(topic, value=payload)
+                producer.flush()
+                print(f"⚠️ [{camera_id}] 潛在危險：偵測到 {cls_name}（信心 {score:.2f}），已通報。")
 
         bed_box_xyxy = None
 
@@ -518,7 +650,6 @@ def camera_worker(camera_id, video_source):
                 cls_id = int(box.cls[0].item())
                 if yolo_env_model.names[cls_id] == "bed":
                     bed_box_xyxy = box.xyxy.cpu().numpy()[0]
-
 
         current_pose_feat = np.zeros(34, dtype=np.float32)
         is_current_frame_valid = False
@@ -661,25 +792,17 @@ def camera_worker(camera_id, video_source):
         # =========================================================================
         if (should_trigger_fall or is_chair_slipped) and not vlm_triggered:
             # 🧠 1. 解析並對齊 device_id 為 int
-            try:
-                numeric_id = int(''.join(filter(str.isdigit, camera_id)))
-            except ValueError:
-                numeric_id = 1
-                
+            numeric_id = camera_numeric_id(camera_id)
+
             # 🧠 2. 對齊事件型態字串
             event_label = "chair_slip" if is_chair_slipped else "fall"
-            
+
             # 🧠 3. 基礎 YOLO 推理數據規格化
             final_score = float(act_confidence) if act_confidence > 0 else 0.70
             yolo_thresh = 0.45 if event_label == "fall" else 0.35
 
             # 🧠 4. 【生產品級核心】動態不重複檔名機制 (帶精確時間戳)
-            current_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-            snapshot_name = f"snapshot_{camera_id}_{current_time_str}.jpg"  # 不重複檔名
-            snapshot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
-            os.makedirs(snapshot_dir, exist_ok=True)
-            snapshot_full_path = os.path.join(snapshot_dir, snapshot_name)
-            cv2.imwrite(snapshot_full_path, frame)  # 實體不重複存檔留存
+            snapshot_name, snapshot_full_path, current_time_str = save_event_snapshot(camera_id, frame)
 
             if producer is not None:
                 vlm_triggered = True

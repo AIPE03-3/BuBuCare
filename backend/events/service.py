@@ -15,6 +15,17 @@ class DeviceNotFoundError(Exception):
     pass
 
 
+class MissingClipPathError(Exception):
+    # 跌倒/滑落事件沒帶影片位置。入口層自己決定怎麼回應（HTTP 入口回 400）
+    pass
+
+
+# 唯一允許不帶 clip_path 的事件類型：潛在危險是持續狀態，沒有「事發前後 N 秒」可錄。
+# 其餘（fall / chair_slip）沒影片就是判斷層漏帶，要當場擋下——不然前端點開播不出東西，
+# 而且錯誤會被延後到使用者面前才發現。
+_CLIPLESS_EVENT_TYPES = {"hazard"}
+
+
 def serialize_event(
     event: DetectEvent,
     device: Device,
@@ -55,6 +66,8 @@ def serialize_event(
         "company_id": event.company_id,
         "yolo_score": event.yolo_score,
         "vlm_summary": event.vlm_summary,
+        # 潛在危險偵測到的物品（COCO class name）；跌倒事件為 None。前端負責翻成顯示文字
+        "hazard_object": event.hazard_object,
     }
 
 
@@ -123,6 +136,10 @@ def handle_incoming_event(db: Session, data: dict) -> dict:
     device = db.query(Device).filter(Device.device_id == data["device_id"]).first()
     if device is None:
         raise DeviceNotFoundError(f"裝置 {data['device_id']} 不存在")
+
+    # 1.5 影片位置：只有 hazard 可以不帶（見 _CLIPLESS_EVENT_TYPES）
+    if data.get("event_type") not in _CLIPLESS_EVENT_TYPES and not data.get("clip_path"):
+        raise MissingClipPathError(f"{data.get('event_type')} 事件必須帶 clip_path")
 
     # 2. 先存 DB（status 一律後端設 pending，company_id / location_id 都跟著裝置當下狀態凍一份）
     event = DetectEvent(**data, company_id=device.company_id, location_id=device.location_id)

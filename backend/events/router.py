@@ -15,7 +15,10 @@ from core.config import EVENT_API_KEY
 from core.database import get_db
 from core.dependencies import get_current_user
 from core.models import DetectEvent, Device, User
-from events.service import handle_incoming_event, operator_names, serialize_event, watch_delivery, DeviceNotFoundError
+from events.service import (
+    handle_incoming_event, operator_names, serialize_event, watch_delivery,
+    DeviceNotFoundError, MissingClipPathError,
+)
 from events.sse import pool, format_sse
 
 router = APIRouter()
@@ -32,11 +35,14 @@ def require_api_key(x_api_key: Optional[str] = Header(None)):
 class EventCreateRequest(BaseModel):
     device_id: int
     event_type: str
-    clip_path: str
+    # clip_path 選填是為了 hazard（潛在危險無影片片段，只有快照）。
+    # 跌倒/滑落仍強制要有——這條規則在 handle_incoming_event 把關，不是這裡放生。
+    clip_path: Optional[str] = None
     detected_at: datetime
     snapshot_path: Optional[str] = None
     yolo_score: Optional[float] = None
     vlm_summary: Optional[str] = None
+    hazard_object: Optional[str] = None  # 潛在危險偵測到的物品（COCO class name）；跌倒為 None
 
 
 # ════════════════════════════════════════════════════════
@@ -48,7 +54,7 @@ async def create_event(body: EventCreateRequest, db: Session = Depends(get_db)):
     try:
         # model_dump() 把 Pydantic 物件轉成 dict，交給共用處理函式
         payload = handle_incoming_event(db, body.model_dump())
-    except DeviceNotFoundError as e:
+    except (DeviceNotFoundError, MissingClipPathError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     # 廣播後啟動背景任務盯送達。放這裡而非 handle_incoming_event 內：
     # 路由是 async、有 event loop；handle_incoming_event 是同步、被測試直接呼叫時沒 loop

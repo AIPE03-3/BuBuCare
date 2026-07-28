@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { BackButton } from '../components/BackButton';
 import { useEvents } from '../hooks/eventsContext';
 import { formatDateTime } from '../utils/time';
-import { CAMERA_LABEL } from '../types';
+import { CAMERA_LABEL, HAZARD_OBJECT_LABEL } from '../types';
 
 function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -46,7 +46,10 @@ export function HazardDetail() {
 
         <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-surface)] p-5 shadow-sm">
           <h2 className="mb-2 text-base font-semibold text-[var(--text-primary)]">危險資訊</h2>
-          <InfoRow label="物品類型" value={hazard.hazard_object ?? '—'} />
+          <InfoRow
+            label="物品類型"
+            value={hazard.hazard_object ? HAZARD_OBJECT_LABEL[hazard.hazard_object] : '—'}
+          />
           <InfoRow label="偵測時間" value={formatDateTime(hazard.occurred_at)} />
           <InfoRow label="偵測地點" value={`${hazard.camera.zone}（${hazard.camera.name}）`} />
           <InfoRow

@@ -1,5 +1,6 @@
 import { ResponsiveEventList, type EventListColumn } from './ResponsiveEventList';
 import { formatDateTime } from '../utils/time';
+import { HAZARD_OBJECT_LABEL } from '../types';
 import type { CareEvent } from '../types';
 
 // 潛在危險清單：事件中心「潛在危險」頁與歷史「已排除危險」頁共用同一版型，
@@ -24,7 +25,11 @@ const columns: EventListColumn[] = [
   {
     key: 'object',
     header: '物品類型',
-    cell: (event) => <span className="text-[var(--text-primary)]">{event.hazard_object ?? '—'}</span>,
+    cell: (event) => (
+      <span className="text-[var(--text-primary)]">
+        {event.hazard_object ? HAZARD_OBJECT_LABEL[event.hazard_object] : '—'}
+      </span>
+    ),
   },
 ];
 
