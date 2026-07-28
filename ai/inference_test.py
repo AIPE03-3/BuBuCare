@@ -145,6 +145,12 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
 # （刻意不注入 os.environ，見 backend_devices 檔頭），只讀 os.environ 會完全看不到 .env 的設定。
 _CLIP_PRE_SEC = float(cfg("CLIP_PRE_SEC", "5"))
 _CLIP_POST_SEC = float(cfg("CLIP_POST_SEC", "5"))
+# 畫面上「FALL DETECTED!」紅框在最後一次觸發後還要顯示多久。
+# 為什麼需要這個而不是「偵測到就一直紅」：紅框原本掛在 ever_detected_fall 這個只進不出的
+# 旗標上，第一次觸發之後畫面就永遠是紅的，值班人員再也無法從畫面判斷現在有沒有事——
+# 接真攝影機（worker 一跑好幾天）等於這個指示燈失效。實測用手機當攝影機時複現。
+# 也不能純粹看當下那一幀：偵測會逐幀跳動，紅框會閃爍到無法判讀。故用「保持數秒」。
+_FALL_DISPLAY_HOLD_SEC = float(cfg("FALL_DISPLAY_HOLD_SEC", "10"))
 # 緩衝存的是「原始幀」（塞在跳幀之前），1080p 全解析度下前後 10 秒每台相機要吃 ~1.8GB，
 # 多路併發直接 OOM。故片段緩衝獨立降寬——推論吃的仍是原圖，完全不受影響。
 # H.264 要求邊長為偶數，故抹掉奇數位。設 0＝不縮放（記憶體自負）。
@@ -396,7 +402,8 @@ def camera_worker(camera_id, video_source, detect_url=None):
     _fps_run_t0 = time.time()
     
     # 💡 狀態旗標
-    ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標
+    ever_detected_fall = False  # 模組 C：全域歷史記憶鎖旗標（「曾經發生過」，只進不出）
+    fall_display_until = 0.0    # 畫面紅框顯示到這個時刻為止（見 _FALL_DISPLAY_HOLD_SEC）
     
     # 💡 白名單內唯一的外掛模組（其餘五個已刪，見檔頭與 CLAUDE.md）
     # 間隔拉長的原因：巡檢原本靠 `not is_leaving_bed and not is_wandering` 兩個旗標抑制，
@@ -659,10 +666,16 @@ def camera_worker(camera_id, video_source, detect_url=None):
         # =========================================================================
         # 🚦 終極決策中樞
         # =========================================================================
-        if should_trigger_fall or ever_detected_fall:
+        # 觸發時記兩件事：ever_detected_fall（「這一路曾經發生過」，供串流結束總結與巡檢
+        # 抑制用，語意本來就是永久的）與 fall_display_until（畫面紅框要顯示到什麼時候）。
+        # 兩者刻意分開：顯示要反映「現在」，而不是「歷史上曾經」。
+        if should_trigger_fall:
+            ever_detected_fall = True
+            fall_display_until = time.time() + _FALL_DISPLAY_HOLD_SEC
+
+        if time.time() < fall_display_until:
             status_text = "FALL DETECTED!"
             color = (0, 0, 255)
-            ever_detected_fall = True
 
         else:
             if len(frame_window) < 30:
