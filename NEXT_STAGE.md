@@ -61,9 +61,13 @@ kelly 已經做好前端「即時／偵測」切換鈕、後端 `stream_channel_
 所以切到「偵測」永遠是空的。設定檔註解原本寫「正式來源是 albert 的推論程式，尚未實作」。
 
 新增 [`ai/detect_publisher.py`](ai/detect_publisher.py)，把 `inference_test.py` 早就畫好的
-`annotated_frame` 多開一條出口推回 MediaMTX。**用 PyAV 不用 ffmpeg 子程序**：PyAV 已是
-本專案相依（`av_reader.py` 拉流就是用它）且自帶 libx264，而這台 5060 Ti 沒有 ffmpeg
-也無法自行安裝——走子程序方案等於功能不能用。
+`annotated_frame` 多開一條出口推回 MediaMTX：開一支 **ffmpeg 子程序**，stdin 收 BGR 原始幀，
+編成 H.264 推進去。與 kelly 的 `start-fake-detect.ps1` 走同一條路（ffmpeg → rtsp），
+差別只在畫面來源從「ffmpeg 自己畫的固定紅框」換成「AI 真正畫的骨架與框」。
+
+**需要機器上裝 ffmpeg**（`sudo apt install ffmpeg` / `winget install Gyan.FFmpeg`）。
+裝在非標準位置時可用 `DETECT_STREAM_FFMPEG` 指定完整路徑。找不到就不推流並印訊息，
+其餘功能完全不受影響（三種降級路徑都實測過）。
 
 ### ⚠️ 事件片段與快照「刻意」維持無框，不要修好它
 
@@ -74,21 +78,29 @@ kelly 已經做好前端「即時／偵測」切換鈕、後端 `stream_channel_
 兩條路實測確認是分開的——同一次跑，`cam_out` 讀回來有骨架與 `person 0.90` 的框，
 事件片段同一時段的畫面乾淨無框。
 
-### 實測踩到的坑：時間戳不能直接用真實時鐘
+### 實測踩到的坑：時間戳這組參數兩個都不能少
 
-平順推流時完全正常（連推 263 幀沒事），但**推論速度一抖動就整條斷掉**：libx264 以
-`rate=fps` 開，muxer 會把 pts 換算回 `1/fps` 的刻度，相鄰兩幀若擠進同一格就 DTS 撞號，
-RTSP muxer 回 `Invalid argument(22)`。改成「真實時鐘與最小間隔取大值」。
-用爆量＋停頓的不規則節奏重測 200 幀：送出 191、丟 9、零中斷。
+`-use_wallclock_as_timestamps 1` 與 `-fps_mode cfr` 要一起用：
 
-**這個坑值得記**：happy path 測起來完全正常，只有在速度抖動的那一瞬間才炸。
+- **少了 wallclock**：rawvideo 照 `-r` 推算時間，但推論的實際張數低於名目值且會變動，
+  串流會變慢動作、延遲一路累積不會回頭。
+- **少了 CFR 整流**：光靠真實時鐘，編碼器以 `-r` 的刻度記時間戳，推論速度一抖動、
+  相鄰兩幀擠進同一格就 DTS 撞號，整條推流直接斷掉。
+
+**這個坑值得記**：平順推流時完全正常（連推兩百多幀沒事），只有在速度抖動的那一瞬間
+才炸。驗證時要刻意用「爆量＋停頓」的不規則節奏測，等速測試看不出來。
+實測 200 幀不規則節奏：送出 187、丟 13、零中斷。
 
 ### 開關與已知限制
 
 - `DETECT_STREAM=1` 才推，未設＝位元級原行為（已實測）。
+- 需要 ffmpeg；沒裝、或 `DETECT_STREAM_FFMPEG` 指到不存在的路徑，都會印訊息後略過推流
+  （兩種都實測過，不影響其他功能）。
 - 與 `NO_RENDER=1` 互斥（那個開關跳過畫框，等於沒畫面可推），偵測到會明講並停用。
-- 這台機器沒有 MediaMTX，驗證時是臨時抓 v1.19.3 binary 起在本機跑的；要在這台看到
-  即時畫面，得先把 MediaMTX 常駐起來並設 `MEDIAMTX_BASE_URL`（目前刻意留空＝灰色占位框）。
+- 推流的 FPS 成本：10.1（未推流 10.5~12），約在雜訊範圍邊緣，可接受。
+- 這台機器沒有 MediaMTX 也沒有 ffmpeg，驗證時是臨時抓 MediaMTX v1.19.3 與免安裝的
+  靜態 ffmpeg 7.0.2 起在本機跑的。要在這台常態使用，得把兩者都裝好並設
+  `MEDIAMTX_BASE_URL`（目前刻意留空＝灰色占位框）。
 
 ---
 
