@@ -29,11 +29,18 @@ def whep_url(channel: str | None) -> str | None:
 def serialize_device(device: Device) -> dict:
     # 裝置的統一 JSON 結構：位置資訊 JOIN 好夾帶，前端不用再查
     # status 回後端字彙（active/inactive/fault），前端在他們的 api 層對照成 online/offline/disabled
+    #
+    # 串流刻意回兩種形式，因為兩邊消費者要的協定不同：
+    #   stream_channel* = 原始頻道名，給 AI 端（ffmpeg/OpenCV 走 rtsp://<自己的MediaMTX>:8554/<頻道名>）
+    #   stream_url*     = 組好的 WHEP 網址，給瀏覽器（只看得懂 WebRTC，讀不了 RTSP）
+    # 資料庫只存頻道名、主機位址各端自己接，搬機器就不必改資料庫。
     return {
         "device_id": device.device_id,
         "device_name": device.device_name,
         "location": device.location.location_name if device.location else None,
         "floor": device.location.floor if device.location else None,
+        "stream_channel": device.stream_url,
+        "stream_channel_detect": device.stream_url_detect,
         "stream_url": whep_url(device.stream_url),
         "stream_url_detect": whep_url(device.stream_url_detect),
         "status": device.status,
