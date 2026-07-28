@@ -37,8 +37,8 @@ def _cfg(key: str, default: str = "") -> str:
 cfg = _cfg
 
 
-# ⚠️ 變數名不要跟 TRITON_*_URL 混：Triton 的預設 URL 同樣寫 127.0.0.1:8000（實際掛 8010），
-# 兩者混在一起看 log 會分不清是在打推論還是打後端。
+# ⚠️ 變數名不要跟 TRITON_*_URL 混：後端在 8000、Triton 在 8010，兩者混在一起看 log
+# 會分不清是在打推論還是打後端。
 BACKEND_API_URL = _cfg("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 BACKEND_API_USER = _cfg("BACKEND_API_USER", "A001")   # init_db 種的管理員員編，不是機密
 BACKEND_API_PASSWORD = _cfg("BACKEND_API_PASSWORD")   # 無預設：沒設就 fail fast，不猜

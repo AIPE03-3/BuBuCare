@@ -259,9 +259,14 @@ print("📦 正在載入 Triton 三顆模型（yolo_pose / rt_detr / action_tran
 #   - TritonPoseModel / TritonDetrModel 回標準 ultralytics Results，下游 .keypoints/.plot()
 #     與 .boxes/.names 完全不用改；
 #   - TritonActModel 回原始 logits (1,2) ndarray，下游 torch.softmax/argmax 幾乎不用改。
-TRITON_POSE_URL = os.environ.get("TRITON_POSE_URL", "http://127.0.0.1:8000/yolo_pose")
-TRITON_DETR_URL = os.environ.get("TRITON_DETR_URL", "http://127.0.0.1:8000/rt_detr")
-TRITON_ACT_URL = os.environ.get("TRITON_ACT_URL", "http://127.0.0.1:8000/action_transformer")
+# 位址走 cfg()（環境變數優先、其次 repo 根目錄的 .env），與本檔其他設定一致。
+# ⚠ 預設埠是 8010 不是 8000：8000 在本專案被 backend 佔用。曾經預設 8000，結果是每一幀
+# 都打到 FastAPI、拿回 {"detail":"Not Found"} 後靜默降級 —— 影片照跑、FPS 照印、沒有紅字，
+# 但姿態偵測全程失效。這種失敗方式從輸出完全看不出來，所以預設值必須是對的那個。
+TRITON_HOST = cfg("TRITON_HOST", "http://127.0.0.1:8010").rstrip("/")
+TRITON_POSE_URL = cfg("TRITON_POSE_URL") or f"{TRITON_HOST}/yolo_pose"
+TRITON_DETR_URL = cfg("TRITON_DETR_URL") or f"{TRITON_HOST}/rt_detr"
+TRITON_ACT_URL = cfg("TRITON_ACT_URL") or f"{TRITON_HOST}/action_transformer"
 yolo_pose_model = TritonPoseModel(TRITON_POSE_URL)   # 人體姿態打 Triton yolo_pose
 yolo_env_model = TritonDetrModel(TRITON_DETR_URL)    # 環境物件偵測打 Triton rt_detr
 
