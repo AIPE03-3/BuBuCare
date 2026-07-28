@@ -1,0 +1,15 @@
+# local_pose_eval.py 的依賴 —— 只給「開發機本地測試」用。
+#
+# 正式管線（inference_test.py）三顆模型全部打 Triton，AI 端跑正式流程**不需要**裝這些；
+# 這份是為了在沒有 Triton 的機器（例如 macOS 開發機）上直接載 .pt 權重驗辨識效果。
+#
+# 建環境（用專案既有的 uv；ai/.venv 已被 .gitignore 涵蓋）：
+#   uv venv ai/.venv
+#   uv pip install --python ai/.venv/bin/python -r ai/requirements-local-eval.txt
+#
+# 跑：
+#   ai/.venv/bin/python ai/local_pose_eval.py <你的圖片或影片路徑>
+#
+# ultralytics 會自己帶進 torch / torchvision / opencv / numpy，
+# 故這裡只釘它一個，避免版本互相打架。macOS 上 torch 會自動走 MPS。
+ultralytics>=8.4
