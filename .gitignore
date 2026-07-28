@@ -87,3 +87,11 @@ ai/clearml_server_config/
 ai/triton_repo_cpu/
 # GPU/CPU 效能對照的原始量測結果（報告本體 ai/BENCHMARK_GPU_VS_CPU.md 要進版控）
 ai/bench_results/
+
+# 串流：執行檔與含攝影機帳密的實際設定不進 git（範本 mediamtx.yml.example 才進）
+streaming/mediamtx.exe
+streaming/mediamtx.yml
+streaming/*.log
+streaming/*.zip
+streaming/*.crt
+streaming/*.key

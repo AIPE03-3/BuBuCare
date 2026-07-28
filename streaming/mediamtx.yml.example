@@ -1,0 +1,57 @@
+# MediaMTX 設定範本（A 階段：區網、無 HTTPS、無驗證）
+#
+# 用法：
+#   Copy-Item mediamtx.yml.example mediamtx.yml
+#   （改 mediamtx.yml，填入你的攝影機帳密與 IP，這個檔案不進 git）
+#   .\mediamtx.exe .\mediamtx.yml
+#
+# 頻道命名對齊 AI 端：cam_in（進 AI 前的原味）／cam_out（AI 畫框後）。
+# 傑雅版原本叫 my_camera_tapo，語意等同 cam_in。
+
+webrtc: yes
+webrtcAddress: :8889          # 瀏覽器來報到用（WHEP）
+webrtcLocalUDPAddress: :8189  # 影像實際流動用（ICE），防火牆兩個都要開
+webrtcAllowOrigins: ["*"]     # A 階段全開；正式環境改成前端網址白名單
+webrtcIPsFromInterfaces: yes
+
+rtsp: yes
+rtspAddress: :8554            # ffmpeg 與手機推流 App 往這裡推
+
+paths:
+  # ── cam_in：原味畫面 ──
+  # 兩種來源二選一：
+  #
+  # (A) 真攝影機：MediaMTX 主動去攝影機拉畫面（攝影機不會主動推，只會在原地等人要）
+  #     Tapo C210 的路徑：stream1 = 1080p、stream2 = 360p，先用 stream2 比較不吃頻寬
+  #     ⚠ 帳密不是 TP-Link 登入帳號，要在 Tapo App → 齒輪 → 進階設定 → 攝影機帳號 另外設
+  #     ⚠ rtspTransport: tcp 一定要加，走 UDP 會破格
+  #
+  # (B) 沒有攝影機：改成 source: publisher，再用 start-fake-camera.ps1 推 mp4 進來
+  cam_in:
+    source: rtsp://<攝影機帳號>:<攝影機密碼>@<攝影機IP>:554/stream2
+    rtspTransport: tcp
+    sourceOnDemand: no        # no = MediaMTX 一啟動就去連攝影機，不等有人看才連
+
+  # ── cam_out：AI 畫框後的畫面 ──
+  # 正式來源是 albert 的推論程式（讀 cam_in → 畫框 → 推回這裡），該功能尚未實作。
+  # A 階段用 start-fake-detect.ps1 推一個固定紅框上來，驗證前端切換功能。
+  cam_out:
+    source: publisher
+
+  # ── 手機推流 App（Larix Broadcaster 之類）推到這三個 ──
+  phone_a:
+    source: publisher
+  phone_b:
+    source: publisher
+  phone_c:
+    source: publisher
+
+  # ── 手機那三路的 AI 畫框後頻道（albert 的推論程式推進來，尚未實作）──
+  # ⚠ 沒有在 paths 底下列出的頻道，MediaMTX 會直接拒收，推不進來。
+  #   之後要新增鏡頭，這裡與資料庫都要一起加。
+  phone_a_out:
+    source: publisher
+  phone_b_out:
+    source: publisher
+  phone_c_out:
+    source: publisher

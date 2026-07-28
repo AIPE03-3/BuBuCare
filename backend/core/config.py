@@ -60,3 +60,10 @@ S3_REGION = os.getenv("S3_REGION", "us-east-1")
 S3_ACCESS_KEY_ID = os.getenv("ACCESS_KEY_ID", "")
 S3_SECRET_ACCESS_KEY = os.getenv("SECRET_ACCESS_KEY", "")
 S3_URL_TTL = int(os.getenv("S3_URL_TTL", "3600"))  # 限時網址存活秒數，預設 1 小時
+
+
+# ── 攝影機即時串流（MediaMTX）──
+# 值要含協定與埠號，例如 http://192.168.1.108:8889；留空代表這個環境沒有串流。
+# 換場地或換電腦只要改這一個值、重啟後端即可，前端不用重新 build、資料庫不用改。
+# ⚠ 前端若跑在 https，這裡必須一併改成 https://——瀏覽器不允許 https 頁面載入 http 串流。
+MEDIAMTX_BASE_URL = os.getenv("MEDIAMTX_BASE_URL", "")
