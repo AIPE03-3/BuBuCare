@@ -39,10 +39,10 @@ def serialize_device(device: Device) -> dict:
         "device_name": device.device_name,
         "location": device.location.location_name if device.location else None,
         "floor": device.location.floor if device.location else None,
-        "stream_channel": device.stream_url,
-        "stream_channel_detect": device.stream_url_detect,
-        "stream_url": whep_url(device.stream_url),
-        "stream_url_detect": whep_url(device.stream_url_detect),
+        "stream_channel": device.stream_channel,
+        "stream_channel_detect": device.stream_channel_detect,
+        "stream_url": whep_url(device.stream_channel),
+        "stream_url_detect": whep_url(device.stream_channel_detect),
         "status": device.status,
     }
 

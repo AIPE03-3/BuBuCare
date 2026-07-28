@@ -56,9 +56,19 @@ FastAPI 後端 ── GET /devices ──→ 只回網址字串，全程不碰�
 
 ### core/models.py
 
-`devices` 表新增欄位 `stream_url_detect`（`String(255)`, nullable）。
-既有 `stream_url` 語意改為「原味頻道名」，`stream_url_detect` 為「偵測頻道名」。
-兩欄存的都是**頻道名**（如 `cam_in`），不是完整網址。
+`devices` 表最終有兩個串流欄位（皆 `String(255)`, nullable）：
+
+| 欄位 | 內容 |
+| --- | --- |
+| `stream_channel` | 原味頻道名（`cam_in`） |
+| `stream_channel_detect` | 偵測頻道名（`cam_out`），沒接 AI 的鏡頭為 NULL |
+
+兩欄存的都是**頻道名**，不是完整網址。
+
+> 執行過程中這兩欄原名為 `stream_url` / `stream_url_detect`（沿用既有欄位），
+> 但「叫 url、裡面裝頻道名」誤導過填資料的人（301～304 曾被填成
+> `rtsp://127.0.0.1:8554/cam301`，該位址只在填寫者本機有效）。
+> 2026-07-28 已 `RENAME COLUMN` 改為現名，資料未變動，API 鍵名亦未變動。
 
 **這裡改的是程式端的欄位定義，不等於真實資料庫多了一欄，兩件事都要做：**
 
@@ -102,9 +112,12 @@ WHEP 網址組合規則：
 `null` 的意義是「這個環境沒有這條串流」，前端據此隱藏對應按鈕或退回占位框。
 原始頻道名不受 `MEDIAMTX_BASE_URL` 影響，有填就回。
 
-**已知命名不一致**：DB 欄位仍叫 `stream_url`，但存的是頻道名，API 對外改名為 `stream_channel`。
-不改欄位名的理由是全隊共用同一個 RDS，`RENAME COLUMN` 是無緩衝的硬切換——執行當下所有尚未
-更新程式的組員，`GET /devices` 會立即 500。新增欄位則可新舊並存。待 A 階段收尾全隊同步時再議。
+DB 欄位名與 API 的原始頻道名鍵一致（皆為 `stream_channel` / `stream_channel_detect`），
+直接對資料庫下 SQL 與讀 API 用同一組名稱，不需換算。
+
+`RENAME COLUMN` 屬無緩衝的硬切換——執行當下所有尚未更新程式的後端行程，`GET /devices`
+會立即 500（找不到欄位）。因此改名必須與後端部署貼近執行，並事先通知全隊。
+2026-07-28 執行時已與 AI 端協調時間；API 鍵名未變，AI 端與前端皆無需改動程式。
 
 ### init_db.py：本輪不動
 
@@ -149,6 +162,8 @@ WHEP 網址組合規則：
 
 兩段依序執行，`ALTER TABLE` 必須在最前面，否則 `UPDATE` 會因欄位不存在而失敗。
 
+實際執行順序（2026-07-28 全部完成）：
+
 ```sql
 -- ⓪ 先加欄位
 ALTER TABLE devices ADD COLUMN stream_url_detect VARCHAR(255);
@@ -161,7 +176,22 @@ UPDATE devices SET stream_url='phone_a', stream_url_detect=NULL      WHERE devic
 UPDATE devices SET stream_url='phone_b', stream_url_detect=NULL      WHERE device_id=303;
 UPDATE devices SET stream_url='phone_c', stream_url_detect=NULL      WHERE device_id=304;
 COMMIT;
+
+-- ② 手機三路的偵測頻道（AI 端確認四路可行後補上，等待其推流實作）
+BEGIN;
+UPDATE devices SET stream_url_detect='phone_a_out' WHERE device_id=302;
+UPDATE devices SET stream_url_detect='phone_b_out' WHERE device_id=303;
+UPDATE devices SET stream_url_detect='phone_c_out' WHERE device_id=304;
+COMMIT;
+
+-- ③ 欄位改名（值不變，API 鍵名不變）
+BEGIN;
+ALTER TABLE devices RENAME COLUMN stream_url        TO stream_channel;
+ALTER TABLE devices RENAME COLUMN stream_url_detect TO stream_channel_detect;
+COMMIT;
 ```
+
+**日後查詢一律使用改名後的 `stream_channel` / `stream_channel_detect`。**
 
 ### 執行時機的相依
 
@@ -338,6 +368,21 @@ MediaMTX 僅負責轉交，兩者不需共享金鑰。
 
 加驗證後的取捨：雲端後端不可用時，現場將無法觀看任何畫面（每次觀看都需經其授權）。
 A 階段沒有此耦合。
+
+### ⚠ 雲端後端的 `.env` 必須設 `MEDIAMTX_BASE_URL`
+
+**demo 前必做，且極易遺漏。** WHEP 網址是由「回應這次請求的那台後端」組出來的，
+因此前端連哪台後端，就由哪台後端的 `.env` 決定畫面看不看得到：
+
+| 前端連的後端 | 該後端的 `MEDIAMTX_BASE_URL` | 結果 |
+| --- | --- | --- |
+| 開發者本機 | 已設 | 有畫面 |
+| 雲端 VM | **未設**（2026-07-28 現況） | `stream_url` 回 `null`，前端顯示占位框 |
+
+值填**當天實際跑 MediaMTX 那台電腦的區網 IP**（換場地、換電腦、換 Wi-Fi 都會變），
+改完需重啟後端容器。前端不必重新 build。
+
+此設定不影響 AI 端——AI 端讀的是 `stream_channel`（原始頻道名），不經此組合。
 
 **前提：雲端前端必須維持 `http://`。** 目前雲端為純 IP 的 http（`http://35.221.135.197`），
 組合成立。若日後為網站加上網域與 HTTPS 憑證，本機的 http MediaMTX 會被瀏覽器以混合內容

@@ -113,16 +113,20 @@ export type EventVerdict = 'true_alarm' | 'false_alarm' | null;
 
 export type DeviceStatus = 'online' | 'offline' | 'disabled';
 // online=正常運作／offline=暫時離線（監控死角，需注意）／disabled=永久已停用（排除總覽查詢）
-// ⚠ 待後端確認 devices.status 是否已區分 offline/disabled（04檔#5），MVP前端先預留三態、mock資料模擬
+// 後端 devices.status 已確認為三態（active/inactive/fault），對照表在 api/cameras.ts 的 STATUS_MAP
 
 export interface Camera {
   id: number;
   name: string;              // 鏡頭5
   zone: string;              // 活動室A（區域分組，無樓層層）
   floor: string | null;      // demo 一律不顯示
-  stream_url: string | null; // 串流協定未定，先預留
+  // 兩條完整的 WHEP 網址，由後端把資料庫的頻道名接上 .env 的 MEDIAMTX_BASE_URL 組成。
+  // null＝這個環境沒有這條串流（後端沒設位址，或這台鏡頭沒填該頻道）。
+  stream_url: string | null;        // 即時（原味）
+  stream_url_detect: string | null; // 偵測（AI 畫框後），沒接 AI 的鏡頭為 null
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷
 }
+// 已移除 StreamSource 型別：全站零讀取，且與 stream_url_detect 語意重疊。
 
 export type EnvSafetyGrade = '良好' | '注意' | '警示' | '危險';
 // 對照 02檔：total_score 90-100良好／70-89注意／40-69警示／0-39危險
@@ -273,7 +277,7 @@ export interface FixedTestSet {
 
 - 事件有兩條產生路徑：YOLO 高信心直通（`vlm_result: null`）與 VLM 複判後產生。所有顯示 VLM 資訊的地方都必須處理 null。
 - 即時推播經 `useEventSocket` hook（demo 用計時器模擬），介面比照 WebSocket，日後直接替換連線實作。
-- 即時影像一律灰色占位框＋「鏡頭即時影像」文字，不接真串流；事件／偵測紀錄的截圖才用「事件快照（影像片段）」，兩者語意不同、不共用文字（`CAMERA_LABEL.LIVE_PLACEHOLDER` vs `SNAPSHOT_PLACEHOLDER`）。
+- 即時影像**已接真串流**（WebRTC/WHEP，見 `components/LiveStream.tsx`）：首頁四宮格與鏡頭彈窗皆播放實際畫面，網址由 `GET /devices` 提供（`stream_url`＝即時、`stream_url_detect`＝AI 偵測）。網址為 null 時才退回灰色占位框（`CAMERA_LABEL.LIVE_PLACEHOLDER`）。事件／偵測紀錄的截圖仍是「事件快照（影像片段）」（`SNAPSHOT_PLACEHOLDER`），兩者語意不同、不共用文字。
 
 ## Definition of Done（每個任務完成前自查）
 

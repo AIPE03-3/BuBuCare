@@ -61,7 +61,7 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     floor: null,
     // 後端事件 payload 無串流網址與在線狀態（僅 GET /devices 有），先固定值，非程式邏輯遺漏。
     stream_url: null,
-    stream_source: null,
+    stream_url_detect: null,
     status: 'online',
   };
 

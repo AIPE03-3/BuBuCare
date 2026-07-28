@@ -2,41 +2,12 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getCameras } from '../api/cameras';
 import { DevTestPanel } from '../components/DevTestPanel'; // DEV-TEST：測試按鈕面板，移除測試功能時連同下方使用處一併刪除
+import { LiveStream } from '../components/LiveStream';
+import { StreamModeToggle, type StreamMode } from '../components/StreamModeToggle';
 import { MonitorIcon } from '../components/icons';
 import { useEvents } from '../hooks/eventsContext';
 import { formatTime } from '../utils/time';
 import { ALERT_LOG_ACTION_LABEL, CAMERA_LABEL, type AlertLogEntry, type Camera, type CareEvent } from '../types';
-
-// 切換鏡頭畫面選單。桌機置於右欄頂端、手機緊接鏡頭下方，故抽成元件於兩處各渲染一次
-// （以 lg:hidden／hidden lg:block 控制，同一時間僅一個可見，不會重複讀屏）。
-function CameraSelect({
-  cameras,
-  value,
-  onChange,
-}: {
-  cameras: Camera[];
-  value: number | null;
-  onChange: (id: number) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="sr-only">切換鏡頭畫面選單</span>
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-surface-2)] px-4 py-3 text-sm font-medium text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--brand-soft)]"
-        aria-label="切換鏡頭畫面選單"
-      >
-        {cameras.length === 0 && <option value="">切換鏡頭畫面選單</option>}
-        {cameras.map((camera) => (
-          <option key={camera.id} value={camera.id}>
-            {camera.zone}（{camera.name}）
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
 
 // 徽章配色：潛在危險／待處理皆實心紅（--danger，兩者都算「還沒人回應」，需要搶眼提醒），白字。
 const ALERT_LOG_BADGE_CLASS: Record<AlertLogEntry['action'], string> = {
@@ -106,7 +77,9 @@ function toPendingLogEntry(event: CareEvent): AlertLogEntry {
 
 export function Home() {
   const [cameras, setCameras] = useState<Camera[]>([]);
-  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
+  const [streamMode, setStreamMode] = useState<StreamMode>('live');
+  // 被放大的鏡頭 id；null＝四宮格模式
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const { events, alertLog, confirmedAlerts, reopenAlert, hazardEvents } = useEvents();
 
   // 合併顯示：alertLog（潛在危險偵測）＋ 現算的「待處理」
@@ -119,17 +92,24 @@ export function Home() {
   );
 
   useEffect(() => {
-    getCameras().then((list) => {
-      setCameras(list);
-      // 預設帶入第一支鏡頭，讓即時影像一載入就有選定畫面。
-      setSelectedCameraId((prev) => prev ?? list[0]?.id ?? null);
-    });
+    getCameras().then(setCameras);
   }, []);
 
   const unresolvedCount = events.filter((e) => e.status !== 'resolved').length;
   const onlineCameraCount = cameras.filter((c) => c.status === 'online').length;
   const hazardCount = hazardEvents.filter((e) => e.status !== 'resolved').length;
-  const selectedCamera = cameras.find((c) => c.id === selectedCameraId) ?? null;
+
+  // 四宮格只放「有串流網址」的鏡頭，取前四台。
+  // 不用 cameras.slice(0, 4)：裝置清單含未接串流的鏡頭（如 VLM 測試裝置），
+  // 依 device_id 取前四台會挑到四台沒有畫面的。
+  const gridCameras = cameras.filter((c) => c.stream_url !== null).slice(0, 4);
+
+  // 偵測模式取 stream_url_detect，即時模式取 stream_url
+  const urlOf = (camera: Camera) =>
+    streamMode === 'detect' ? camera.stream_url_detect : camera.stream_url;
+
+  // 四台都沒有偵測頻道就不顯示切換鈕（按了也只會看到四格空白）
+  const hasAnyDetect = gridCameras.some((c) => c.stream_url_detect !== null);
 
   return (
     <div className="flex flex-col gap-6">
@@ -140,19 +120,52 @@ export function Home() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* 左 2/3 */}
         <div className="flex flex-col gap-6 lg:col-span-2">
-          {/* 即時影像：灰色占位框（不接真串流，比照全案影像慣例），左上角浮貼所選鏡頭名 */}
-          <div className="relative flex aspect-video w-full items-center justify-center rounded-2xl bg-[var(--bg-surface-2)] text-center text-sm text-[var(--text-muted)]">
-            {selectedCamera && (
-              <span className="absolute left-3 top-3 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
-                {selectedCamera.zone}（{selectedCamera.name}）
-              </span>
-            )}
-            {CAMERA_LABEL.LIVE_PLACEHOLDER}
+          {/* 即時影像：2×2 四宮格。點任一格放大成單一畫面、再點還原。
+              放大時其餘三格改用 CSS 隱藏而非卸載——連線數上限與四宮格相同，
+              但切換不必重新連線，不會有黑畫面。 */}
+          <div className="flex items-center justify-end">
+            {hasAnyDetect && <StreamModeToggle value={streamMode} onChange={setStreamMode} />}
           </div>
 
-          {/* 手機：切換選單緊接鏡頭下方（桌機隱藏，改由右欄頂端顯示） */}
-          <div className="lg:hidden">
-            <CameraSelect cameras={cameras} value={selectedCameraId} onChange={setSelectedCameraId} />
+          <div className={expandedId === null ? 'grid grid-cols-2 gap-3' : 'grid grid-cols-1'}>
+            {gridCameras.map((camera) => {
+              const expanded = expandedId === camera.id;
+              const hidden = expandedId !== null && !expanded;
+              return (
+                <button
+                  key={camera.id}
+                  type="button"
+                  onClick={() => setExpandedId(expanded ? null : camera.id)}
+                  aria-label={expanded ? `縮小 ${camera.name}` : `放大 ${camera.name}`}
+                  className={`relative aspect-video w-full overflow-hidden rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)] ${
+                    hidden ? 'hidden' : ''
+                  }`}
+                >
+                  <LiveStream
+                    whepUrl={urlOf(camera)}
+                    emptyLabel={
+                      streamMode === 'detect' && camera.stream_url_detect === null
+                        ? '此鏡頭無 AI 偵測'
+                        : undefined
+                    }
+                  />
+                  <span className="absolute left-3 top-3 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
+                    {camera.zone}（{camera.name}）
+                  </span>
+                </button>
+              );
+            })}
+
+            {/* 裝置不足 4 台時補空格，維持 2×2 版面 */}
+            {expandedId === null &&
+              Array.from({ length: Math.max(0, 4 - gridCameras.length) }).map((_, i) => (
+                <div
+                  key={`empty-${i}`}
+                  className="flex aspect-video w-full items-center justify-center rounded-2xl bg-[var(--bg-surface-2)] text-sm text-[var(--text-muted)]"
+                >
+                  {CAMERA_LABEL.LIVE_PLACEHOLDER}
+                </div>
+              ))}
           </div>
 
           {/* 三張統計卡：未結報事件／監控中鏡頭／潛在危險，並排於鏡頭下方；上下 7:3 分割 */}
@@ -233,13 +246,8 @@ export function Home() {
           </div>
         </div>
 
-        {/* 右 1/3：切換鏡頭畫面選單 ＋ 警示處理 log（隨左欄高度拉滿） */}
+        {/* 右 1/3：警示處理 log（隨左欄高度拉滿） */}
         <div className="flex flex-col gap-4 lg:col-span-1">
-          {/* 桌機：選單在右欄頂端（手機隱藏，已顯示於鏡頭下方） */}
-          <div className="hidden lg:block">
-            <CameraSelect cameras={cameras} value={selectedCameraId} onChange={setSelectedCameraId} />
-          </div>
-
           {/* 未回應事件：潛在危險偵測＋待處理事件清單，最新在前；已接手／已誤報的不留在這裡。
               max-h 限制外框高度上限，超出改由內部清單捲動；沒有這個上限，CSS Grid 會讓
               軌道高度隨內容（筆數）無限撐高，overflow-y-auto 永遠不會真正生效。 */}

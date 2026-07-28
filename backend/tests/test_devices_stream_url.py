@@ -37,7 +37,7 @@ def test_get_devices_returns_both_stream_urls(client, auth_headers, db_session, 
     monkeypatch.setattr(config, "MEDIAMTX_BASE_URL", "http://192.168.1.108:8889")
     db_session.add(Device(device_id=90, device_name="測試鏡頭",
                           status="active", company_id=1,
-                          stream_url="cam_in", stream_url_detect="cam_out"))
+                          stream_channel="cam_in", stream_channel_detect="cam_out"))
     db_session.commit()
 
     res = client.get("/devices", headers=auth_headers)
@@ -53,7 +53,7 @@ def test_get_devices_detect_none_when_channel_missing(client, auth_headers, db_s
     monkeypatch.setattr(config, "MEDIAMTX_BASE_URL", "http://192.168.1.108:8889")
     db_session.add(Device(device_id=91, device_name="手機鏡頭",
                           status="active", company_id=1,
-                          stream_url="phone_a", stream_url_detect=None))
+                          stream_channel="phone_a", stream_channel_detect=None))
     db_session.commit()
 
     res = client.get("/devices", headers=auth_headers)
@@ -72,7 +72,7 @@ def test_get_devices_returns_raw_channel_names(client, auth_headers, db_session,
     monkeypatch.setattr(config, "MEDIAMTX_BASE_URL", "http://192.168.1.108:8889")
     db_session.add(Device(device_id=92, device_name="AI 鏡頭",
                           status="active", company_id=1,
-                          stream_url="cam_in", stream_url_detect="cam_out"))
+                          stream_channel="cam_in", stream_channel_detect="cam_out"))
     db_session.commit()
 
     res = client.get("/devices", headers=auth_headers)
@@ -88,7 +88,7 @@ def test_raw_channel_not_affected_by_base_url(client, auth_headers, db_session, 
     monkeypatch.setattr(config, "MEDIAMTX_BASE_URL", "")
     db_session.add(Device(device_id=93, device_name="無位址環境",
                           status="active", company_id=1,
-                          stream_url="cam_in", stream_url_detect=None))
+                          stream_channel="cam_in", stream_channel_detect=None))
     db_session.commit()
 
     res = client.get("/devices", headers=auth_headers)

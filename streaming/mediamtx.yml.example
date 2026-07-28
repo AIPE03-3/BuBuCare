@@ -45,3 +45,13 @@ paths:
     source: publisher
   phone_c:
     source: publisher
+
+  # ── 手機那三路的 AI 畫框後頻道（albert 的推論程式推進來，尚未實作）──
+  # ⚠ 沒有在 paths 底下列出的頻道，MediaMTX 會直接拒收，推不進來。
+  #   之後要新增鏡頭，這裡與資料庫都要一起加。
+  phone_a_out:
+    source: publisher
+  phone_b_out:
+    source: publisher
+  phone_c_out:
+    source: publisher
