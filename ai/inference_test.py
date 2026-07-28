@@ -611,7 +611,16 @@ def camera_worker(camera_id, video_source, detect_url=None):
                             hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + kp[12][1]) / 2.0
                             if not (shoulder_x == 0 or hip_x == 0):
                                 body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
-                                if body_angle < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
+                                # body_angle 是「肩→髖」向量與水平線的夾角，值域 0~180°：
+                                #   站立 → 髖在肩正下方 → 約 90°
+                                #   躺著、頭朝右 → 約 0°
+                                #   躺著、頭朝左 → 約 180°   ← 只寫 `< 40` 會整個漏掉這一半
+                                # 取 min(a, 180-a) 換算成「離水平多遠」，兩個躺向都涵蓋。
+                                # 門檻 40 沒動：頭朝右那半的判定與改動前完全相同。
+                                # 實測抓到的：手機當攝影機時量到 167~177°，體角判定形同虛設，
+                                # 全靠長寬比在撐；人朝鏡頭方向倒下（人形框不會變寬）就會漏報。
+                                tilt_from_horizontal = min(body_angle, 180.0 - body_angle)
+                                if tilt_from_horizontal < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
                         except Exception: pass
                             
                         # 跌倒防線 B (幾何遮擋防禦)
