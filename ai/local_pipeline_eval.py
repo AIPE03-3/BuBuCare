@@ -213,12 +213,18 @@ def in_any_segment(frame_index, segments):
 
 
 def report_metrics(records, segments, fps, mode=DEFAULT_TRIGGER_MODE):
-    """用人工標註算出真正的指標。
+    """用人工標註算出指標。
 
-    三個指標各自回答不同問題，缺一不可：
-      - 段級召回率：**每一次真跌倒有沒有被抓到**（漏一次可能出人命，這是最重要的）
-      - 幀級誤報率：正常時段有多少幀在亂報（決定護理師會不會被吵到關掉系統）
-      - 反應延遲：從跌倒開始到第一次報出來隔多久（急救場景延遲就是傷害）
+    ⚠ **段級召回率單獨看會騙人**，這是本專案實際踩過的坑：
+    當系統 63% 的幀都在觸發時，每段跌倒約 30 個處理幀，隨機亂報也幾乎必然命中至少
+    一幀——實測「每幀 35% 機率隨機報」的段召回率是 **100%**。所以看到「段召回 95%」
+    就下「抓得很準」的結論是錯的（本專案第一版報告就是這樣寫錯的）。
+
+    真正有鑑別力的是**幀級的精確率與 F1，而且要跟 baseline 比**：
+      - 精確率：報出來的有多少是真的（決定護理師會不會被吵到關掉系統）
+      - 幀召回率：真跌倒的幀有多少被報到
+      - F1 對照「永遠報跌倒」的 baseline——贏不了它就代表系統沒有提供資訊
+      - 反應延遲：急救場景延遲就是傷害
     """
     print(f"\n{'=' * 60}")
     print(f"量化評估（依標註 {len(segments)} 段真跌倒｜策略 {mode}）")
@@ -240,22 +246,46 @@ def report_metrics(records, segments, fps, mode=DEFAULT_TRIGGER_MODE):
         latencies.append(latency)
         print(f"  {index:>2}. {time_label} ✅ 首次觸發延遲 {latency:>5.2f} 秒")
 
-    # 誤報只算「有效幀」：視窗沒滿或根本沒看到人的幀，系統本來就不該報，
+    # 只算「有效幀」：視窗沒滿或根本沒看到人的幀，系統本來就不該報，
     # 拿它們當分母會把誤報率洗淡，看起來比實際好。
-    negatives = [r for r in records if not in_any_segment(r["frame"], segments) and r["evaluable"]]
-    false_positives = [r for r in negatives if r["triggered"]]
+    evaluable = [r for r in records if r["evaluable"]]
+    positives = [r for r in evaluable if in_any_segment(r["frame"], segments)]
+    negatives = [r for r in evaluable if not in_any_segment(r["frame"], segments)]
+    if not evaluable or not positives:
+        print("\n⚠ 沒有可評估的幀（視窗未滿或全程沒看到人），指標略過")
+        return
 
-    print("\n── 總結 ──")
+    true_positives = sum(1 for r in positives if r["triggered"])
+    false_positives = sum(1 for r in negatives if r["triggered"])
+    frame_recall = true_positives / len(positives)
+    precision = true_positives / (true_positives + false_positives) if true_positives + false_positives else 0.0
+    f1 = 2 * precision * frame_recall / (precision + frame_recall) if precision + frame_recall else 0.0
+
+    # baseline：一個什麼都不判斷、每幀都報跌倒的假系統。它的召回率必然 100%、
+    # 精確率等於正樣本比例。真實系統的 F1 若贏不了它，代表它沒有提供任何資訊。
+    positive_rate = len(positives) / len(evaluable)
+    baseline_f1 = 2 * positive_rate / (positive_rate + 1)
+
+    print("\n── 幀級指標（有鑑別力的看這裡）──")
+    print(f"  精確率  ：{precision:6.1%}  ← 報出來的有多少是真跌倒")
+    print(f"  幀召回率：{frame_recall:6.1%}  ← 真跌倒的幀有多少被報到")
+    print(f"  F1      ：{f1:6.3f}")
+    print(f"  ── 對照 baseline（永遠報跌倒的假系統）──")
+    print(f"     精確率 {positive_rate:.1%}（＝全片跌倒幀比例）、F1 {baseline_f1:.3f}")
+    verdict = "✅ 高於 baseline，系統有判斷力" if f1 > baseline_f1 + 0.05 else \
+              "⚠️ 幾乎等於 baseline，系統近乎沒有判斷力"
+    print(f"     {verdict}（差距 {f1 - baseline_f1:+.3f}）")
+    print(f"  幀級誤報率：{false_positives}/{len(negatives)} "
+          f"({false_positives / len(negatives):.1%})" if negatives else "  幀級誤報率：無正常時段")
+
+    print("\n── 段級指標（參考用，不能單獨解讀）──")
     print(f"  段級召回率：{hit_count}/{len(segments)} ({hit_count / len(segments):.1%})"
-          f"  ← 漏掉 {len(segments) - hit_count} 次真跌倒")
+          f"  ← 漏掉 {len(segments) - hit_count} 次")
+    print(f"  ⚠ 觸發率高時這個數字會虛高：實測「每幀 35% 機率隨機亂報」的段召回率是 100%，"
+          f"\n     所以它單獨看不能證明系統準，要搭配上面的精確率／F1 一起看")
     if latencies:
         print(f"  平均反應延遲：{sum(latencies) / len(latencies):.2f} 秒"
               f"（最慢 {max(latencies):.2f} 秒）")
-    if negatives:
-        print(f"  幀級誤報率：{len(false_positives)}/{len(negatives)} "
-              f"({len(false_positives) / len(negatives):.1%})  ← 正常時段有多少幀在亂報")
-    else:
-        print("  幀級誤報率：無可評估的正常時段")
 
 
 def pick_device():
