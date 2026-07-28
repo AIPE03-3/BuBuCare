@@ -221,3 +221,55 @@ def test_client_空回應轉成_VlmError(response):
 
     with pytest.raises(VlmError):
         client.analyze("/img.jpg", "prompt")
+
+
+# ── 溫度與拒答偵測（實測 llava 同張圖同提示會隨機拒答／答非所問）──────────
+
+def test_client_呼叫時帶入溫度設定():
+    fake = FakeOllama(response={"message": {"content": "報告"}})
+    client = OllamaVlmClient("llava:latest", "http://localhost:11434", timeout=5, temperature=0.1)
+    client._client = fake
+
+    client.analyze("/img.jpg", "prompt")
+
+    assert fake.kwargs["options"] == {"temperature": 0.1}
+
+
+def test_client_溫度預設值是_0點1():
+    client = OllamaVlmClient("llava:latest", "http://localhost:11434", timeout=5)
+    assert client.temperature == 0.1
+
+
+@pytest.mark.parametrize("content", [
+    "抱歉，我無法看到這張圖片的內容。",
+    "無法提供關於這張圖片的具體資訊。",
+    "Sorry, I cannot provide information about this image.",
+    "Desculpe, não consigo fornecer informações específicas sobre a imagem.",
+])
+def test_client_疑似拒答內容轉成_VlmError(content):
+    # 這幾句是實測 llava 對同一張圖、同一個提示，偶爾隨機回的真實內容
+    # （見 P2 驗證記錄）：技術上呼叫成功、內容非空，但語意上等於沒判讀。
+    client = OllamaVlmClient("llava:latest", "http://localhost:11434", timeout=5)
+    client._client = FakeOllama(response={"message": {"content": content}})
+
+    with pytest.raises(VlmError, match="拒答"):
+        client.analyze("/img.jpg", "prompt")
+
+
+def test_client_正常描述內容不誤判為拒答():
+    client = OllamaVlmClient("llava:latest", "http://localhost:11434", timeout=5)
+    client._client = FakeOllama(
+        response={"message": {"content": "畫面中可見一人倒臥於地面，姿態符合跌倒特徵。"}}
+    )
+
+    assert client.analyze("/img.jpg", "prompt") == "畫面中可見一人倒臥於地面，姿態符合跌倒特徵。"
+
+
+def test_節點對拒答內容會重試():
+    # 拒答視同失敗，重試政策要吃得到——這裡直接驗證 analyze_with_retry 這一層
+    client = FakeVlmClient([VlmError("VLM 回傳疑似拒答內容：sorry"), "重試後正常描述"])
+
+    report, error = analyze_with_retry(client, "/img.jpg", "prompt", max_retries=2)
+
+    assert report == "重試後正常描述"
+    assert len(client.calls) == 2

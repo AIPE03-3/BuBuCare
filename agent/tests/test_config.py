@@ -12,7 +12,7 @@ AGENT_ENV_VARS = [
     "AGENT_KAFKA_GROUP_ID", "AGENT_LLM", "AGENT_VLM_MODEL", "OLLAMA_BASE_URL",
     "AGENT_IMAGE_SOURCE", "AGENT_IMAGE_BASE_DIR", "AGENT_IMAGE_WAIT_SECONDS",
     "AGENT_S3_BUCKET", "AGENT_S3_PREFIX", "AGENT_S3_REGION", "AGENT_S3_CACHE_DIR",
-    "AGENT_SHADOW", "AGENT_VLM_MAX_RETRIES", "AGENT_VLM_TIMEOUT_SECONDS",
+    "AGENT_SHADOW", "AGENT_VLM_MAX_RETRIES", "AGENT_VLM_TIMEOUT_SECONDS", "AGENT_VLM_TEMPERATURE",
     "AGENT_JUDGE_MAX_RETRIES", "AGENT_DLQ_LOG_PATH", "AGENT_SHADOW_LOG_PATH",
 ]
 
@@ -71,6 +71,15 @@ def test_未知的圖檔來源被擋下(monkeypatch):
 
     with pytest.raises(ConfigError, match="local 或 s3"):
         load_settings()
+
+
+def test_vlm溫度預設值是_0點1(monkeypatch, tmp_path):
+    # 實測 llava 同張圖同提示在預設溫度下會隨機拒答，降溫是最小成本的緩解手段
+    monkeypatch.setenv("AGENT_IMAGE_BASE_DIR", str(tmp_path))
+
+    settings = load_settings()
+
+    assert settings.vlm_temperature == 0.1
 
 
 def test_數字型變數給非數字時報清楚的錯(monkeypatch, tmp_path):
