@@ -6,7 +6,8 @@
 
 **2026-07-28 這一輪做了什麼**：S3 上傳接通（前端終於看得到影片）、六大防線收斂成
 「跌倒 + 巡檢」並把規則寫成護欄擋得住的硬規定、產出 Triton GPU vs CPU 對照數據、
-出了 Prometheus 導入設計。
+出了 Prometheus 導入設計、**agent P2 後端記錄 + 前端顯示已完成並合併**（PR #14），
+過程中順手修了 VLM（`llava:latest`）同張圖同提示會隨機拒答的問題。
 
 ---
 
@@ -19,7 +20,7 @@
 | 3 | Triton GPU vs CPU 對照 | ✅ 已完成，報告見 `ai/BENCHMARK_GPU_VS_CPU.md` |
 | 4 | Prometheus 導入 | 📐 只出設計，未接線 |
 | 5 | 事件冷卻計時器 | ⏸ 本輪不執行（卡多人追蹤）|
-| 6 | agent P2（後端記錄 + 前端顯示 AI 判斷）| ⏳ 尚未開始 |
+| 6 | agent P2（後端記錄 + 前端顯示 AI 判斷）| ✅ 已完成並合併（PR #14） |
 
 第 5、6 兩項互不依賴，可分頭進行。
 
@@ -257,30 +258,63 @@ rsync 部署）。導入時是「把零件搬進主 `docker-compose.yml`」，�
 
 ---
 
-## 6.【待辦，尚未開始】agent P2：後端記錄 AI 判斷 + 前端顯示建議
+## 6.【已完成】agent P2：後端記錄 AI 判斷 + 前端顯示建議
 
-stage5 只做了 agent 的 shadow 驗證（P0/P1/P4，`AGENT_SHADOW=1`），P2 完全沒有動過——
-`backend/core/models.py` 的 `DetectEvent` 沒有任何 `ai_*` 欄位，前端也沒有 AI 建議元件。
+分支 `feat/agent-p2-ai-verdict`，PR #14，已合併進 `test/main-integration`
+（merge commit `23eeec9`，commits `cf2e973` + `441c0d1`）。
 
-**shadow 已經真的跑過、判斷品質可用**（`ai/agent_shadow.jsonl` 為證）：
+### 範圍（照原計畫拍板：只做 P2 的「A 層」，沒做 cutover）
 
-```json
-{"ai_verdict": "false_alarm", "ai_confidence": 0.8,
- "ai_reasoning": "根據影像，現場沒有任何人存在，因此可以確定並非真實的跌倒事件。"}
-```
+- **沒有**停掉現行 `uncertainty_router.py`／`vlm_worker.py`，agent 仍是 shadow
+  （`AGENT_SHADOW=1` 沒動），現行資料流沒變。
+- 只做了「後端記錄 + 前端顯示」，AI 判斷是人工複判的**參考資訊**，不接手決策權。
 
-VLM 正確看出畫面沒人、agent 正確判定誤報並給出清楚理由——底層邏輯可信，值得接下去做。
+### 做了什麼
 
-**範圍（已拍板：只做 P2 的「A 層」，不做 cutover）**：
-- **不**停掉現行 `uncertainty_router.py`／`vlm_worker.py`，agent **維持 shadow**，現行資料流不動。
-- 只做「後端記錄 + 前端顯示」，讓 AI 的判斷變成人工複判時的**參考資訊**，不接手決策權。
+| 任務 | 內容 |
+|---|---|
+| 後端欄位 | `DetectEvent`（`backend/core/models.py`）加 `ai_verdict`／`ai_confidence`／`ai_reasoning`，皆 optional，獨立於人工 `verdict`；`EventCreateRequest`、`serialize_event` 同步加 |
+| DB 遷移 | 正式 RDS 已有既有資料（`create_all` 不會回頭補欄位），`core/database.py` 加回 `run_column_migrations()`（`ALTER TABLE ADD COLUMN IF NOT EXISTS`），`main.py`／`init_db.py` 都會呼叫 |
+| 後端護欄 | 確認 `PATCH /events/{id}/verdict` 完全不碰 `ai_*` 欄位，沒有任何自動關閉事件的路徑；`false_alarm` 只存建議，關閉事件仍要人工按「確認誤報」 |
+| 前端顯示 | 新增 `AiSuggestionBadge` 元件；**事件中心列表**（`EventCenterUnresolved.tsx`）與**詳情頁**都顯示徽章 + `ai_reasoning`；`ai_verdict=false_alarm` 時附「確認誤報」一鍵鈕，走既有 verdict 端點 |
+| 測試 | 後端補 `true_alarm`／`false_alarm`／`null` 三路徑 + 舊格式相容測試，149 個 pytest 全過 |
 
-| 任務 | 內容 | 對照 |
-|---|---|---|
-| 後端欄位 | `DetectEvent` 加 `ai_verdict`（`true_alarm｜false_alarm｜null`）／`ai_confidence`（float）／`ai_reasoning`（text），**皆 optional、向下相容**；`EventCreateRequest` 同步加；補 DB 遷移 | 欄位名與型別對齊 `agent/schemas.py`，agent 端已經是這個格式 |
-| 後端護欄 | **不得有任何自動關閉事件的程式路徑**——`false_alarm` 只存建議、`verdict` 留 NULL，關閉事件仍要人工按 | agent docs 的「不可退讓原則」第 2 條 |
-| 前端顯示 | 事件卡／詳情顯示「AI 建議」徽章 + `ai_reasoning`；`ai_verdict=false_alarm` 時附「確認誤報」一鍵鈕，走既有 `PATCH /events/{id}/verdict`；`ai_verdict=null` 的舊事件顯示維持原樣 | — |
-| 測試 | 三種路徑都要測：`true_alarm`／`false_alarm`／`null`；舊格式訊息（無三欄）要照常建檔，既有 pytest 不可退 | — |
+### 實測驗證（不是推論）
 
-**驗證方式**：先把 `ai/agent_shadow.jsonl` 已經產出的判斷手動塞一筆進資料庫確認欄位/顯示正確，
-不一定要等 agent 即時串接；真正要串接 agent 產出寫進 DB（而非只寫 log）是另一個小任務。
+拉一組拋棄式 Postgres + 這個分支的程式碼，完整模擬「正式 RDS 現況」跑過一次
+migration，確認 `ALTER TABLE` 語法在真正的 PostgreSQL 上沒問題；再用 Playwright
+實際開瀏覽器登入、確認事件中心列表與詳情頁的徽章、按鈕、點擊後的狀態轉換都正確。
+全程沒有觸碰正在服務中的 `nh-backend`／`nh-frontend` 與正式資料庫。
+
+也用真實 Ollama VLM 對 `ai/snapshots/` 裡的真實截圖跑過多輪判讀，把結果送進拋棄式
+後端驗證整條「VLM 判斷 → 存 DB → 前端顯示」的資料管線，不是塞假資料裝樣子。
+
+### 過程中額外修的問題：VLM 隨機拒答
+
+驗證時發現 `llava:latest` 對**同一張圖、同一個 prompt**，在預設溫度下有機率隨機
+回「無法看到圖片」之類的拒答（甚至答錯語言，測到一次葡萄牙文），技術上呼叫成功、
+內容非空，但語意上等於沒判讀，且不會觸發原本的重試機制。已修：
+
+- `agent/config.py` 新增 `vlm_temperature`（`AGENT_VLM_TEMPERATURE`，預設 `0.1`）
+- `agent/nodes/vlm.py` 呼叫時帶入溫度；新增拒答關鍵字偵測，命中就當 `VlmError`
+  觸發既有重試政策
+- agent 全部 181 個 pytest 通過
+
+**這個修復解決的是「模型隨機罷工」，不是「姿態判讀準不準」**——後者本來就不是
+VLM 該扛的責任：`agent/nodes/vlm.py` 的既有註解就寫明「單張靜態畫面分不出躺著
+休息與跌倒，時序才是關鍵」，真正的姿態判斷是防線 A（`yolo_pose` 幾何計算肩髖
+體角）+ AcT 時序分類；VLM 二審只負責抓明顯誤判線索（沒人／物品掉落），設計上
+就不指望它精準判讀姿態細節。用系統正式 prompt 重測同一張圖，即使套用溫度+拒答
+修復，姿態描述仍會前後矛盾，證實這是模型能力上限，不是可調參數解決的。
+
+### 已知殘留
+
+- VLM 目前測試都只餵單張靜態截圖；`agent/nodes/vlm.py` 其實已支援多張連續畫面
+  輸入（`image_paths`），理論上能顯著改善姿態判讀準確度，但這次沒有實際驗證
+  多圖模式的效果，留給後續。
+- `ai/snapshots/` 目錄裡有大量重複／來源不明的圖片（用 md5 比對 47 個檔案只有
+  14 種真正不同內容，部分內容明顯不是這系統自己相機拍的）。不影響功能，但之後
+  要挑「乾淨」的展示或測試用截圖時，這個目錄不能照單全收，要先看過內容再選。
+- agent 真正即時串接寫進 DB（而非只寫 `ai/agent_shadow.jsonl` shadow log）
+  是另一個小任務，這輪只驗證了「手動把 shadow 產出的判斷塞進資料庫、前端正確
+  顯示」這條路徑。
