@@ -49,6 +49,7 @@ class Settings:
     shadow_mode: bool            # True：判定只寫 log，不送 Kafka 2
     vlm_max_retries: int
     vlm_timeout_seconds: float
+    vlm_temperature: float       # 降低隨機性：實測同張圖同提示，llava 偶爾會拒答/答非所問
     judge_max_retries: int       # judge 判 uncertain 時回頭補問 VLM 的次數上限
 
     # ── 主動學習樣本收錄 ──────────────────────────────────
@@ -120,6 +121,7 @@ def load_settings() -> Settings:
         shadow_mode=_get_bool("AGENT_SHADOW", "0"),
         vlm_max_retries=_get_int("AGENT_VLM_MAX_RETRIES", "2"),
         vlm_timeout_seconds=_get_float("AGENT_VLM_TIMEOUT_SECONDS", "120"),
+        vlm_temperature=_get_float("AGENT_VLM_TEMPERATURE", "0.1"),
         judge_max_retries=_get_int("AGENT_JUDGE_MAX_RETRIES", "1"),
         al_enabled=_get_bool("AGENT_AL_ENABLED", "1"),
         al_dataset_dir=os.getenv("AGENT_AL_DATASET_DIR", "active_learning_dataset"),

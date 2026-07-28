@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # CORS：允許瀏覽器從其他網址呼叫這個 API（開發測試用）
 
 from core.config import SKIP_DB_INIT
-from core.database import Base, engine
+from core.database import Base, engine, run_column_migrations
 from devices.router import router as device_router
 from events.router import router as event_router
 from reports.router import router as report_router
@@ -21,6 +21,7 @@ from users.router import router as user_router
 # （雲端測試機連不到 AWS RDS，這行會卡住或報錯）
 if not SKIP_DB_INIT:
     Base.metadata.create_all(bind=engine)
+    run_column_migrations()  # 補既有表缺的欄位；全新表則空轉
 
 # ── 建立 FastAPI app 本體 ─────────────────────────────────
 # 這個 app 物件就是整個服務的核心，所有路由都掛在它身上

@@ -21,10 +21,22 @@
 #                    /load；打了會回 400，agent 有相容分支）。切換時機不可控。
 #                  · none：全部啟動時載入、之後不可增刪版本（舊行為，熱載端點回 503）。
 #   REPO_POLL_SECS poll 模式的輪詢秒數（預設 5，僅 MODEL_CONTROL_MODE=poll 時生效）
+#   TRITON_GPUS    傳給 docker 的 --gpus 值（預設 all）。設成 none / 空字串＝不帶 --gpus，
+#                  整台 server 退回 CPU（給 GPU vs CPU 效能對照用，見 ai/BENCHMARK_GPU_VS_CPU.md）。
+#                  ⚠ CPU 模式下 rt_detr 載不起來：它是 platform=tensorrt_plan，TensorRT
+#                    引擎不可能在 CPU 上跑。CPU 側請用 LOAD_MODELS 換成 rt_detr_onnx。
+#   TRITON_CPUS    傳給 docker 的 --cpuset-cpus（預設空＝不限制）。對照量測要固定核心數才可重現。
+#   LOAD_MODELS    要載入/檢查的模型清單（空白分隔，預設 "yolo_pose rt_detr action_transformer"）
 #
 # 用法：
 #   ./ai/run_triton.sh          # 起 server（前景 docker run -d，起完印出健康狀態）
 #   ./ai/run_triton.sh stop     # 停掉並移除容器
+#
+#   # CPU 對照用的第二台（不同容器名與埠，兩台可並存但不要同時受測）：
+#   TRITON_NAME=nh-triton-cpu TRITON_GPUS=none \
+#   HTTP_PORT=8020 GRPC_PORT=8021 METRICS_PORT=8022 \
+#   MODEL_REPO="$(pwd)/ai/triton_repo_cpu" \
+#   LOAD_MODELS="yolo_pose rt_detr_onnx action_transformer" ./ai/run_triton.sh
 #
 # 前置：Docker 已裝、GPU 直通可用（容器內 nvidia-smi 看得到卡）、模型已就位
 #       （若缺 ONNX 先跑 python ai/export_models.py）。
@@ -40,6 +52,9 @@ METRICS_PORT="${METRICS_PORT:-8002}"
 MODEL_REPO="${MODEL_REPO:-$SCRIPT_DIR/triton_repo}"
 MODEL_CONTROL_MODE="${MODEL_CONTROL_MODE:-explicit}"
 REPO_POLL_SECS="${REPO_POLL_SECS:-5}"
+TRITON_GPUS="${TRITON_GPUS:-all}"
+TRITON_CPUS="${TRITON_CPUS:-}"
+LOAD_MODELS="${LOAD_MODELS:-yolo_pose rt_detr action_transformer}"
 
 if [[ "${1:-}" == "stop" ]]; then
   echo "🛑 停止並移除容器 $TRITON_NAME ..."
@@ -55,7 +70,8 @@ fi
 # pose / rt_detr 是必要模型，缺檔就 hard-fail；action_transformer 的權重可能還沒有
 # （action_transformer.pth 需跟組員要），缺 ONNX 只警告、不阻擋 pose/detr 啟動。
 missing=()
-for m in yolo_pose rt_detr; do
+for m in $LOAD_MODELS; do
+  [[ "$m" == "action_transformer" ]] && continue   # 可選，缺檔只警告（見下）
   [[ -f "$MODEL_REPO/$m/1/model.onnx" ]] || missing+=("$m")
 done
 if [[ ${#missing[@]} -gt 0 ]]; then
@@ -63,7 +79,8 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   echo "   先執行：python ai/export_models.py" >&2
   exit 1
 fi
-if [[ ! -f "$MODEL_REPO/action_transformer/1/model.onnx" ]]; then
+if [[ " $LOAD_MODELS " == *" action_transformer "* ]] \
+   && [[ ! -f "$MODEL_REPO/action_transformer/1/model.onnx" ]]; then
   echo "⚠️  action_transformer 缺 ONNX（$MODEL_REPO/action_transformer/1/model.onnx）——" >&2
   echo "    可能還沒有 action_transformer.pth。Triton 會照常起，AcT 該顆會載入失敗，" >&2
   echo "    inference_test.py 會退回模擬機制。要補齊：取得權重後跑 python ai/export_models.py" >&2
@@ -80,7 +97,7 @@ triton_args=(tritonserver --model-repository=/models)
 case "$MODEL_CONTROL_MODE" in
   explicit)
     triton_args+=(--model-control-mode=explicit)
-    for m in yolo_pose rt_detr action_transformer; do
+    for m in $LOAD_MODELS; do
       # 只載入實際有 ONNX 的顆（action_transformer 缺檔時略過，比照前面的可選邏輯）
       [[ -f "$MODEL_REPO/$m/1/model.onnx" ]] && triton_args+=(--load-model="$m")
     done
@@ -97,11 +114,20 @@ case "$MODEL_CONTROL_MODE" in
     ;;
 esac
 
+# --gpus：預設 all；TRITON_GPUS=none/空 → 完全不帶，整台退回 CPU（效能對照用）
+docker_args=(-d --rm --name "$TRITON_NAME")
+if [[ -n "$TRITON_GPUS" && "$TRITON_GPUS" != "none" ]]; then
+  docker_args+=(--gpus "$TRITON_GPUS")
+fi
+[[ -n "$TRITON_CPUS" ]] && docker_args+=(--cpuset-cpus "$TRITON_CPUS")
+
 echo "🚀 啟動 Triton（$TRITON_IMAGE）"
 echo "   HTTP=$HTTP_PORT gRPC=$GRPC_PORT metrics=$METRICS_PORT"
 echo "   model_repository=$MODEL_REPO"
+echo "   models=$LOAD_MODELS"
+echo "   gpus=${TRITON_GPUS:-none}$([[ -n "$TRITON_CPUS" ]] && echo "  cpuset=$TRITON_CPUS")"
 echo "   control_mode=$MODEL_CONTROL_MODE$([[ $MODEL_CONTROL_MODE == poll ]] && echo "（poll ${REPO_POLL_SECS}s）")"
-docker run -d --rm --name "$TRITON_NAME" --gpus all \
+docker run "${docker_args[@]}" \
   -v "$MODEL_REPO:/models" \
   -p "$HTTP_PORT:8000" -p "$GRPC_PORT:8001" -p "$METRICS_PORT:8002" \
   "$TRITON_IMAGE" \
@@ -112,7 +138,7 @@ for i in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/v2/health/ready" 2>/dev/null || true)"
   if [[ "$code" == "200" ]]; then
     echo "✅ Triton ready（HTTP $HTTP_PORT）"
-    for m in yolo_pose rt_detr action_transformer; do
+    for m in $LOAD_MODELS; do
       mcode="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/v2/models/$m/ready" 2>/dev/null || true)"
       [[ "$mcode" == "200" ]] && echo "   ✓ $m 已載入" || echo "   ✗ $m 未就緒（HTTP $mcode）"
     done

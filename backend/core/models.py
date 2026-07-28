@@ -128,6 +128,14 @@ class DetectEvent(Base):  # 跌倒事件主表
     yolo_score: Mapped[Optional[float]] = mapped_column(Float)      # 該事件 YOLO 打的分數
     vlm_summary: Mapped[Optional[str]] = mapped_column(Text)        # VLM 情境描述
 
+    # agent P2：AI（LangGraph agent，目前 shadow 模式）對事件的建議判斷，僅供人工複判參考，
+    # 不觸發任何自動結案 —— 獨立於 verdict/verdict_by，語意上是「AI 覺得」不是「人工判定」
+    ai_verdict: Mapped[Optional[str]] = mapped_column(
+        Enum("true_alarm", "false_alarm", name="ai_event_verdict", create_constraint=True), nullable=True
+    )
+    ai_confidence: Mapped[Optional[float]] = mapped_column(Float)
+    ai_reasoning: Mapped[Optional[str]] = mapped_column(Text)
+
     # 顯示事件位置走這個關聯（凍住的 location_id），不要繞去 device.location（那是裝置現況）
     location: Mapped[Optional["Location"]] = relationship("Location")
 

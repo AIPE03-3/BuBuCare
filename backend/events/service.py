@@ -55,6 +55,10 @@ def serialize_event(
         "company_id": event.company_id,
         "yolo_score": event.yolo_score,
         "vlm_summary": event.vlm_summary,
+        # agent P2：AI 建議判斷，僅供人工複判參考，null 代表 AI 未給出建議（含舊事件）
+        "ai_verdict": event.ai_verdict,
+        "ai_confidence": event.ai_confidence,
+        "ai_reasoning": event.ai_reasoning,
     }
 
 

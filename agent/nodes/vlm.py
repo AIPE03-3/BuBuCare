@@ -19,17 +19,35 @@ logger = logging.getLogger("agent.vlm")
 
 
 class VlmError(Exception):
-    # VLM 呼叫失敗（連不上、逾時、回傳空內容）
+    # VLM 呼叫失敗（連不上、逾時、回傳空內容、判定為拒答／答非所問）
     pass
+
+
+# 拒答關鍵字：實測 llava 偶爾會在同一張圖、同一個提示下隨機回「看不到／無法提供」，
+# 技術上呼叫成功、內容非空，但語意上等於沒判讀。這種回應不該被當成有效報告往下送，
+# 否則 judge 會拿一句「我看不到」去做跌倒判定。中英文都收，因為實測還出現過答非所問的
+# 外語回應（例如葡萄牙文拒答）。關鍵字判斷用小寫比對，大小寫不敏感。
+REFUSAL_MARKERS = (
+    "無法看到", "無法提供", "無法辨識", "無法確認畫面", "看不到任何畫面", "看不到圖片",
+    "沒有圖片", "無法存取", "不能直接回答",
+    "i cannot", "i can't", "i am unable", "i'm unable", "sorry",
+    "não consigo", "no puedo",
+)
+
+
+def _looks_like_refusal(content: str) -> bool:
+    lowered = content.lower()
+    return any(marker.lower() in lowered for marker in REFUSAL_MARKERS)
 
 
 class OllamaVlmClient:
     """薄薄一層包住 ollama.chat：唯一碰外部服務的地方，測試一律注入假的替身。"""
 
-    def __init__(self, model: str, base_url: str, timeout: float):
+    def __init__(self, model: str, base_url: str, timeout: float, temperature: float = 0.1):
         self.model = model
         self.base_url = base_url
         self.timeout = timeout
+        self.temperature = temperature
         self._client = None
 
     @property
@@ -55,6 +73,8 @@ class OllamaVlmClient:
             response = self.client.chat(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt, "images": images}],
+                # 降低隨機性：實測同張圖同提示，溫度預設值下 llava 有機率隨機拒答或答非所問
+                options={"temperature": self.temperature},
             )
         except Exception as e:
             # 逾時、連線失敗、模型不存在對節點來說沒差別，一律是「這次沒拿到判讀」
@@ -64,6 +84,10 @@ class OllamaVlmClient:
         content = content.strip()
         if not content:
             raise VlmError("VLM 回傳空內容")
+        if _looks_like_refusal(content):
+            # 內容非空、呼叫技術上成功，但語意上是拒答——當成失敗觸發重試，
+            # 而不是把「我看不到」原封不動送給 judge 做跌倒判定
+            raise VlmError(f"VLM 回傳疑似拒答內容：{content[:80]}")
         return content
 
 
@@ -112,4 +136,5 @@ def build_vlm_client(settings) -> OllamaVlmClient:
         model=settings.vlm_model,
         base_url=settings.ollama_base_url,
         timeout=settings.vlm_timeout_seconds,
+        temperature=settings.vlm_temperature,
     )

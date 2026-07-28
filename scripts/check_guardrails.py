@@ -68,6 +68,18 @@ INTERNAL_ONLY_KEYS = {"yolo_threshold"}
 CONTRACT_FILE = "ai/inference_test.py"
 CONTRACT_FUNC = "route_by_confidence"
 
+# ⚠️ ai/modules/ 白名單：只准存在、也只准 import 這兩個檔（理由見根目錄 CLAUDE.md）。
+# 2026-07-27 刪掉 bed_exit / wandering / micro_motion / audio_fusion / chair_slip 五個模組：
+# 前三個繞過 route_by_confidence() 自組 payload 直送 Kafka，欄位對不上契約、每則都被後端
+# 422 退件（用 test4.mp4 實測確認）；audio_fusion 是每 22 秒隨機丟假撞擊聲的展示用產生器，
+# 是誤報來源不是偵測能力。跌倒主邏輯本來就在 inference_test.py 主迴圈，不在 modules/ 底下。
+# 為什麼要機器擋：這種「模組自己送 Kafka」的破口靠 code review 抓不到——它跑得動、
+# 不噴錯，只是訊息在後端被靜默丟掉，要跑夠長的影片才會曝露。
+MODULES_DIR = "ai/modules"
+MODULES_ALLOW = {"__init__.py", "sanity_check.py"}
+# import 形式：`from modules.X import ...` / `import modules.X` / `from ai.modules.X import ...`
+MODULES_PREFIXES = ("modules.", "ai.modules.")
+
 
 # 既有豁免清單：專案早於本護欄就存在的違規，一次性放行（護欄要擋的是「新」的違規，
 # 不是把陳年舊帳翻出來擋住所有人 commit）。格式見該檔說明。
@@ -198,6 +210,70 @@ def check_contract(root: str, files: list[str], problems: list[str]) -> None:
     return
 
 
+def _module_name(dotted: str) -> str | None:
+    """從 `modules.chair_slip` / `ai.modules.chair_slip` 抽出模組名，非本目錄回 None。"""
+    for prefix in MODULES_PREFIXES:
+        if dotted == prefix.rstrip(".") or dotted.startswith(prefix):
+            rest = dotted[len(prefix):] if dotted.startswith(prefix) else ""
+            return rest.split(".")[0] if rest else ""
+    return None
+
+
+def check_module_whitelist(root: str, files: list[str], problems: list[str]) -> None:
+    """擋兩件事：在 ai/modules/ 新增非白名單檔案、以及 import 非白名單模組。
+
+    用 ast 靜態解析，不 import（import 會去連 Kafka/Triton）。只掃 .py，
+    所以文件裡提到模組名不會被誤擋。
+    """
+    allowed_stems = {os.path.splitext(f)[0] for f in MODULES_ALLOW}
+    hint = (
+        f"   → {MODULES_DIR}/ 只准存在、也只准 import：{', '.join(sorted(MODULES_ALLOW))}\n"
+        "     其餘五個模組已於 2026-07-27 刪除（自組 payload 繞過契約被後端 422、\n"
+        "     audio_fusion 是隨機假資料產生器），功能與邏輯一律不再套用。\n"
+        "     跌倒主邏輯在 ai/inference_test.py 主迴圈，不在 modules/ 底下。\n"
+        "     理由與「真的要復活」的完整流程見根目錄 CLAUDE.md。"
+    )
+
+    for f in files:
+        # 規則 1：不准在 ai/modules/ 新增非白名單檔案
+        norm = f.replace(os.sep, "/")
+        if norm.startswith(MODULES_DIR + "/"):
+            rel = norm[len(MODULES_DIR) + 1:]
+            if "/" in rel or rel not in MODULES_ALLOW:
+                problems.append(f"❌ {MODULES_DIR} 白名單：不該有這個檔案 {f}\n" + hint)
+
+        # 規則 2：不准 import 非白名單模組
+        if os.path.splitext(f)[1] != ".py":
+            continue
+        p = os.path.join(root, f)
+        if not os.path.isfile(p):
+            continue
+        try:
+            src = open(p, encoding="utf-8").read()
+            tree = ast.parse(src)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue  # 語法錯誤由 check_contract 對契約檔負責回報，這裡不重複噴
+        lines = src.split("\n")
+        for node in ast.walk(tree):
+            targets: list[str] = []
+            if isinstance(node, ast.Import):
+                targets = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                targets = [node.module]
+            for dotted in targets:
+                name = _module_name(dotted)
+                if name is None or name == "" or name in allowed_stems:
+                    continue
+                line_no = getattr(node, "lineno", 0)
+                if 0 < line_no <= len(lines) and ALLOW_MARK in lines[line_no - 1]:
+                    continue
+                problems.append(
+                    f"❌ {MODULES_DIR} 白名單：{f}:{line_no} import 了已封印的模組 `{name}`\n"
+                    f"   {lines[line_no - 1].strip()[:100] if 0 < line_no <= len(lines) else ''}\n"
+                    + hint
+                )
+
+
 def main() -> int:
     root = _repo_root()
     files = sys.argv[1:] or _tracked_files(root)
@@ -207,6 +283,7 @@ def main() -> int:
     check_big_files(root, files, problems, allow)
     check_text(root, files, problems, allow)
     check_contract(root, files, problems)
+    check_module_whitelist(root, files, problems)
 
     if problems:
         print("\n" + "=" * 70)

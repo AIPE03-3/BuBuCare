@@ -41,6 +41,10 @@ export interface RawEventPayload {
   report_stage: string | null;  // 最新一筆通報單的類型（initial/follow_up/final），無通報單為 null
   last_report_at: string | null; // 最新一筆通報單的儲存時間，續報期限由此起算
   hazard_object?: string | null; // 潛在危險事件才有；後端實際欄位未定，先預留（見 DevTestPanel）
+  // agent P2：LangGraph agent（shadow）建議判斷，三欄皆選填，舊事件恆為 null
+  ai_verdict: string | null;
+  ai_confidence: number | null;
+  ai_reasoning: string | null;
 }
 
 /**
@@ -117,6 +121,10 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
         : null,
     escalated_to: null,
     alerted_at: null,
+    // 後端已對齊 true_alarm/false_alarm/null，值不需轉換
+    ai_verdict: raw.ai_verdict as EventVerdict,
+    ai_confidence: raw.ai_confidence,
+    ai_reasoning: raw.ai_reasoning,
   };
 }
 
@@ -148,7 +156,10 @@ export async function resolveEvent(id: string): Promise<void> {
   await apiClient.patch(`/events/${id}/resolve`);
 }
 
-// 標記誤報＝先下 verdict=false_alarm，再 resolve 結案（後端兩支端點）。
+// 標記誤報＝下 verdict=false_alarm。後端 verdict 端點收到 false_alarm 時已經一次做完
+// 判定＋結案（status 直接轉 resolved，見 backend/events/router.py verdict_event），
+// ⚠ 不要再補打 /resolve——那支只收 status=in_progress 的事件，事件這時已經是 resolved，
+// 一定會收到 409。
 // body.label／note 目前後端 verdict 端點未收（僅 verdict＋staff_id），先記進 log，
 // 待後端補「誤報原因」欄位後改帶入 request body。
 export async function submitEventFeedback(
@@ -157,7 +168,6 @@ export async function submitEventFeedback(
 ): Promise<void> {
   console.info('[submitEventFeedback] 誤報原因（待後端補欄位後上傳）', id, body);
   await apiClient.patch(`/events/${id}/verdict`, { verdict: 'false_alarm' });
-  await apiClient.patch(`/events/${id}/resolve`);
 }
 
 // 潛在危險「已排除」：後端 hazard 事件規格未定、尚無對應端點，先只記 log 佔位。

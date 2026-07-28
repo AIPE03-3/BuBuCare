@@ -27,10 +27,14 @@ fulilian.db
 .DS_Store
 Thumbs.db
 
-# 個人工具檔（skill / 專案說明 / 設定）
+# 個人工具檔（skill / 設定）
 .claude/
-CLAUDE.md
 .vscode/
+# 個人的本機覆蓋筆記（不進 repo）。
+# 注意：根目錄的 CLAUDE.md 從 2026-07-28 起**要進版控**——它裝的是 ai/modules/ 白名單
+# 這類全專案共用的硬規則，被 ignore 掉的話等於只有自己這台機器看得到，規則就沒有意義。
+# 個人筆記請寫在 CLAUDE.local.md。
+CLAUDE.local.md
 
 # 本機 Docker 版本覆蓋（只為了繞開個人環境的相容性問題，不影響 docker-compose.yml 主檔）
 docker-compose.override.yml
@@ -79,3 +83,7 @@ ai/clearml_server_config/
 
 # 編輯/轉檔備份檔（如 config.pbtxt.onnx.bak）
 *.bak
+# Triton CPU 對照用的 model repository（由 ai/make_cpu_repo.sh 產生，內含 hardlink 的模型權重）
+ai/triton_repo_cpu/
+# GPU/CPU 效能對照的原始量測結果（報告本體 ai/BENCHMARK_GPU_VS_CPU.md 要進版控）
+ai/bench_results/

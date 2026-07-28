@@ -37,6 +37,7 @@ def make_settings(tmp_path):
             shadow_mode=False,
             vlm_max_retries=2,
             vlm_timeout_seconds=5.0,
+            vlm_temperature=0.1,
             judge_max_retries=1,
             al_enabled=True,
             al_dataset_dir=str(tmp_path / "dataset"),
