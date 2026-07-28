@@ -67,7 +67,11 @@
   - `core.config.MEDIAMTX_BASE_URL: str`
   - `core.models.Device.stream_url_detect: Optional[str]`
   - `devices.router.whep_url(channel: str | None) -> str | None`
-  - `GET /devices` 每筆多兩個鍵：`stream_url: str | None`、`stream_url_detect: str | None`
+  - `GET /devices` 每筆多四個鍵：
+    - `stream_url` / `stream_url_detect`：組好的 WHEP 網址，給瀏覽器
+    - `stream_channel` / `stream_channel_detect`：原始頻道名，給 AI 端自組 `rtsp://`
+      （2026-07-29 追加。AI 端讀 RTSP、瀏覽器讀 WHEP，同一頻道兩種協定，
+      所以後端只給頻道名、各端自接本機 base）
 
 - [ ] **Step 1：寫失敗測試（網址組合規則）**
 
@@ -267,38 +271,42 @@ feat(devices): GET /devices 回傳原味與偵測兩條 WHEP 串流網址
 > 全隊共用同一個 AWS RDS，**這段只需一個人跑一次，所有人同步生效**。
 > `init_db.py` 幫不上忙：`create_all` 只建不存在的表，不會為既有的表加欄位。
 
-- [ ] **Step 1：確認四句 SQL 的內容**
+> **2026-07-29 查核修正**：原計畫假設 `devices` 只有 1、2 兩台，實際有 7 台，
+> 且 301～304 已被填入完整 RTSP 網址（`rtsp://127.0.0.1:8554/cam301` 等，屬測試殘留）。
+> 改為**沿用 301～304**、不新增裝置。詳見 spec 的「RDS 實際現況」。
+
+- [ ] **Step 1：先加欄位（可立即執行，不影響任何人）**
 
 ```sql
--- ⓪ 先加欄位（沒有這句，後面的 UPDATE 會報 column does not exist）
 ALTER TABLE devices ADD COLUMN stream_url_detect VARCHAR(255);
-
--- ① 補兩個區域
-INSERT INTO locations (location_name, company_id)
-VALUES ('房間01', 1), ('房間02', 1);
-
--- ② 補兩台裝置（device_id 由資料庫自動編號）
-INSERT INTO devices (device_name, location_id, status, company_id)
-VALUES
-  ('房間01-01', (SELECT location_id FROM locations WHERE location_name='房間01'), 'active', 1),
-  ('房間02-01', (SELECT location_id FROM locations WHERE location_name='房間02'), 'active', 1);
-
--- ③ 四台填入頻道名（用 device_name 比對，因為新裝置的編號由資料庫決定）
-UPDATE devices SET stream_url='cam_in',  stream_url_detect='cam_out' WHERE device_name='交誼廳-01';
-UPDATE devices SET stream_url='phone_a', stream_url_detect=NULL      WHERE device_name='走廊-01';
-UPDATE devices SET stream_url='phone_b', stream_url_detect=NULL      WHERE device_name='房間01-01';
-UPDATE devices SET stream_url='phone_c', stream_url_detect=NULL      WHERE device_name='房間02-01';
 ```
 
-- [ ] **Step 2：使用者執行並確認結果**
+- [ ] **Step 2：等 albert 改讀 `stream_channel` 後，才填頻道名**
 
-跑完用這句檢查：
+他的程式目前把 `stream_url` 當完整 RTSP 位址直接用，提早改會讓他立刻連不到來源。
+（他若已加相容模式——`http`/`rtsp` 開頭視為完整網址、否則視為頻道名——則無此限制。）
+
+四句包在同一個 transaction，避免只改到一半、四台新舊混雜：
+
+```sql
+BEGIN;
+UPDATE devices SET stream_url='cam_in',  stream_url_detect='cam_out' WHERE device_id=301;
+UPDATE devices SET stream_url='phone_a', stream_url_detect=NULL      WHERE device_id=302;
+UPDATE devices SET stream_url='phone_b', stream_url_detect=NULL      WHERE device_id=303;
+UPDATE devices SET stream_url='phone_c', stream_url_detect=NULL      WHERE device_id=304;
+COMMIT;
+```
+
+跑完確認四台都正常後，提醒 albert **移除相容模式分支**（暫時橋接，不留成永久程式碼）。
+
+- [ ] **Step 3：確認結果**
 
 ```sql
 SELECT device_id, device_name, stream_url, stream_url_detect FROM devices ORDER BY device_id;
 ```
 
-預期看到 4 列，第一列 `cam_in` / `cam_out`，其餘三列 `phone_a`/`phone_b`/`phone_c` 且偵測欄為 NULL。
+預期 301 為 `cam_in`/`cam_out`，302～304 為 `phone_a`/`phone_b`/`phone_c` 且偵測欄為 NULL，
+其餘裝置（1、2、101）兩欄皆 NULL。
 
 - [ ] **Step 3：用後端實際確認**
 

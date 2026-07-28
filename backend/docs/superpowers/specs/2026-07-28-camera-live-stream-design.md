@@ -72,7 +72,7 @@ FastAPI 後端 ── GET /devices ──→ 只回網址字串，全程不碰�
 
 ### devices/router.py
 
-`serialize_device` 回傳兩個組好的網址：
+`serialize_device` 回傳**兩種形式**，因為兩邊消費者的協定不同：
 
 ```json
 {
@@ -80,19 +80,31 @@ FastAPI 後端 ── GET /devices ──→ 只回網址字串，全程不碰�
   "device_name": "交誼廳-01",
   "location": "交誼廳",
   "floor": null,
+  "stream_channel":        "cam_in",
+  "stream_channel_detect": "cam_out",
   "stream_url":        "http://192.168.1.108:8889/cam_in/whep",
   "stream_url_detect": "http://192.168.1.108:8889/cam_out/whep",
   "status": "active"
 }
 ```
 
-組合規則：
+| 欄位 | 消費者 | 用途 |
+| --- | --- | --- |
+| `stream_channel` / `stream_channel_detect` | AI 端 | 原始頻道名，AI 端自己接上本機 base 組成 `rtsp://<自己的MediaMTX>:8554/<頻道名>`。albert 的推論是「讀 `cam_in` → 畫框 → 推 `cam_out`」，兩個名字都要 |
+| `stream_url` / `stream_url_detect` | 瀏覽器 | 組好的 WHEP 網址。瀏覽器只看得懂 WebRTC，讀不了 RTSP |
+
+WHEP 網址組合規則：
 
 - `MEDIAMTX_BASE_URL` 為空 → 兩者皆 `null`
 - 該裝置對應的頻道名為空 → 該欄位 `null`
 - 兩者皆有 → `{base}/{頻道名}/whep`
 
 `null` 的意義是「這個環境沒有這條串流」，前端據此隱藏對應按鈕或退回占位框。
+原始頻道名不受 `MEDIAMTX_BASE_URL` 影響，有填就回。
+
+**已知命名不一致**：DB 欄位仍叫 `stream_url`，但存的是頻道名，API 對外改名為 `stream_channel`。
+不改欄位名的理由是全隊共用同一個 RDS，`RENAME COLUMN` 是無緩衝的硬切換——執行當下所有尚未
+更新程式的組員，`GET /devices` 會立即 500。新增欄位則可新舊並存。待 A 階段收尾全隊同步時再議。
 
 ### init_db.py：本輪不動
 
@@ -116,30 +128,50 @@ FastAPI 後端 ── GET /devices ──→ 只回網址字串，全程不碰�
 全隊共用同一個 AWS RDS，此段由一人執行一次，所有人同步生效。
 新欄位只能由此處的 `ALTER TABLE` 加上——`init_db.py` 的 `create_all` 不會為既有表補欄位。
 
-四句依序執行，`ALTER TABLE` 必須在最前面，否則後面的 `UPDATE` 會因欄位不存在而失敗。
+### RDS 實際現況（2026-07-29 查核）
+
+規格初稿假設 `devices` 只有 1、2 兩台，實際查核後為 7 台，且 301～304 已被填入完整 RTSP 網址：
+
+| device_id | device_name | stream_url |
+| --- | --- | --- |
+| 1 | 交誼廳-01 | NULL |
+| 2 | 走廊-01 | NULL |
+| 101 | VLM測試裝置-101 | NULL |
+| 301 | 寢室-301 | `rtsp://127.0.0.1:8554/cam301` |
+| 302 | 寢室-302 | `rtsp://127.0.0.1:8554/cam302` |
+| 303 | 寢室-303 | `rtsp://127.0.0.1:8554/cam303` |
+| 304 | 寢室-304 | `rtsp://127.0.0.1:8554/cam301` |
+
+因此**不新增裝置**，直接沿用 301～304 作為四宮格，把值改為頻道名。
+`127.0.0.1` 只有填入者本機連得到，且 304 與 301 指向同一條，屬測試殘留。
+
+### SQL
+
+兩段依序執行，`ALTER TABLE` 必須在最前面，否則 `UPDATE` 會因欄位不存在而失敗。
 
 ```sql
 -- ⓪ 先加欄位
 ALTER TABLE devices ADD COLUMN stream_url_detect VARCHAR(255);
 
--- ① 補兩個區域
-INSERT INTO locations (location_name, company_id)
-VALUES ('房間01', 1), ('房間02', 1);
-
--- ② 補兩台裝置（device_id 由資料庫自動編號）
-INSERT INTO devices (device_name, location_id, status, company_id)
-VALUES
-  ('房間01-01', (SELECT location_id FROM locations WHERE location_name='房間01'), 'active', 1),
-  ('房間02-01', (SELECT location_id FROM locations WHERE location_name='房間02'), 'active', 1);
-
--- ③ 四台填入頻道名
-UPDATE devices SET stream_url='cam_in',  stream_url_detect='cam_out' WHERE device_name='交誼廳-01';
-UPDATE devices SET stream_url='phone_a', stream_url_detect=NULL      WHERE device_name='走廊-01';
-UPDATE devices SET stream_url='phone_b', stream_url_detect=NULL      WHERE device_name='房間01-01';
-UPDATE devices SET stream_url='phone_c', stream_url_detect=NULL      WHERE device_name='房間02-01';
+-- ① 四台填入頻道名（301 接真攝影機，其餘接手機推流）
+-- 包在同一個 transaction：避免只改到一半、四台新舊混雜的狀態
+BEGIN;
+UPDATE devices SET stream_url='cam_in',  stream_url_detect='cam_out' WHERE device_id=301;
+UPDATE devices SET stream_url='phone_a', stream_url_detect=NULL      WHERE device_id=302;
+UPDATE devices SET stream_url='phone_b', stream_url_detect=NULL      WHERE device_id=303;
+UPDATE devices SET stream_url='phone_c', stream_url_detect=NULL      WHERE device_id=304;
+COMMIT;
 ```
 
-條件用 `device_name` 而非 `device_id`：新插入裝置的編號由資料庫決定，用名字比對不會填錯列。
+### 執行時機的相依
+
+`UPDATE` 必須在 **albert 改讀 `stream_channel` 之後**才執行。他的程式目前把 `stream_url` 的值
+當完整 RTSP 位址直接使用，一旦換成 `cam_in` 這種頻道名，他會立即連不到來源。
+`ALTER TABLE` 無此顧慮（純新增，不影響任何既有讀取），可先執行。
+
+albert 另提出 AI 端加**相容模式**（值以 `http`/`rtsp` 開頭視為完整網址，否則視為頻道名），
+如此新舊資料可並存、兩邊不必同秒部署。採納，但屬**暫時橋接**：
+`UPDATE` 完成並確認四台正常後即移除該分支，避免 `stream_url` 的混合語意長期存在。
 
 ## 前端設計
 
