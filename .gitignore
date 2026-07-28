@@ -75,6 +75,9 @@ ai/snapshots/
 # inference_test 觸發事件時寫入的前後 N 秒事件片段（執行時產物，CLIP_DIR 可改）
 ai/clips/
 
+# local_pose_eval.py 產出的標註圖／影片（執行時產物，--out 可改）
+ai/pose_eval_out/
+
 # ultralytics 訓練/驗證輸出
 runs/
 
