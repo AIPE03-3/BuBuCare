@@ -109,28 +109,68 @@ albert 的推流做好之後把這支關掉即可，前後端與資料庫都不�
 
 影片不是 H.264 的話加 `-Transcode`（會吃 CPU）。
 
-## 手機當鏡頭
+## 手機當鏡頭（2026-07-28 三支手機實測通過）
 
-手機裝推流 App（如 Larix Broadcaster），推流位址填：
+用 **Larix Broadcaster**（iOS / Android 皆有，免費）。三支手機各自設定一條連線：
 
-```
-rtsp://<電腦IP>:8554/phone_a
-```
+| 手機 | 推流位址 | 對應前端格子 |
+| --- | --- | --- |
+| 第一支 | `rtsp://<電腦IP>:8554/phone_a` | 第 2 格 |
+| 第二支 | `rtsp://<電腦IP>:8554/phone_b` | 第 3 格 |
+| 第三支 | `rtsp://<電腦IP>:8554/phone_c` | 第 4 格 |
 
-編碼選 **H.264**，不要選 H.265／HEVC——瀏覽器對 H.265 的 WebRTC 支援很差。
+設定步驟：
+
+1. 齒輪 ⚙ → **Connections** → **New connection**
+2. `Name` 隨意、`URL` 填上表的位址
+3. 存檔後回連線清單，**確認該連線前面的勾勾是打開的**
+4. 設定 → **Video** → Codec 選 **H.264**
+5. 回主畫面按紅色圓鈕開始推流
+
+踩過的坑：
+
+- **連線沒打勾** → 按了推流毫無反應。Larix 可存多組連線，沒勾的不會用。這是最常卡住的地方
+- **Codec 選成 HEVC／H.265** → MediaMTX 收得到、瀏覽器播不出來，症狀是前端「連線失敗」
+- 手機必須連**同一個 Wi-Fi**，不是行動網路
+
+**不適用的 App**：Iriun Webcam、DroidCam 這類「把手機變成電腦的視訊鏡頭」的工具。
+它們把畫面送進電腦的虛擬鏡頭裝置，沒有「推到指定伺服器」的功能，餵不進 MediaMTX。
+挑 App 的關鍵字是 **RTSP push** 或「推流」，設定裡要有讓你填伺服器網址的欄位。
 
 > 不要用手機瀏覽器的 `/publish` 頁面——那需要 HTTPS 與自簽憑證（每支手機都要安裝並信任），
 > A 階段刻意不做。
 
-## 防火牆（來源：傑雅實測筆記，這一段能省好幾小時）
+## 防火牆
 
-手機或別台電腦看不到畫面時，依序檢查：
+**多數情況下什麼都不用做。** Windows 在你第一次啟動 `mediamtx.exe` 時會跳出詢問視窗，
+按了允許之後它會自動建立「**這支程式的所有埠號、TCP＋UDP 全部放行**」的規則，
+8889 / 8189 / 8554 一次涵蓋（2026-07-28 於本專案實測確認）。
+
+檢查現況：
+
+```powershell
+Get-NetFirewallRule | Where-Object { $_.DisplayName -like "*mediamtx*" } |
+  ForEach-Object { "$($_.DisplayName) [$($_.Profile)] $($_.Action) -> $(($_ | Get-NetFirewallApplicationFilter).Program)" }
+```
+
+看到指向**你這份** `mediamtx.exe` 的 `Allow` 規則就沒問題。
+
+**⚠ 規則的 Profile 要對得上目前的網路類型。** 查目前網路：
+
+```powershell
+Get-NetConnectionProfile | Select-Object Name, NetworkCategory
+```
+
+`NetworkCategory` 是 `Public` 的話，只在 `Private` 生效的規則等於沒有。
+自動建立的規則會對應你當下所在的網路，所以通常會對；手動加規則時才要留意這點。
+
+真的要手動開，三個埠都要：
 
 | Protocol | Port | 用途 |
 | --- | ---: | --- |
 | TCP | 8889 | WHEP 報到 |
 | UDP | 8189 | WebRTC 影像流動 |
-| TCP | 8554 | RTSP 推流 |
+| TCP | 8554 | RTSP 推流（手機、ffmpeg 推進來用） |
 
 ```powershell
 New-NetFirewallRule -DisplayName "MediaMTX WHEP 8889" -Direction Inbound -Protocol TCP -LocalPort 8889 -Action Allow
@@ -138,7 +178,7 @@ New-NetFirewallRule -DisplayName "MediaMTX ICE 8189" -Direction Inbound -Protoco
 New-NetFirewallRule -DisplayName "MediaMTX RTSP 8554" -Direction Inbound -Protocol TCP -LocalPort 8554 -Action Allow
 ```
 
-**⚠ 加了 Allow 規則還是不通，而且 MediaMTX 的 log 連一筆請求都沒有？**
+**⚠ 加了 Allow 規則還是不通，而且 MediaMTX 的 log 連一筆請求都沒有？**（來源：傑雅實測筆記）
 
 Windows Defender 會**自動**為 `mediamtx.exe` 建立兩條 **Block** 規則，
 而**封鎖規則優先於允許規則**。到「具進階安全性的 Windows Defender 防火牆 → 輸入規則」，
@@ -171,6 +211,23 @@ webrtcIPsFromInterfacesList: [Wi-Fi]   # 名稱用 Get-NetIPAddress 查 Interfac
 | WHEP 回 404 | 頻道名打錯，或該頻道目前沒有來源 |
 | WHEP 回 201 但沒畫面 | UDP 8189 被擋 |
 | Console 出現 mixed content | 前端是 https 而 MediaMTX 是 http，必須兩邊一致 |
+| 手機按了推流但 log 沒反應 | Larix 的連線沒打勾；或手機不在同一個 Wi-Fi |
+| 前端某格「連線失敗」但其他格正常 | 該頻道沒有來源（手機沒推、ffmpeg 沒跑），不是前端問題 |
+
+## 電腦重開機後要重跑的東西
+
+```powershell
+# 1. MediaMTX（cam_in 會自動去連攝影機）
+cd streaming; .\mediamtx.exe .\mediamtx.yml
+
+# 2. 假偵測畫面（另開一個視窗）
+.\start-fake-detect.ps1
+
+# 3. 手機三支重新按推流
+```
+
+攝影機的 IP **換 Wi-Fi 就會變**，變了要改 `mediamtx.yml`；
+電腦自己的 IP 變了要改後端 `.env` 的 `MEDIAMTX_BASE_URL`。
 
 ## 安全性
 
