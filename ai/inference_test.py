@@ -761,7 +761,7 @@ if __name__ == "__main__":
     }
     # 相機清單來源開關：
     #   CAMERA_SOURCE=backend（預設）→ 啟動時打後端 GET /devices，只取 status=active 且
-    #     stream_url 非空的裝置，房號用 device_id 對齊（Room_<device_id>_Bed）。真攝影機走這條。
+    #     stream_channel 非空的裝置，房號用 device_id 對齊（Room_<device_id>_Bed）。真攝影機走這條。
     #   CAMERA_SOURCE=hardcoded → 位元級沿用上面三支 mp4（沒有後端的離線 demo / 純量測用）。
     _CAMERA_SOURCE = os.environ.get("CAMERA_SOURCE", "backend").strip().lower()
     if _CAMERA_SOURCE not in ("backend", "hardcoded"):
@@ -786,7 +786,7 @@ if __name__ == "__main__":
             print("     1) 後端沒開 → docker compose up -d backend，再 curl 該位址的 /health")
             print("     2) 帳密沒設 → 在 repo 根目錄 .env 補 BACKEND_API_USER / BACKEND_API_PASSWORD")
             print("     3) 清單是空的 → cd backend && python -m init_db，或用 admin 打 POST /devices")
-            print("        新增一台 status=active 且 stream_url 非空的裝置")
+            print("        新增一台 status=active 且 stream_channel 非空的裝置")
             print("     4) 先不接後端、跑離線 demo → CAMERA_SOURCE=hardcoded python ai/inference_test.py")
             print("=" * 70)
             raise SystemExit(1)

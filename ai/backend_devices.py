@@ -1,8 +1,12 @@
-"""從後端 GET /devices 取得真實攝影機清單，組成 camera_worker 要的 {camera_id: stream_url}。
+"""從後端 GET /devices 取得真實攝影機清單，組成 camera_worker 要的 {camera_id: rtsp_url}。
 
 為什麼要有這支：以前 ai/inference_test.py 的 camera_channels 是寫死的三支 mp4，
-後端裝置表就算填好了 stream_url，AI 端也看不到。接真實 RTSP 攝影機後，「有幾台、
-拉哪個網址」是營運資料，該由後端裝置表當唯一真相，不該散在程式碼裡。
+後端裝置表就算填好了頻道資訊，AI 端也看不到。接真實 RTSP 攝影機後，「有幾台、
+接哪個頻道」是營運資料，該由後端裝置表當唯一真相，不該散在程式碼裡。
+
+⚠️ 認 stream_channel 欄位（頻道名，如 cam_in），不要認 stream_url —— 那欄位現在回的是
+給瀏覽器用的 WHEP 網址（http://...:8889/cam_in/whep），ffmpeg/PyAV 打不開。主機/連接埠
+（MEDIAMTX_HOST/MEDIAMTX_RTSP_PORT）是本機環境變數決定，不是資料庫給的，換機器不用動DB。
 
 驗證方式：AI 端自己打 POST /login（form-encoded）拿 access_token，再帶
 Authorization: Bearer 打 GET /devices —— 後端 GET /devices 的保護方式一行都沒改。
@@ -39,6 +43,11 @@ BACKEND_API_URL = _cfg("BACKEND_API_URL", "http://127.0.0.1:8000").rstrip("/")
 BACKEND_API_USER = _cfg("BACKEND_API_USER", "A001")   # init_db 種的管理員員編，不是機密
 BACKEND_API_PASSWORD = _cfg("BACKEND_API_PASSWORD")   # 無預設：沒設就 fail fast，不猜
 BACKEND_HTTP_TIMEOUT = float(_cfg("BACKEND_HTTP_TIMEOUT", "10"))
+
+# 後端 GET /devices 的 stream_channel 只是頻道名（例：cam_in），不含主機——MediaMTX 跑在
+# 哪台機器是「這台 AI worker 自己的事」，不該寫進資料庫，換機器只改這個環境變數即可。
+MEDIAMTX_HOST = _cfg("MEDIAMTX_HOST", "127.0.0.1")
+MEDIAMTX_RTSP_PORT = _cfg("MEDIAMTX_RTSP_PORT", "8554")
 
 
 class BackendUnavailable(RuntimeError):
@@ -94,26 +103,40 @@ def fetch_devices(token: str, base_url: str = None, timeout: float = None) -> li
     return res.json()
 
 
+def _rtsp_url_of(channel: str) -> str:
+    """頻道名 -> 這台機器打得到的完整 RTSP URL。主機/連接埠只認本機環境變數，不信資料庫。"""
+    return f"rtsp://{MEDIAMTX_HOST}:{MEDIAMTX_RTSP_PORT}/{channel}"
+
+
 def build_camera_channels(base_url: str = None, username: str = None,
                           password: str = None, timeout: float = None) -> dict:
-    """登入 → 取清單 → 過濾 → 組成 {camera_id: stream_url}。
+    """登入 → 取清單 → 過濾 → 組成 {camera_id: rtsp_url}。
 
-    只取 status=active 且 stream_url 非空的裝置：inactive/fault 是人為停用或報修中，
-    不該讓 worker 去無限重連；stream_url 空的是還沒接攝影機的裝置（例如純事件用的 1/2）。
+    只取 status=active 且 stream_channel 非空的裝置：inactive/fault 是人為停用或報修中，
+    不該讓 worker 去無限重連；stream_channel 空的是還沒接攝影機的裝置（例如純事件用的 1/2）。
+
+    頻道名一律由後端資料庫決定，不能自己用 device_id 推算（301 對到 cam_in、302 對到
+    phone_a 這種對應關係後端說換就換，AI 端只負責照抄）。
     """
     token = login(base_url, username, password, timeout)
     devices = fetch_devices(token, base_url, timeout)
 
     channels = {}
     for d in devices:
-        url = (d.get("stream_url") or "").strip()
-        if d.get("status") != "active" or not url:
+        channel = (d.get("stream_channel") or "").strip()
+        if d.get("status") != "active" or not channel:
             continue
-        channels[camera_id_of(d["device_id"])] = url
+        # 過渡相容：舊資料/尚未 migrate 的環境可能還是完整 URL。這段是暫時的，
+        # 四台裝置切完 stream_channel 且驗過都正常後要刪掉，不要讓 stream_url 的
+        # 混合語意（完整URL 或 頻道名）一直留著。
+        if "://" in channel:
+            channels[camera_id_of(d["device_id"])] = channel
+        else:
+            channels[camera_id_of(d["device_id"])] = _rtsp_url_of(channel)
 
     if not channels:
         raise BackendUnavailable(
-            f"後端有 {len(devices)} 台裝置，但沒有任何一台同時滿足 status=active 且 stream_url 非空")
+            f"後端有 {len(devices)} 台裝置，但沒有任何一台同時滿足 status=active 且 stream_channel 非空")
     return channels
 
 
