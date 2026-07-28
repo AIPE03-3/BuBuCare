@@ -60,5 +60,8 @@ source $HOME/.local/bin/env
 | `no` | ❌ 否 | ❌ 否 | 預設值，容器異常終止後不會自動重啟。 |
 | `always` | ✔️ 是 | ✔️ 是 | 無論原因始終重啟。若手動停止，需重啟 Docker 或手動啟動容器來解除。 |
 | `unless-stopped` | ✔️ 是 | ✔️ 是 | 與 `always` 類似，但若手動執行過 `docker stop`，則即使重啟 Docker 也不會自動啟動它。 |
+
+(3) git action 會以ubuntu 登入, deploy_dev.sh 放置 /home/ubuntu/ 下
+
 | `on-failure` | ✔️ 是 (僅限非正常退出) | ❌ 否 | 只有在 Exit Code 不為 0（即發生錯誤退出）時才會重啟。 |
 

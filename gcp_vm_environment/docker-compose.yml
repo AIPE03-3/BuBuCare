@@ -4,7 +4,7 @@ services:
     container_name: kafka_kraft
     restart: always
     ports:
-      - "9092:9092"   # 內部連線
+      # - "9092:9092"   # 原以為內部連線, 後來發現這個沒意義, 因為這應該是開給host 的,內部的不用
       - "9094:9094"   # GCP 外部固定 IP 連線（需帳密）
     volumes:
       - ./kafka/data:/bitnami/kafka
@@ -112,6 +112,8 @@ services:
       - AWS_DEFAULT_REGION
       - AWS_RO_ACCESS
       - AWS_RO_SECRET_ACCESS
+      - TZ=Asia/Taipei                             # 容器預設是 UTC，不設的話 datetime.now() 存進 DB
+                                                  # 的時間會比台灣時間少 8 小時（通報單時間會不對）
     depends_on:
       - kafka
     networks:
