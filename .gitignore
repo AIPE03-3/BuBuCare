@@ -36,3 +36,11 @@ CLAUDE.md
 docker-compose.override.yml
 
 gcp_vm_environment/.env
+
+# 串流：執行檔與含攝影機帳密的實際設定不進 git（範本 mediamtx.yml.example 才進）
+streaming/mediamtx.exe
+streaming/mediamtx.yml
+streaming/*.log
+streaming/*.zip
+streaming/*.crt
+streaming/*.key
