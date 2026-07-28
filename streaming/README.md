@@ -214,6 +214,20 @@ webrtcIPsFromInterfacesList: [Wi-Fi]   # 名稱用 Get-NetIPAddress 查 Interfac
 | 手機按了推流但 log 沒反應 | Larix 的連線沒打勾；或手機不在同一個 Wi-Fi |
 | 前端某格「連線失敗」但其他格正常 | 該頻道沒有來源（手機沒推、ffmpeg 沒跑），不是前端問題 |
 
+## ⚠ 改 mediamtx.yml 會中斷所有串流
+
+MediaMTX 偵測到設定檔變動會自動重載（log 出現 `reloading configuration (file changed)`），
+**重載時所有連線都會被砍掉重建**：
+
+- 攝影機斷線後自行重連（幾秒）
+- `start-fake-detect.ps1` 的 ffmpeg **直接結束**，要手動重跑
+- 手機端要重新按推流
+
+**demo 進行中絕對不要改這個檔案。** 要加新頻道請在開場前一次改完。
+
+另外：**沒有列在 `paths:` 底下的頻道，MediaMTX 會直接拒收**。新增鏡頭時
+`mediamtx.yml` 與資料庫的頻道名要一起加，只加資料庫會推不進來。
+
 ## 電腦重開機後要重跑的東西
 
 ```powershell
