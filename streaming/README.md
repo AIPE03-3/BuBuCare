@@ -97,7 +97,134 @@ WHEP 網址由**回應請求的那台後端**組出來，所以要設在哪，�
 從 `cam_in` 拉畫面、畫一個固定紅框、推到 `cam_out`。
 **紅框位置固定，與畫面內容無關**——它只證明前端切換鈕有生效，不證明任何 AI 能力。
 
-albert 的推流做好之後把這支關掉即可，前後端與資料庫都不用改。
+### ✅ 正式的 cam_out 來源已經做好了（2026-07-28）
+
+`ai/inference_test.py` 已可把畫好框的畫面推回偵測頻道，設 `DETECT_STREAM=1` 即可：
+
+```bash
+DETECT_STREAM=1 python ai/inference_test.py
+```
+
+推的是真正的 AI 輸出（`person` 框、姿態骨架、物件輪廓、狀態列），不是固定紅框。
+頻道名由後端資料庫的 `stream_channel_detect` 決定，**前端、後端、資料庫都不用改**，
+換的只是 MediaMTX 的上游。細節見 `NEXT_STAGE.md` 第 8 項。
+
+需要機器上有 ffmpeg；裝在非標準位置時用 `DETECT_STREAM_FFMPEG` 指定完整路徑。
+未設 `DETECT_STREAM=1` 時完全不推流，行為與加這功能之前相同。
+
+**上面那支 `start-fake-detect.ps1` 從此只在「AI 沒開、但要驗前端切換鈕」時才需要。**
+
+---
+
+## Linux / WSL2 的跑法（2026-07-28 實測）
+
+上面的步驟是 Windows + PowerShell。在 Linux（含 WSL2）跑 AI 端時，改用下面這套。
+
+### ⚠ WSL2 一定要把 MediaMTX 跑在 Docker 裡，不要跑原生執行檔
+
+**踩過的坑**：在 WSL2 裡直接跑 `./mediamtx`，WSL2 內部測全部正常（`curl` 打得到、
+串流讀得到），但 **Windows 上的瀏覽器完全連不到 8889**，前端只會一直轉圈。
+
+原因是埠的轉發機制不同：
+
+| 服務跑在哪 | 瀏覽器連得到嗎 |
+|---|---|
+| Docker 容器（前端 :80、後端 :8000）| ✅ Docker Desktop 直接發佈到 Windows |
+| WSL2 原生行程 | ❌ 靠 WSL2 自己的 localhost 轉發，實測沒生效 |
+
+**所以驗證時不能只從 WSL2 內部 curl** —— 那會全綠但瀏覽器還是打不開。
+
+```bash
+docker run -d --name nh-mediamtx --restart unless-stopped \
+  -p 8554:8554 -p 8889:8889 -p 8189:8189/udp -p 9997:9997 \
+  -v $PWD/streaming/mediamtx.yml:/mediamtx.yml:ro \
+  bluenviron/mediamtx:latest
+```
+
+`8189/udp` 是 WebRTC 的 ICE，**沒發佈的話會協商成功但收不到影像**。
+
+### 查頻道狀態要用控制 API，不要猜
+
+設定檔加上：
+
+```yaml
+api: yes
+apiAddress: :9997
+authInternalUsers:            # 預設的內建使用者沒有 api 權限，不加會回 authentication error
+  - user: any
+    permissions:
+      - {action: publish}
+      - {action: read}
+      - {action: playback}
+      - {action: api}
+```
+
+```bash
+curl -s http://127.0.0.1:9997/v3/paths/list | python3 -m json.tool
+```
+
+看每個頻道的 `ready`。**不要用 WHEP 端點的 HTTP 狀態碼判斷** —— 那只是 CORS preflight，
+不管有沒有 publisher 都回 204，會把所有頻道誤判成「有畫面」。
+
+### 沒有攝影機時用影片頂著（`start-fake-camera.ps1` 的 Linux 版）
+
+```bash
+ffmpeg -re -stream_loop -1 -i frontend/public/videos/fall-demo.mp4 \
+  -an -c:v libx264 -preset ultrafast -tune zerolatency -g 48 \
+  -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam_in
+```
+
+### 找攝影機的 IP
+
+```bash
+python3 - <<'PY'
+import socket, concurrent.futures as cf
+def probe(ip):
+    s=socket.socket(); s.settimeout(1.5)
+    try: s.connect((ip,554)); return ip
+    except Exception: return None
+    finally: s.close()
+ips=[f"192.168.0.{i}" for i in range(1,255)]          # 換成你的網段
+with cf.ThreadPoolExecutor(max_workers=128) as ex:
+    print([r for r in ex.map(probe, ips) if r])
+PY
+```
+
+**掃不到 554 不代表攝影機不在**——Tapo 要先在 App 裡建立攝影機帳號才會開 RTSP。
+沒開帳號時它只有 `8800`（TP-Link 專有協定）與 `443` 開著，MAC 前綴 `60-a4-b7` 是 TP-Link。
+
+### 接 Tapo C210（2026-07-28 實測通過）
+
+先照上面「Tapo C210 的 RTSP 帳密」建立攝影機帳號，再把 `cam_in` 從 `publisher` 改成主動拉：
+
+```yaml
+cam_in:
+  source: rtsp://<攝影機帳號>:<密碼>@<攝影機IP>:554/stream2
+  rtspTransport: tcp        # 一定要加，UDP 會破格
+  sourceOnDemand: no
+```
+
+`docker restart nh-mediamtx` 之後，log 出現這兩行才算成功：
+
+```
+[path cam_in] [RTSP source] started
+[path cam_in] stream is available and online, 2 tracks (H264, G711)
+```
+
+**AI 端不用重啟**——它對 `cam_in` 是無限重連，攝影機一上線就自己接上。
+
+### ⚠ 換攝影機、換位置、換解析度之後要重啟 AI
+
+`normal_h_reference`（防線 B 用的參考身高）只在 worker 開頭校正一次，之後不會更新。
+換來源後不重啟的話會拿舊的參考值判斷，症狀是**畫面永遠紅燈**，而且看不出原因。
+細節與修法方向見 `NEXT_STAGE.md` 第 9 項缺陷三。
+
+### ⚠ 攝影機不要陡角俯視
+
+實測發現：架高、陡角往下拍時，**站著的人在影像上的軀幹會被壓縮成接近水平**
+（髖部投影得比肩膀還高），跟臥倒的幾何特徵完全一樣，防線 A 會持續誤報。
+
+建議「牆面約 2 公尺高、微微下傾」。詳細數據見 `NEXT_STAGE.md` 第 9 項缺陷四。
 
 ## 沒有攝影機時
 
