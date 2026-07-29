@@ -124,6 +124,10 @@ export interface Camera {
   // null＝這個環境沒有這條串流（後端沒設位址，或這台鏡頭沒填該頻道）。
   stream_url: string | null;        // 即時（原味）
   stream_url_detect: string | null; // 偵測（AI 畫框後），沒接 AI 的鏡頭為 null
+  // 頻道名（cam_in / phone_a…），與上面兩條網址一一對應、同時有值或同時為 null。
+  // 用途：向後端 POST /streams/{channel}/token 換 60 秒串流權杖再去連 MediaMTX。
+  stream_channel: string | null;
+  stream_channel_detect: string | null;
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷
 }
 // 已移除 StreamSource 型別：全站零讀取，且與 stream_url_detect 語意重疊。
@@ -277,6 +281,7 @@ export interface FixedTestSet {
 - 事件有兩條產生路徑：YOLO 高信心直通（`vlm_result: null`）與 VLM 複判後產生。所有顯示 VLM 資訊的地方都必須處理 null。
 - 即時推播經 `useEventSocket` hook（demo 用計時器模擬），介面比照 WebSocket，日後直接替換連線實作。
 - 即時影像**已接真串流**（WebRTC/WHEP，見 `components/LiveStream.tsx`）：首頁四宮格與鏡頭彈窗皆播放實際畫面，網址由 `GET /devices` 提供（`stream_url`＝即時、`stream_url_detect`＝AI 偵測）。網址為 null 時才退回灰色占位框（`CAMERA_LABEL.LIVE_PLACEHOLDER`）。事件／偵測紀錄的截圖仍是「事件快照（影像片段）」（`SNAPSHOT_PLACEHOLDER`），兩者語意不同、不共用文字。
+- **串流已有身分驗證，光有網址看不到畫面**：`LiveStream` 連線前必須先以 `fetchStreamToken(channel)` 向後端換一張 60 秒串流權杖，帶 `Authorization: Bearer` 打 WHEP，MediaMTX 會回頭向後端驗票。故 `LiveStream` 的 `whepUrl` 與 `channel` 兩個 prop **必須是同一個模式的一組**（同為即時或同為偵測），配錯會 401。
 
 ## Definition of Done（每個任務完成前自查）
 

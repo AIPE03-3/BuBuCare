@@ -30,6 +30,10 @@ export function CameraDetailModal({ camera, isDetecting, onClose, onNameChange }
   const [nameDraft, setNameDraft] = useState(camera.name);
   const [streamMode, setStreamMode] = useState<StreamMode>('live');
   const streamUrl = streamMode === 'detect' ? camera.stream_url_detect : camera.stream_url;
+  // 頻道名（LiveStream 拿去跟後端換串流權杖）。務必與 streamUrl 取同一個模式，
+  // 否則換來的票對不上要看的頻道，MediaMTX 會回 401。
+  const streamChannel =
+    streamMode === 'detect' ? camera.stream_channel_detect : camera.stream_channel;
 
   function startEditing() {
     setNameDraft(camera.name);
@@ -116,6 +120,7 @@ export function CameraDetailModal({ camera, isDetecting, onClose, onNameChange }
         <div className="aspect-video w-full overflow-hidden rounded-xl">
           <LiveStream
             whepUrl={streamUrl}
+            channel={streamChannel}
             emptyLabel={
               streamMode === 'detect' && camera.stream_url_detect === null
                 ? '此鏡頭無 AI 偵測'

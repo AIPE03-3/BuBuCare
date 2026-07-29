@@ -13,6 +13,15 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
     if payload is None:
         # raise：主動拋出錯誤(401：未授權)，程式不會繼續往下執行
         raise HTTPException(status_code=401, detail="token 無效或過期")
+
+    # 串流權杖擋在這裡：它跟登入 token 由同一把 SECRET_KEY 簽，外觀分不出來，
+    # 只能靠 scope 這個欄位區分用途。一張票只該能做一件事——
+    # 串流權杖是給 MediaMTX 看畫面用的，不該能拿來呼叫 /events、/users，
+    # 也不該能拿來再換一張新票（否則 60 秒的壽命可以無限續，等同永不過期）。
+    # 它會被寫進 MediaMTX 與 nginx 的存取紀錄，log 外流時這一行就是防線。
+    if payload.get("scope") == "stream":
+        raise HTTPException(status_code=401, detail="串流權杖不可用於一般 API")
+
     # token 合法就回傳使用者資料，例如 {"sub": "alice", "role": "admin"}
     return payload
 
