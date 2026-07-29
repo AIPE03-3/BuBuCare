@@ -8,11 +8,32 @@
 | 模型 | serving 版本 | platform | 需要的權重檔（每個 serving 版本目錄都要有）| 版本鎖 |
 |---|---|---|---|---|
 | `yolo_pose` | 1 | onnxruntime_onnx | `1/model.onnx` | 無（只有 v1）|
-| `rt_detr` | **1** | tensorrt_plan | `1/model.plan`（Blackwell 專屬 TensorRT 引擎）| ✅ `version_policy: specific [1]` |
+| `rt_detr` | **2** | tensorrt_plan | `2/model.plan`（Blackwell 專屬 TensorRT 引擎）| ✅ `version_policy: specific [2]` |
 | `action_transformer` | 1 | onnxruntime_onnx | `1/model.onnx` | 無（只有 v1）|
 
-> 權重檔（`*.onnx` / `*.plan`）被 `.gitignore` 排除、**不進版控**，clone 後需在本機各自重建/取得。
-> 進版控的只有 `config.pbtxt`。
+> 權重檔（`*.onnx` / `*.plan`）被 `.gitignore` 排除、**不進版控**，clone 後需在本機各自重建/取得：
+> `python ai/export_models.py --plan`（三顆都重建到 v1）。進版控的只有 `config.pbtxt`。
+
+## `rt_detr` 的版本沿革
+
+| 版本 | 來源 | 類別 | 備註 |
+|---|---|---|---|
+| v1 | `rtdetr-l.pt` 官方權重 | COCO 80 類 | 原始上線版本，**保留當回滾點，不要刪** |
+| **v2** | 2026-07-29 重訓（ClearML task `8d3d9421`）| person/chair/sofa/bed/tv 5 類 | mAP50=0.9912（見 [`../MLOPS.md`](../MLOPS.md) 對這個數字的但書）|
+
+v2 是由 [`../model_deployment_agent.py`](../model_deployment_agent.py) 熱部署上去的，
+`config.pbtxt` 的 `version_policy` 那一行由它自動改寫，**不要手動編輯**：
+
+```bash
+python ai/model_deployment_agent.py              # 部署 ClearML 上標 best 的最新權重
+python ai/model_deployment_agent.py --rollback   # 切回上一個版本
+```
+
+換版本時 `rt_detr` 的類別語意會整個改變（v1 是 COCO 80 類、v2 是 5 類）。
+這不影響跌倒偵測 —— `ai/inference_test.py:714-728` 算出來的 `detected_objects` /
+`bed_box_xyxy` 全檔沒有任何地方讀（原本的讀取者 `bed_exit` / `chair_slip` 已於
+2026-07-27 刪除）。**之後若要把那兩個值接回使用，先確認目前 serving 的是哪一版、
+類別對照表拿的是哪一份**，否則會查到完全不相干的物件名。
 
 ## ⚠️ 版本鐵則（避免「載到沒測過/對不齊的版本」）
 

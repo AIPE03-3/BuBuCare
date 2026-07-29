@@ -14,7 +14,16 @@ RT-DETR 官方前處理是「純 resize 到 640×640」（非保比例 letterbox
 
 注意：`.names` 為完整 80 類 COCO dict（下游靠 names[cls_id] 查 bed/chair/couch 等物件名）。
 實際 export 走 `rtdetr-l.pt`（標準 COCO 80），故此處也從該權重讀 names。
-`wheelchair` 不在 COCO 80，需等 3 類重訓模型訓出後才會出現。
+
+⚠️ **2026-07-29 起 Triton 上 serving 的 `rt_detr` 是重訓版（v2），只有 5 類**
+（person/chair/sofa/bed/tv，見 `ai/data.yaml`），**與這裡的 COCO 80 類 names 對不上** ——
+`names[cls_id]` 查出來的名字會是錯的（例：v2 的 cls_id=4 是 tv，這裡會查成 COCO 的 airplane）。
+
+現在**不會壞**，因為唯一的下游 `ai/inference_test.py:714-728` 算出 `detected_objects` /
+`bed_box_xyxy` 之後全檔沒有任何地方讀（原讀取者 bed_exit / chair_slip 已於 2026-07-27 刪除），
+所以類別名對不對完全沒有影響。留這段註解是為了下一個人：**要把那兩個值接回使用之前，
+先把這裡的 names 改成跟當下 serving 的版本一致**（`ai/triton_repo/README.md` 有版本沿革），
+不要假設它是 COCO。
 """
 import threading
 
