@@ -1,0 +1,14 @@
+# AcT 重訓工具鏈的依賴。
+#
+# 這份是 ai/requirements-local-eval.txt 的**增量**——先裝那份，再裝這份：
+#   uv pip install --python ai/.venv/bin/python -r ai/requirements-local-eval.txt
+#   uv pip install --python ai/.venv/bin/python -r ai/train/requirements.txt
+#
+# ultralytics（帶 torch / opencv / numpy）由前者提供，這裡只補 ONNX 匯出與驗證用的兩顆。
+#
+# 注意：export_onnx.py 走的是 TorchScript 匯出路徑（dynamo=False）。
+# torch 2.9 起 export 預設 dynamo=True，那條路徑還要 onnxscript；
+# 這顆模型結構單純，舊路徑就夠，故意不引入那個依賴。
+
+onnx>=1.22
+onnxruntime>=1.28
