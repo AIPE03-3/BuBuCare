@@ -201,7 +201,9 @@ export interface AuthSession {
   role: Role;
   display_name: string;
   must_change_password: boolean; // 新帳號首次登入／被 admin 重設密碼者為 true，觸發強制改密碼流程
-  // employee_code: string | null — 待凱莉確認後端欄位與 /me 端點後新增，未確認前不得實作
+  // 登入者本人的員編，取自 JWT payload 的 sub（後端登入時已包入，毋須打 /me）。
+  // null＝取不到（OTP mock 登入無員編，或舊的 localStorage session 尚未帶此欄）。
+  employee_code: string | null;
 }
 export interface AuthProvider {
   requestCode?(email: string): Promise<void>;

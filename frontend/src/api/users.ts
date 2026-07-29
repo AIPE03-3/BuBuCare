@@ -6,6 +6,7 @@ import type { ManagedUser } from '../types';
  * 使用者管理走真後端（皆為 admin-only 端點，token 由 apiClient 自動帶）：
  *   GET   /users               → 名單（後端只回未停用帳號）
  *   PATCH /users/{id}          → 改姓名（後端只收 full_name）
+ *   PATCH /users/{id}/role     → 改角色（後端只收 role，且擋「改自己」）
  *   PATCH /users/{id}/password → 重設密碼（後端只收 new_password，最少 6 碼）
  * 後端無「查單筆」端點，getUserById 內部撈名單再挑出該筆。
  * 後端的 POST /register、DELETE /users/{id} 本輪不接（前端無對應 UI 入口）。
@@ -77,12 +78,39 @@ export async function createUser(input: CreateUserInput): Promise<void> {
   }
 }
 
-// 改名與（選填）改密碼。後端拆成兩支端點，故內部視情況打 1~2 次請求，
+// 改角色（admin-only PATCH /users/{id}/role）。後端擋「改自己」回 400、找不到回 404；
+// 走原生 fetch 讀後端 detail 訊息（如「不能改自己的角色」）直接呈現——
+// 通用 apiClient 只丟籠統的 status 錯誤，會把這句話吃掉。
+async function patchRole(id: string, role: ManagedUser['role']): Promise<void> {
+  const token = getStoredSession()?.token;
+  const res = await fetch(`${BASE_URL}/users/${id}/role`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((d: { detail?: string }) => d?.detail)
+      .catch(() => null);
+    throw new Error(detail ?? `角色變更失敗（${res.status}）`);
+  }
+}
+
+// 改名、改角色與（選填）改密碼。後端拆成三支端點，故內部視情況打 1~3 次請求，
 // 呼叫端仍只呼叫本函式一次。密碼為 undefined／空字串視為不變更。
+// 角色排在最前面：三者中只有它會被後端擋（改到自己回 400），失敗時姓名與密碼都還沒動，
+// 不會留下「名字改了、角色沒改」的半套狀態。
 export async function updateUser(
   id: string,
-  patch: { name?: string; password?: string },
+  patch: { name?: string; password?: string; role?: ManagedUser['role'] },
 ): Promise<void> {
+  if (patch.role !== undefined) {
+    await patchRole(id, patch.role);
+  }
   if (patch.name !== undefined) {
     await apiClient.patch(`/users/${id}`, { full_name: patch.name });
   }
