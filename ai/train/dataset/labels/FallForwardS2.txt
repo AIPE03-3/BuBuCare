@@ -1,0 +1,6 @@
+# STATUS: REVIEWED
+# FallForwardS2 跌落區間
+# 幾何規則猜不出（前跌盲區），以下由 Claude 依 labels_review/FallForwardS2.jpg 判讀：
+#   frame 11 站立行走｜16 開始前傾｜22 手撐地｜27 已完全趴地｜33 之後靜止不動
+# 確認無誤後把第一行的 DRAFT 改成 REVIEWED
+frame 11-33
