@@ -22,7 +22,8 @@ MediaMTX 內建播放頁 `http://<host>:8889/cam_in` 直接可播）。
 | 做 | 不做 |
 | --- | --- |
 | 瀏覽器觀看（WebRTC read）需短命權杖 | 推流（publish）驗證 |
-| AI 端讀取（RTSP read）需專屬帳密 | 每人只能看指定鏡頭的授權模型 |
+| | RTSP 讀取驗證——刻意放行，理由見「設計決定」第 2 條 |
+| | 每人只能看指定鏡頭的授權模型 |
 | `POST /streams/{channel}/token` 發票 | HTTPS／傳輸加密 |
 | `POST /streams/auth` 供 MediaMTX 驗票 | 踢掉已建立的連線 |
 | `get_current_user` 反向拒絕串流權杖 | 跨網路觀看 |
@@ -47,25 +48,28 @@ MediaMTX 內建播放頁 `http://<host>:8889/cam_in` 直接可播）。
 ### 1. 只擋觀看，推流放行
 
 `authHTTPExclude` 列入 `action: publish`。理由：手機 Larix、AI 端的 ffmpeg、
-`start-fake-camera.ps1` / `start-fake-detect.ps1` 全都不需改設定，demo 前不必重設三支手機。
+與 ffmpeg 推的假畫面全都不需改設定，demo 前不必重設三支手機。
 代價：同網段可推垃圾畫面蓋掉 `cam_out`，demo 情境風險可接受。
 
-### 2. AI 端以 RTSP 讀取 `cam_in`，走專屬帳密
+### 2. RTSP 讀取一律放行（2026-07-29 改版，原訂走專屬帳密）
 
 AI 端的推論程式「讀 `cam_in` → 畫框 → 推 `cam_out`」，其中**讀**走 RTSP、非 WebRTC，
 不可能持有瀏覽器才拿得到的短命權杖。若不處理，開啟驗證即中斷整條偵測管線。
 
-做法：`/streams/auth` 對 `protocol == "rtsp" and action == "read"` 走另一條分支，
-比對 `.env` 的 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`（`hmac.compare_digest` 比對，避免時序側漏）。
-AI 端只需把讀取網址改為 `rtsp://<帳號>:<密碼>@<host>:8554/cam_in`，一行。
-他的**推流**不受影響（決定 1 已放行 publish）。
+做法：`/streams/auth` 對 `protocol == "rtsp" and action == "read"` 直接回 204，
+不檢查任何憑證。AI 端沿用原本的網址，零改動。
 
-未設定 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` 時一律拒絕（fail-closed）。
-`.env.example` 須列出這兩個值並說明用途。
+**代價**：同網段以 VLC 開 `rtsp://<host>:8554/cam_in` 即可觀看，等於只擋瀏覽器。
+正當化前提是**內網信任**——攝影機／MediaMTX／AI 主機屬同一受控網段。
+正式環境應將三者切到獨立 VLAN，該前提才成立；目前 demo 跑在共用 Wi-Fi 上並不成立，
+接受此風險的理由是 demo 為受控展示、評審不自行連線。
 
-**被否決的替代方案**：`authHTTPExclude` 直接放行全部 RTSP 讀取。零協調成本，但同網段以 VLC
-開 `rtsp://<host>:8554/cam_in` 即可觀看，等於只擋瀏覽器。其正當理由是「內網信任」，
-而本專案部署於共用 Wi-Fi，該前提不成立，故不採用。
+**原訂做法（已改）**：比對 `.env` 的 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`
+（`hmac.compare_digest`，未設定即 fail-closed）。改掉的理由是每個 RTSP 讀取端都要改網址、
+多一個跨組協調與 demo 當天出錯的環節，而受控內網下該保護的邊際價值有限。
+
+**想鎖回去**：`.env` 加回那兩個變數，`streams/router.py` 的 RTSP 分支改成比對
+`body.user` / `body.password`，並把所有讀取端網址改為 `rtsp://<帳號>:<密碼>@<host>:8554/<頻道>`。
 
 ### 3. 發票時不驗證頻道是否存在於資料庫
 
@@ -125,12 +129,9 @@ authHTTPAddress: http://127.0.0.1:8000/streams/auth
 
 兩條分支，回 204（放行）或 401（拒絕）：
 
-**分支一：`protocol == "rtsp" and action == "read"` → AI 端專屬帳密**
+**分支一：`protocol == "rtsp" and action == "read"` → 直接放行**
 
-| 條件 | 用意 |
-| --- | --- |
-| `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` 皆已設定 | 未設定即拒絕（fail-closed） |
-| `user` / `password` 與上述相符（`hmac.compare_digest`） | 只有 AI 端進得來 |
+不檢查任何憑證（決定 2）。**只有「讀」放行**，RTSP 推流會落進分支二被擋。
 
 **分支二：其餘一律走短命權杖**
 
@@ -153,8 +154,7 @@ authHTTPAddress: http://127.0.0.1:8000/streams/auth
 | `backend/streams/__init__.py` | 新增（空） |
 | `backend/streams/router.py` | 新增：兩個端點 |
 | `backend/core/auth.py` | 新增 `create_stream_token(channel, sub)` |
-| `backend/core/config.py` | 新增 `STREAM_TOKEN_EXPIRE_SECONDS`（預設 60）、`STREAM_RTSP_USER`、`STREAM_RTSP_PASS`（預設空字串） |
-| `.env.example` | 新增 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` 並說明用途（AI 端讀取憑證） |
+| `backend/core/config.py` | 新增 `STREAM_TOKEN_EXPIRE_SECONDS`（預設 60） |
 | `backend/core/dependencies.py` | `get_current_user` 拒絕 `scope=stream` |
 | `backend/main.py` | 掛 `stream_router` |
 
@@ -191,12 +191,6 @@ authHTTPExclude:
   - action: pprof
 ```
 
-### 串流腳本
-
-`streaming/start-fake-detect.ps1` 也是 RTSP 讀取端（讀 `cam_in` 畫紅框推 `cam_out`），
-與 AI 端的程式同樣需在讀取網址帶上 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`。
-`start-fake-camera.ps1` 是 publish，不受影響。
-
 ### nginx
 
 `frontend/nginx.conf` 的 `location /api/stream`（SSE 用）會前綴命中 `/api/streams/auth`。
@@ -219,9 +213,8 @@ authHTTPExclude:
 2. **後端不可用即完全無畫面**。A 階段無此耦合（影像不經後端，後端掛掉照播）。
    現場網路連不上雲端後端時四格全失敗。退路見下節。
 3. 推流仍不設防（決定 1）。同網段可推垃圾畫面蓋掉 `cam_out`。
-   RTSP **讀取**已由決定 2 保護，但該組帳密為全系統共用、不會過期，
-   外流即須改 `.env` 並同步通知 AI 端——與短命權杖不同，這是刻意的取捨：
-   AI 端是長時間運行的背景程式，無法像瀏覽器那樣每次連線前換票。
+   RTSP **讀取**也不設防（決定 2）：同網段用 VLC 開 `rtsp://<host>:8554/cam_in` 就看得到。
+   受保護的只有瀏覽器那條路。
 4. 換票與 WHEP 協商走 http 明文，同網段抓封包可撿得權杖並於 60 秒內冒用。
    WebRTC 影像本身為 DTLS-SRTP 加密，不受影響。此非新增問題——登入密碼與登入 JWT
    在 A 階段即為明文傳輸。根治需整套上 HTTPS，屬後續階段。
@@ -249,10 +242,8 @@ demo 現場後端不可用時，將 `mediamtx.yml` 的 `authMethod` / `authHTTPA
 | 以串流權杖呼叫一般 API | 401 |
 | `cam_in` 的票用於 `cam_out` | 401 |
 | `action=publish` | 401 |
-| 權杖 + `protocol=rtsp` | 401（權杖只走 WebRTC 路徑） |
-| RTSP 讀取 + 正確帳密 | 204 |
-| RTSP 讀取 + 錯誤帳密 | 401 |
-| RTSP 讀取 + 未設定帳密環境 | 401（fail-closed） |
+| RTSP 讀取（不帶任何憑證） | 204（刻意放行） |
+| RTSP 推流 | 401（只有「讀」放行） |
 | 請求欄位含 `null` | 不得 422 |
 | 過期權杖 | 401 |
 
@@ -272,9 +263,8 @@ demo 現場後端不可用時，將 `mediamtx.yml` 的 `authMethod` / `authHTTPA
 | MediaMTX 拉取真攝影機是否受驗證影響 | `source: rtsp://...` 是 MediaMTX 主動外連，推論不受 auth 管轄，未實測 | 攝影機到位後 |
 | 瀏覽器 CORS 預檢是否放行 `Authorization` | 多帶該 header 會觸發 OPTIONS 預檢，傑雅版實測可行但設定不同 | 立即 |
 | 設定檔熱重載中斷連線 | 已知行為，驗證順序須排定，不可邊測邊改 | — |
-| AI 端帶帳密後能否讀到 `cam_in` | 我方以 `start-fake-detect.ps1` 先行驗證同一條路徑；AI 端須自行確認 | 立即（我方）／待 AI 端回報 |
 
-無攝影機期間可用 `start-fake-camera.ps1` 推 mp4 完成除「真攝影機」外的全部驗證。
+無攝影機期間可用 ffmpeg 推 mp4 完成除「真攝影機」外的全部驗證。
 
 ## 參考
 

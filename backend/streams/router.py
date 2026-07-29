@@ -7,8 +7,6 @@
 #   ③ MediaMTX 回頭打後端問「這張權杖有效嗎」（POST /streams/auth，Task 2 實作）
 #
 # 兩個端點的呼叫者不同：①是瀏覽器（需登入），③是 MediaMTX（沒有帳號，必須公開）。
-from hmac import compare_digest
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -66,24 +64,11 @@ class MediaMTXAuthRequest(BaseModel):
 # 回 204 = 放行、401 = 擋下，這是 MediaMTX 規定的格式。
 @router.post("/streams/auth", status_code=204)
 def authorize_mediamtx(body: MediaMTXAuthRequest):
-    # ── 分支①：AI 端走 RTSP 讀取，用固定帳密 ──
-    # 必須排在驗票之前：AI 端的請求若落進分支②，會在「必須是 webrtc」那關被擋掉，
-    # 整條偵測管線就斷了。
+    # ── 分支①：RTSP 讀取一律放行（AI 端走這條）──
+    # 必須排在驗票之前，否則會被分支②的「必須是 webrtc」擋掉。
+    # ⚠ 刻意放行：代價是同網段用 VLC 就看得到，換 AI 端不必改網址。
+    #    瀏覽器那條（分支②）不受影響，仍需權杖。
     if body.protocol == "rtsp" and body.action == "read":
-        if not (config.STREAM_RTSP_USER and config.STREAM_RTSP_PASS):
-            # fail-closed：環境變數沒設就拒絕。
-            # 若寫成「沒設定就不檢查」，一次部署忘了填 .env，RTSP 就對外全開了
-            raise HTTPException(status_code=401, detail="未設定 RTSP 讀取憑證")
-
-        # compare_digest 而非 ==：普通的字串比對第一個字不對就馬上回 False，
-        # 比對花的時間會洩漏「猜對幾個字」，攻擊者靠計時能一個字一個字試出密碼。
-        # compare_digest 不管對錯都花一樣的時間。
-        credentials_ok = (
-            compare_digest(body.user or "", config.STREAM_RTSP_USER)
-            and compare_digest(body.password or "", config.STREAM_RTSP_PASS)
-        )
-        if not credentials_ok:
-            raise HTTPException(status_code=401, detail="RTSP 讀取憑證錯誤")
         return
 
     # ── 分支②：其餘一律驗短命權杖（瀏覽器走這條）──
