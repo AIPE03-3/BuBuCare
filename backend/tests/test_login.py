@@ -2,7 +2,10 @@
 # 測試 POST /login 路由的所有情況
 # 共用設定（資料庫、測試帳號）都在 conftest.py，pytest 會自動載入
 
+from datetime import datetime, timezone
+
 from core.auth import decode_access_token
+from core.config import ACCESS_TOKEN_EXPIRE_HOURS
 from core.models import User
 from core.security import hash_password
 
@@ -14,6 +17,25 @@ def test_login_correct_credentials_returns_token(client):
     body = response.json()
     assert "access_token" in body
     assert body["token_type"] == "bearer"
+
+
+def test_login_token_expires_in_eight_hours(client):
+    # 登入 token 的壽命鎖在 8 小時（約一個班次）。
+    # 這個測試存在的理由：有效期只寫在 config 的一個數字裡，改壞了不會有任何地方報錯，
+    # 而它直接決定「token 外流後可以被冒用多久」。
+    #
+    # JWT 無法撤銷——按登出只是前端把 token 丟掉，後端仍認得它，
+    # 所以「有效期」就是唯一的止血點。徹底的解法是 refresh token，
+    # 見 backend/docs/future-work.md 第 1 項。
+    res = client.post("/login", data={"username": "alice", "password": "secret123"})
+    payload = decode_access_token(res.json()["access_token"])
+
+    remaining = datetime.fromtimestamp(payload["exp"], tz=timezone.utc) - datetime.now(timezone.utc)
+    remaining_hours = remaining.total_seconds() / 3600
+
+    assert ACCESS_TOKEN_EXPIRE_HOURS == 8
+    # 允許幾秒誤差（測試執行本身要花時間），但要確定量級沒跑掉（例如被寫成 8 天）
+    assert 7.9 < remaining_hours <= 8.0
 
 
 def test_login_wrong_password_returns_401(client):

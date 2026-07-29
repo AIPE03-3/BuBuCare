@@ -2,10 +2,10 @@ from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 
 from core.config import (
-    SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_DAYS, STREAM_TOKEN_EXPIRE_SECONDS,
+    SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_HOURS, STREAM_TOKEN_EXPIRE_SECONDS,
 )
 # SECRET_KEY：簽名用的密鑰（從 .env 來）
-# ALGORITHM：簽名演算法　ACCESS_TOKEN_EXPIRE_DAYS：token 有效天數
+# ALGORITHM：簽名演算法　ACCESS_TOKEN_EXPIRE_HOURS：登入 token 有效時數（8）
 # STREAM_TOKEN_EXPIRE_SECONDS：串流權杖有效秒數（預設 60）
 
 # ---------------------------------------------
@@ -16,7 +16,7 @@ def create_access_token(data: dict):
 
     to_encode = data.copy() # 複製一份字典，避免修改到原本傳進來的 data
 
-    expire = datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS) # 取得現在的 UTC 時間 + 1 天的時間長度 → 「明天此刻」的時間點，作為到期時間
+    expire = datetime.now(timezone.utc) + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS) # 現在的 UTC 時間 + 8 小時（約一個班次）＝到期時間
     
     to_encode.update({"exp": expire})
     # update() 是把新的 key-value 塞進字典

@@ -38,7 +38,12 @@ SKIP_DB_INIT = os.getenv("SKIP_DB_INIT") == "1"
 # ── JWT（登入後發給前端的通行證）──────────────────────────
 SECRET_KEY = os.environ["SECRET_KEY"]  # 故意用 [] 不用 get()：沒設就啟動失敗，不要跑到一半才爆
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 1
+# 登入 token 的壽命。原本是 1 天，2026-07-29 縮到 8 小時（約一個班次）。
+# 縮短的理由：JWT 無法撤銷——按登出只是前端把 token 丟掉，後端仍然認得它，
+# 所以「有效期」就是 token 外流後唯一的止血點，1 天的冒用窗口太長。
+# 8 小時是安全與便利的折衷：值班人員一個班次內不會被登出。
+# 徹底的解法是 refresh token（短效 access + 長效換票券），見 backend/docs/future-work.md 第 1 項。
+ACCESS_TOKEN_EXPIRE_HOURS = 8
 
 
 # ── 機器對機器驗證（判斷層打 POST /events 要帶這把 key）──
@@ -54,7 +59,7 @@ RETRY_SLEEP_SECONDS = 5
 
 
 # ── S3（事件影片/截圖，換發限時網址用）──
-# albert 傳來的是 s3://aipe03-3/... 的物件位置；後端拿它換發限時可播放網址給前端。
+# AI 端傳來的是 s3://aipe03-3/... 的物件位置；後端拿它換發限時可播放網址給前端。
 # bucket 名稱藏在 s3:// 字串裡，這裡只需要 region 與存取金鑰。
 S3_REGION = os.getenv("S3_REGION", "us-east-1")
 S3_ACCESS_KEY_ID = os.getenv("ACCESS_KEY_ID", "")
