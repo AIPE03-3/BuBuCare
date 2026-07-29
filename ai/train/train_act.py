@@ -103,15 +103,22 @@ def make_windows(features, spans, stride, valid=None, min_valid_ratio=0.0):
     return windows, labels, dropped_low_detection
 
 
-def build_split(dataset_dir, splits, split_name, stride, min_valid_ratio=0.0):
-    """組出一個 split 的訓練樣本。回傳 (X, y, 統計 dict)。"""
+def build_split(dataset_dir, splits, split_name, stride, min_valid_ratio=0.0,
+                exclude_flipped=False):
+    """組出一個 split 的訓練樣本。回傳 (X, y, 統計 dict)。
+
+    `exclude_flipped` 用來做鏡像增強的消融——不排除的話，無從證明鏡像有沒有貢獻。
+    """
     features_dir = Path(dataset_dir) / "features"
     all_windows, all_labels = [], []
     stats = {"videos": 0, "missing_features": [], "missing_labels": [],
-             "draft_labels": set(), "dropped_low_detection": 0}
+             "draft_labels": set(), "dropped_low_detection": 0, "excluded_flipped": 0}
 
     for name in du.split_files(splits, split_name):
         stem = Path(name).stem
+        if exclude_flipped and du.is_flipped(stem):
+            stats["excluded_flipped"] += 1
+            continue
         feature_path = features_dir / f"{stem}.npz"
         if not feature_path.is_file():
             stats["missing_features"].append(stem)
@@ -178,6 +185,8 @@ def parse_args():
     parser.add_argument("--min-valid-ratio", type=float, default=0.5,
                         help="視窗內 pose 偵測率低於此就丟棄（0 = 不過濾）")
     parser.add_argument("--patience", type=int, default=20, help="val loss 幾輪沒進步就停")
+    parser.add_argument("--exclude-flipped", action="store_true",
+                        help="訓練時排除鏡像檔（做資料增強的消融對照）")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -200,7 +209,8 @@ def main():
     draft_counts = {}
     for split_name in ("train", "val"):
         X, y, stats = build_split(dataset_dir, splits, split_name, args.stride,
-                                  args.min_valid_ratio)
+                                  args.min_valid_ratio,
+                                  exclude_flipped=args.exclude_flipped)
         if X is None:
             print(f"❌ {split_name} 沒有任何可用樣本", file=sys.stderr)
             if stats["missing_features"]:
@@ -220,6 +230,8 @@ def main():
                   f"{' …' if len(stats['missing_labels']) > 5 else ''}")
         if stats["missing_features"]:
             print(f"    ⚠ 缺特徵而跳過 {len(stats['missing_features'])} 支")
+        if stats["excluded_flipped"]:
+            print(f"    排除鏡像檔 {stats['excluded_flipped']} 支（消融對照）")
         if stats["dropped_low_detection"]:
             print(f"    偵測率不足而丟棄 {stats['dropped_low_detection']} 個視窗"
                   f"（門檻 {args.min_valid_ratio:.0%}）")
@@ -254,6 +266,8 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     best_loss, best_state, best_epoch, stale = float("inf"), None, 0, 0
+    # 逐輪歷史。只印在終端不留檔的話，之後畫不出收斂曲線，也無從證明有沒有過擬合
+    history = []
     print("-" * 68)
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -269,6 +283,9 @@ def main():
             seen += len(batch_y)
 
         val_loss, val_acc, val_precision, val_recall = evaluate(model, val_loader, device)
+        history.append({"epoch": epoch, "train_loss": epoch_loss / max(seen, 1),
+                        "val_loss": val_loss, "val_acc": val_acc,
+                        "val_precision": val_precision, "val_recall": val_recall})
         if val_loss < best_loss:
             best_loss, best_epoch, stale = val_loss, epoch, 0
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -305,6 +322,8 @@ def main():
         "samples": {"train": len(train_y), "val": len(val_y),
                     "train_fall": int((train_y == CLASS_FALL).sum()),
                     "val_fall": int((val_y == CLASS_FALL).sum())},
+        "exclude_flipped": args.exclude_flipped,
+        "history": history,
         "splits_rules": splits["rules"],
     }
     record_path = out_path.with_suffix(".run.json")
