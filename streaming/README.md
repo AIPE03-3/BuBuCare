@@ -103,9 +103,7 @@ B 階段起已開啟身分驗證，沒有權杖看不到。這是刻意的，不
 
 AI 端的真推流已經可用（2026-07-29），他們有開的話把這支關掉即可，前後端與資料庫都不用改。
 
-⚠ 這支腳本是 **RTSP 讀取端**（讀 `cam_in`），B 階段起要帶帳密：
-網址改成 `rtsp://<STREAM_RTSP_USER>:<STREAM_RTSP_PASS>@127.0.0.1:8554/cam_in`。
-它推到 `cam_out` 的那一段**不用**帳密（推流已放行）。
+開了身分驗證也不用改這支：它讀 `cam_in` 走 RTSP（已放行）、推 `cam_out` 也免驗證。
 
 ## 沒有攝影機時
 
@@ -259,8 +257,16 @@ cd streaming; .\mediamtx.exe .\mediamtx.yml
 | 誰 | 憑什麼進來 | 沒有的話 |
 | --- | --- | --- |
 | 瀏覽器 | 先跟後端換 60 秒短命權杖，帶 `Authorization: Bearer` 打 WHEP | 401 |
-| AI 端（RTSP 讀 `cam_in`） | `.env` 的 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` | 401 |
-| 推流端（手機 Larix、AI 端推 `cam_out`） | **不需要任何憑證**（`authHTTPExclude` 放行） | — |
+| AI 端（RTSP 讀 `cam_in`） | **不需要憑證**，直接 `rtsp://<host>:8554/cam_in` | — |
+| 推流端（手機 Larix、AI 端推 `cam_out`） | **不需要憑證**（`authHTTPExclude` 放行） | — |
+
+**只有瀏覽器那條路有鎖。** RTSP 讀取刻意放行——AI 端拿不到瀏覽器才有的短命權杖，
+若另設一組固定帳密，代價是每個讀取端都要改網址、多一個協調與出錯的環節。
+前提是攝影機／MediaMTX／AI 主機同屬**受控內網**；正式環境應把它們切到獨立網段，
+在共用 Wi-Fi 上這個前提並不成立（同網段用 VLC 開 `rtsp://<host>:8554/cam_in` 就看得到）。
+
+想鎖回去：`.env` 加一組帳密，`backend/streams/router.py` 的 RTSP 分支改成比對
+`body.user` / `body.password`，並把所有讀取端的網址改成 `rtsp://<帳號>:<密碼>@<host>:8554/<頻道>`。
 
 設計規格：`backend/docs/superpowers/specs/2026-07-29-stream-auth-design.md`
 
@@ -275,19 +281,15 @@ MediaMTX 每次有人要看都得問後端。**後端沒起來，所有觀看都
 4. 前端      cd frontend; npm run dev
 ```
 
-### RTSP 讀取端要帶帳密
+### RTSP 端不用改任何東西
 
-AI 端的推論程式讀 `cam_in` 走 RTSP，拿不到瀏覽器才有的短命權杖，所以另給一組固定帳密。
-`.env` 填好 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` 之後，讀取網址寫成：
+讀 `cam_in`、推 `cam_out` 都不需要憑證，網址照舊：
 
 ```
-rtsp://<帳號>:<密碼>@<host>:8554/cam_in
+rtsp://<host>:8554/cam_in
 ```
 
-`streaming/start-fake-detect.ps1` 也是讀取端，同樣要帶。**推流端不用改。**
-
-⚠ **兩個環境變數任一為空 → 一律拒絕**（fail-closed）。寧可「忘了設就讀不到」，
-也不要「忘了設就對外全開」。
+AI 端與 `start-fake-detect.ps1` 都不必因為開了驗證而修改。
 
 ### 退路：demo 現場怎麼把驗證關掉
 
@@ -308,8 +310,7 @@ rtsp://<帳號>:<密碼>@<host>:8554/cam_in
 | 開啟驗證後 MediaMTX 仍拉得到攝影機 | ✅ `source: rtsp://…` 是 MediaMTX 主動外連，不受此機制管轄 |
 | 瀏覽器登入後四宮格有畫面 | ✅ 後端記錄 4 筆 `token 200` + 4 筆 `auth 204` |
 | 不帶權杖開內建播放頁 / WHEP | ✅ 401 |
-| 不帶帳密的 RTSP（等同用 VLC 偷看） | ✅ 401 |
-| 帶帳密的 RTSP（等同 AI 端） | ✅ 讀到 `h264 + pcm_alaw` |
+| RTSP 讀取不帶任何憑證（等同 AI 端） | ✅ 放行（後端回 204；無來源的頻道回 404 而非 401，即證明驗證已通過） |
 | 關掉驗證後恢復可看 | ✅ 401 → 200 |
 
 ### 還做不到的事

@@ -20,8 +20,7 @@
 - 所有 uv／pytest 指令一律先 `cd backend`
 - **不驗證頻道是否存在於資料庫**（spec 決定 3）
 - **推流不驗證**，由 MediaMTX 的 `authHTTPExclude` 放行（spec 決定 1）
-- **AI 端 RTSP 讀取走專屬帳密** `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`，
-  未設定即拒絕（fail-closed）（spec 決定 2）
+- **RTSP 讀取一律放行**，AI 端不需憑證（spec 決定 2）
 - git commit 由使用者決定，不自行執行
 
 ## 檔案結構
@@ -81,8 +80,7 @@ Task 6 需真攝影機，明天執行。
 ### Task 2：驗票端點 `/streams/auth`
 
 **Files:**
-- Modify: `backend/streams/router.py`、`backend/tests/test_streams.py`、
-  `backend/core/config.py`（加 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`）、`.env.example`
+- Modify: `backend/streams/router.py`、`backend/tests/test_streams.py`
 
 **Consumes:** Task 1 的 `create_stream_token`、`POST /streams/{channel}/token`
 **Produces:** `POST /streams/auth`，回 204（放行）或 401（拒絕）
@@ -90,7 +88,7 @@ Task 6 需真攝影機，明天執行。
 兩條分支，**順序不可對調**（先判協定，再驗票）：
 
 ```
-protocol == "rtsp" and action == "read"  →  比對 STREAM_RTSP_USER / PASS   ← AI 端
+protocol == "rtsp" and action == "read"  →  直接放行                        ← AI 端
 其餘                                      →  比對短命權杖（要求 read + webrtc）← 瀏覽器
 ```
 
@@ -103,7 +101,6 @@ protocol == "rtsp" and action == "read"  →  比對 STREAM_RTSP_USER / PASS   �
 | `test_auth_rejects_login_token` | 用 `staff_token`（登入 JWT，無 `scope`） | 401 |
 | `test_auth_rejects_wrong_channel` | `cam_in` 的票，`path=cam_out` | 401 |
 | `test_auth_rejects_publish_action` | 有效票，`action=publish` | 401 |
-| `test_auth_token_not_usable_over_rtsp` | 有效票，`protocol=rtsp`，**不帶帳密** | 401 |
 | `test_auth_rejects_expired_token` | 測試裡直接 `jwt.encode` 一張 `exp` 已過去的票（**不要 monkeypatch `STREAM_TOKEN_EXPIRE_SECONDS`**：`auth.py` 用 `from core.config import ...` 在 import 當下就綁定了值，patch 不到） | 401 |
 | `test_auth_accepts_null_optional_fields` | `{"action":"read","path":...,"protocol":"webrtc","token":...,"id":null,"query":null,"user":null,"password":null,"ip":null,"userAgent":null}` | **不得回 422**（204 即可） |
 | `test_auth_requires_no_login` | 不帶 `Authorization` header 打此端點 | 不是 401「未登入」，而是走正常驗票邏輯 |
@@ -111,35 +108,27 @@ protocol == "rtsp" and action == "read"  →  比對 STREAM_RTSP_USER / PASS   �
 ⚠ `test_auth_accepts_null_optional_fields` 是傑雅實際踩過的坑：MediaMTX 會送 `null`，
 request model 除 `action` 外每個欄位都必須可為 `None`，否則 Pydantic 直接 422、驗證整個失效。
 
-- [ ] **Step 2：寫測試（AI 端 RTSP 分支）**
-
-`streams/router.py` 必須 `from core import config` 匯入**模組**（非 `from core.config import ...`），
-否則 `monkeypatch` 換不掉值——`devices/router.py` 當初就是為此才這樣寫。
+- [ ] **Step 2：寫測試（RTSP 分支）**
 
 | 測試 | 送什麼 | 期待 |
 | --- | --- | --- |
-| `test_rtsp_read_allows_correct_credentials` | `protocol=rtsp` + `action=read` + 正確 `user`/`password` | 204 |
-| `test_rtsp_read_rejects_wrong_password` | 同上但密碼錯 | 401 |
-| `test_rtsp_read_rejects_missing_credentials` | 同上但 `user`/`password` 為 `null` | 401 |
-| `test_rtsp_read_denied_when_env_unset` | `monkeypatch` 把兩個值設成 `""` | 401（fail-closed，不得因未設定而全放行） |
+| `test_rtsp_read_allowed_without_credentials` | `protocol=rtsp` + `action=read`，不帶權杖也不帶帳密 | 204 |
+| `test_rtsp_publish_still_goes_through_token_branch` | `protocol=rtsp` + `action=publish` | 401（只有「讀」放行） |
 
 - [ ] **Step 3：跑測試確認失敗**
 
-`cd backend; uv run pytest tests/test_streams.py -v` → 新增的 13 個 FAIL
+`cd backend; uv run pytest tests/test_streams.py -v` → 新增的 FAIL
 
 - [ ] **Step 4：實作**
 
-`config.py` 加兩個環境變數（預設空字串）；`.env.example` 同步並註明用途；
 `streams/router.py` 加 `MediaMTXAuthRequest`（除 `action` 外全部 `| None = None`）與
-`authorize_mediamtx`（`status_code=204`，兩條分支，帳密以 `hmac.compare_digest` 比對）。
-
-⚠ 本機 `.env` 也要填入這兩個值，否則 Task 5 的假偵測腳本會讀不到 `cam_in`。
+`authorize_mediamtx`（`status_code=204`，兩條分支）。
 
 - [ ] **Step 5：跑測試確認通過**
 
 `cd backend; uv run pytest tests/test_streams.py -v` → 全數 PASS
 
-**完成標準：** 17 個測試全過。特別確認兩題：null 欄位不是 422、未設定帳密時是 401 不是 204。
+**完成標準：** 全數通過。特別確認兩題：null 欄位不是 422、RTSP 推流仍是 401。
 
 ---
 
@@ -264,27 +253,17 @@ props 增 `channel: string | null`；在 `waitForIceGathering(pc)` **之後**呼
 | 瀏覽器 Console | 無 CORS 預檢錯誤（多帶 `Authorization` 會觸發 OPTIONS，需確認 MediaMTX 放行） |
 | 後端終端機 | 每開一格畫面就看到一筆 `POST /streams/auth 204` |
 
-- [ ] **Step 5：手機推流仍可用**
-
-Larix 推 `phone_a` → 確認**不需要帳密**（驗證 `authHTTPExclude: action: publish` 生效）。
-
-- [ ] **Step 6：AI 端讀取路徑驗證（用假偵測腳本代打）**
-
-`start-fake-detect.ps1` 的讀取網址改成 `rtsp://<STREAM_RTSP_USER>:<STREAM_RTSP_PASS>@127.0.0.1:8554/cam_in`。
+- [ ] **Step 5：推流與 RTSP 讀取都不受影響**
 
 | 驗收項 | 期待 |
 | --- | --- |
-| 帶正確帳密啟動腳本 | 讀得到 `cam_in`，`cam_out` 有紅框畫面 |
-| **故意把密碼改錯再啟動** | **讀不到，ffmpeg 報 401** ← 證明 RTSP 那條路真的擋住了 |
-| VLC 開 `rtsp://127.0.0.1:8554/cam_in`（不帶帳密） | 開不起來 |
+| Larix 推 `phone_a`（不帶帳密） | 推得進去 |
+| `start-fake-detect.ps1`（讀 `cam_in` 推 `cam_out`，網址不動） | 正常運作 |
 
-這一步等於預先替 AI 端測完那條路，他們只要照同樣格式改網址即可。
-
-**完成標準：** 上表全數通過。特別是這三項，分別驗證了 spec 的目標與決定 1、決定 2：
+**完成標準：** 上表全數通過。兩項核心證明：
 
 - 瀏覽器貼網址看不到 → 目標達成
-- 手機推流不用改設定 → 決定 1 生效
-- VLC 開 RTSP 開不起來、但帶帳密的腳本讀得到 → 決定 2 生效
+- 推流端與 RTSP 讀取端完全不用改設定 → 決定 1、決定 2 生效
 
 ---
 
@@ -304,8 +283,7 @@ Larix 推 `phone_a` → 確認**不需要帳密**（驗證 `authHTTPExclude: act
 - [ ] **Step 2：`streaming/README.md`**
 
 新增三節：「驗證開啟後的啟動步驟」（後端必須先起，否則 MediaMTX 問不到人）、
-「RTSP 讀取端要帶帳密」（`.env` 的兩個值、網址格式、給 AI 端的說明）、
-「退路：如何關掉驗證」（註解掉三個設定 + 重啟，約 30 秒）。
+「RTSP 端不用改任何東西」、「退路：如何關掉驗證」（註解掉三個設定 + 重啟，約 30 秒）。
 
 - [ ] **Step 3：演練退路一次**
 
@@ -327,9 +305,6 @@ API 路由表新增 `POST /streams/{channel}/token` 與 `POST /streams/auth`；
 ## 完成後
 
 - 提醒使用者 commit 並開 PR 進 main
-- 通知 AI 端（**兩件事，一件要改一件不用**）：
-  - ✅ **推流不受影響**——推 `cam_out` 照舊，不需帳密、不需改設定
-  - ⚠ **讀取要改一行**——`rtsp://<host>:8554/cam_in` 改成 `rtsp://<帳號>:<密碼>@<host>:8554/cam_in`，
-    帳密另外私下給（不進 git）。跟他的登入 JWT 無關，不要去動登入那條路
-  - ✅ `/login` 表單格式、`access_token` 欄位名、`GET /devices` 回應格式**皆未變動**
-- 更新記憶 `camera-live-stream-state`：B 階段完成、demo 待辦新增「退路演練」與「AI 端帳密同步」
+- 通知 AI 端：**完全不用改任何東西**——推 `cam_out` 與讀 `cam_in` 的網址都照舊；
+  `/login` 表單格式、`access_token` 欄位名、`GET /devices` 回應格式亦皆未變動
+- 更新記憶 `camera-live-stream-state`：B 階段完成、demo 待辦新增「退路演練」

@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 
 from jose import jwt
 
-from core import config
 from core.auth import decode_access_token
 from core.config import ALGORITHM, SECRET_KEY
 
@@ -131,16 +130,6 @@ def test_auth_rejects_publish_action(client, auth_headers):
     assert res.status_code == 401
 
 
-def test_auth_token_not_usable_over_rtsp(client, auth_headers, monkeypatch):
-    # 有票但走 RTSP → 擋。RTSP 那條路只認帳密，不認票
-    # （帳密先設好，確保這裡的 401 是因為「沒帶帳密」，不是因為環境沒設定）
-    monkeypatch.setattr(config, "STREAM_RTSP_USER", "ai-reader")
-    monkeypatch.setattr(config, "STREAM_RTSP_PASS", "ai-secret")
-
-    token = get_stream_token(client, auth_headers, "cam_in")
-    res = client.post("/streams/auth", json=mediamtx_body(token=token, protocol="rtsp"))
-
-    assert res.status_code == 401
 
 
 def test_auth_rejects_expired_token(client):
@@ -192,53 +181,25 @@ def test_auth_requires_no_login(client, auth_headers):
     assert res.status_code == 204
 
 
-# ── 分支①：AI 端的 RTSP 帳密 ─────────────────────────────
+# ── 分支①：RTSP 讀取一律放行 ─────────────────────────────
 # AI 端的推論程式「讀 cam_in → 畫框 → 推 cam_out」，讀的那一段走 RTSP，
-# 不可能持有瀏覽器才拿得到的短命權杖，所以另外給一組固定帳密。
+# 不可能持有瀏覽器才拿得到的短命權杖，故直接放行、不另設憑證。
+# 前提是攝影機／MediaMTX／AI 主機同屬受控內網（正式環境應切獨立網段）。
 
-def test_rtsp_read_allows_correct_credentials(client, monkeypatch):
-    monkeypatch.setattr(config, "STREAM_RTSP_USER", "ai-reader")
-    monkeypatch.setattr(config, "STREAM_RTSP_PASS", "ai-secret")
-
+def test_rtsp_read_allowed_without_credentials(client):
+    # 不帶權杖也不帶帳密 → 放行。AI 端就是這樣連的
     res = client.post("/streams/auth", json=mediamtx_body(
-        protocol="rtsp", user="ai-reader", password="ai-secret",
+        protocol="rtsp", user=None, password=None, token=None,
     ))
 
     assert res.status_code == 204
 
 
-def test_rtsp_read_rejects_wrong_password(client, monkeypatch):
-    monkeypatch.setattr(config, "STREAM_RTSP_USER", "ai-reader")
-    monkeypatch.setattr(config, "STREAM_RTSP_PASS", "ai-secret")
-
+def test_rtsp_publish_still_goes_through_token_branch(client):
+    # 只有「讀取」放行。RTSP 推流會落進權杖分支，沒票就擋——
+    # 正常情況 MediaMTX 的 authHTTPExclude 讓 publish 根本不會打過來，這是第二道保險
     res = client.post("/streams/auth", json=mediamtx_body(
-        protocol="rtsp", user="ai-reader", password="wrong",
-    ))
-
-    assert res.status_code == 401
-
-
-def test_rtsp_read_rejects_missing_credentials(client, monkeypatch):
-    # 什麼都不帶就想讀（就是現在 A 階段的行為）→ 擋
-    monkeypatch.setattr(config, "STREAM_RTSP_USER", "ai-reader")
-    monkeypatch.setattr(config, "STREAM_RTSP_PASS", "ai-secret")
-
-    res = client.post("/streams/auth", json=mediamtx_body(
-        protocol="rtsp", user=None, password=None,
-    ))
-
-    assert res.status_code == 401
-
-
-def test_rtsp_read_denied_when_env_unset(client, monkeypatch):
-    # 環境變數忘了設 → 拒絕，不是放行。
-    # 這叫 fail-closed：設定漏掉時往「更安全」的方向倒。
-    # 若寫成「沒設定就不檢查」，一次部署忘了填 .env，整條 RTSP 就對外全開了
-    monkeypatch.setattr(config, "STREAM_RTSP_USER", "")
-    monkeypatch.setattr(config, "STREAM_RTSP_PASS", "")
-
-    res = client.post("/streams/auth", json=mediamtx_body(
-        protocol="rtsp", user="", password="",
+        protocol="rtsp", action="publish", token=None,
     ))
 
     assert res.status_code == 401
