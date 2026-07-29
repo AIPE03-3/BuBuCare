@@ -2,7 +2,14 @@
 
 日期：2026-07-28
 分支：`test/local-pose-eval`
+後續：[2026-07-29-single-action-clip-eval.md](2026-07-29-single-action-clip-eval.md)
+（改用單一動作短片，結論更明確且不需人工標註）
 範圍：pose + AcT 主鏈的量化評估。**沒有動正式管線**（`inference_test.py` 一行未改）。
+
+> ⚠️ **本報告的素材已不在 repo**：`test4.mp4`（123 MB，本來就因體積不進版控）與
+> 標註檔 `test4tp.txt` 都已移除，改用單一動作短片（見後續報告）。
+> 本文的數字仍然有效、推論過程仍值得參考，但**無法直接重跑重現**。
+> 標註檔可從 git 取回：`git show 37570a2:ai/test_demo/test4tp.txt`
 
 ---
 
