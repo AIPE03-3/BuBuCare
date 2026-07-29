@@ -264,7 +264,8 @@ def main():
             loss = criterion(model(batch_x), batch_y)
             loss.backward()
             optimizer.step()
-            epoch_loss += float(loss) * len(batch_y)
+            # 用 .detach()：直接 float(loss) 會對還掛在計算圖上的 tensor 取值，torch 會警告
+            epoch_loss += float(loss.detach()) * len(batch_y)
             seen += len(batch_y)
 
         val_loss, val_acc, val_precision, val_recall = evaluate(model, val_loader, device)
