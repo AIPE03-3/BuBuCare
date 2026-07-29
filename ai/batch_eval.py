@@ -36,7 +36,8 @@ import torch
 from ultralytics import YOLO
 
 from local_pipeline_eval import (
-    DEFAULT_ACT_WEIGHTS, DEFAULT_POSE_WEIGHTS, POSE_CONF, TRIGGER_MODES, WINDOW_SIZE,
+    DEFAULT_ACT_WEIGHTS, DEFAULT_POSE_WEIGHTS, OCCLUDED_HEIGHT_RATIO, POSE_CONF,
+    TRIGGER_MODES, WINDOW_SIZE,
     decide_trigger, extract_pose_state, load_act_model, pick_device, run_act,
     select_main_person,
 )
@@ -64,7 +65,8 @@ def classify_video(path):
     return None
 
 
-def run_inference(video_path, pose_model, act_model, device, conf, no_skip=False):
+def run_inference(video_path, pose_model, act_model, device, conf, no_skip=False,
+                  occluded_height_ratio=OCCLUDED_HEIGHT_RATIO):
     """跑一支影片，回傳每個處理幀的狀態（不含觸發判斷——那是各策略離線做的）。"""
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -86,7 +88,8 @@ def run_inference(video_path, pose_model, act_model, device, conf, no_skip=False
             continue
 
         result = pose_model(frame, verbose=False, conf=conf)[0]
-        pose_state = extract_pose_state(result, height_reference, frame.shape[0])
+        pose_state = extract_pose_state(result, height_reference, frame.shape[0],
+                                        occluded_height_ratio)
 
         if height_reference is None and 5 <= processed_count <= 20 and pose_state["valid"]:
             if result.boxes is not None and len(result.boxes) > 0:
@@ -138,6 +141,9 @@ def main():
     parser.add_argument("--modes", nargs="+", default=sorted(TRIGGER_MODES))
     parser.add_argument("--conf", type=float, default=POSE_CONF)
     parser.add_argument("--no-skip", action="store_true", help="不跳幀")
+    parser.add_argument("--occ-height", type=float, default=OCCLUDED_HEIGHT_RATIO,
+                        help=f"遮擋判斷的高度門檻，預設 {OCCLUDED_HEIGHT_RATIO}"
+                             f"（對齊正式管線）；實測 0.50 可把正常片誤報從 6/9 降到 4/9")
     args = parser.parse_args()
 
     video_dir = Path(args.dir)
@@ -154,7 +160,8 @@ def main():
         return 1
 
     device = pick_device()
-    print(f"🚀 裝置：{device}｜{len(targets)} 支影片 × {len(args.modes)} 種策略")
+    print(f"🚀 裝置：{device}｜{len(targets)} 支影片 × {len(args.modes)} 種策略"
+          f"｜遮擋高度門檻 {args.occ_height}")
     print("   （每支只推論一次，策略比較離線套用）\n")
     pose_model = YOLO(str(DEFAULT_POSE_WEIGHTS))
     pose_model.to(device)
@@ -162,7 +169,8 @@ def main():
 
     results = {}
     for path, label, should_fire in targets:
-        records = run_inference(path, pose_model, act_model, device, args.conf, args.no_skip)
+        records = run_inference(path, pose_model, act_model, device, args.conf,
+                                args.no_skip, args.occ_height)
         if not records:
             print(f"⚠️ 讀不到內容，略過：{path.name}")
             continue

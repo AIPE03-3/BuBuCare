@@ -355,7 +355,8 @@ def select_main_person(boxes_conf, boxes_xywh):
     return best_idx
 
 
-def extract_pose_state(result, normal_height_reference, image_height):
+def extract_pose_state(result, normal_height_reference, image_height,
+                       occluded_height_ratio=OCCLUDED_HEIGHT_RATIO):
     """從一幀 pose 結果抽出：34 維特徵、躺平旗標、遮擋旗標、身高參考值。
 
     回傳 dict。沒有可用的人時 `feature` 為全零向量（等同正式管線的無效幀）。
@@ -370,6 +371,9 @@ def extract_pose_state(result, normal_height_reference, image_height):
         "person_count": 0,
         "best_conf": 0.0,
         "height_reference": normal_height_reference,
+        # 遮擋判斷的兩個原始輸入，留著讓離線掃描重算門檻用
+        "height_ratio": None,
+        "y2_ratio": 0.0,
     }
     if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
         return state
@@ -414,7 +418,10 @@ def extract_pose_state(result, normal_height_reference, image_height):
 
     # 遮擋判斷（防線 B，:701-702）：人突然「變矮」且位置偏下 → 可能倒在遮蔽物後面
     if normal_height_reference is not None:
-        if (box_height / normal_height_reference) < OCCLUDED_HEIGHT_RATIO and y2 > (image_height * 0.5):
+        # 原始數值一併留下，讓離線掃描能重算不同門檻，不必為了試一個參數就重跑推論
+        state["height_ratio"] = float(box_height / normal_height_reference)
+        state["y2_ratio"] = float(y2 / image_height) if image_height else 0.0
+        if state["height_ratio"] < occluded_height_ratio and state["y2_ratio"] > 0.5:
             state["is_occluded"] = True
 
     return state
