@@ -48,7 +48,7 @@ MediaMTX 內建播放頁 `http://<host>:8889/cam_in` 直接可播）。
 ### 1. 只擋觀看，推流放行
 
 `authHTTPExclude` 列入 `action: publish`。理由：手機 Larix、AI 端的 ffmpeg、
-`start-fake-camera.ps1` / `start-fake-detect.ps1` 全都不需改設定，demo 前不必重設三支手機。
+與 ffmpeg 推的假畫面全都不需改設定，demo 前不必重設三支手機。
 代價：同網段可推垃圾畫面蓋掉 `cam_out`，demo 情境風險可接受。
 
 ### 2. RTSP 讀取一律放行（2026-07-29 改版，原訂走專屬帳密）
@@ -57,7 +57,7 @@ AI 端的推論程式「讀 `cam_in` → 畫框 → 推 `cam_out`」，其中**�
 不可能持有瀏覽器才拿得到的短命權杖。若不處理，開啟驗證即中斷整條偵測管線。
 
 做法：`/streams/auth` 對 `protocol == "rtsp" and action == "read"` 直接回 204，
-不檢查任何憑證。AI 端與 `start-fake-detect.ps1` 都沿用原本的網址，零改動。
+不檢查任何憑證。AI 端沿用原本的網址，零改動。
 
 **代價**：同網段以 VLC 開 `rtsp://<host>:8554/cam_in` 即可觀看，等於只擋瀏覽器。
 正當化前提是**內網信任**——攝影機／MediaMTX／AI 主機屬同一受控網段。
@@ -191,11 +191,6 @@ authHTTPExclude:
   - action: pprof
 ```
 
-### 串流腳本
-
-`streaming/start-fake-detect.ps1`（讀 `cam_in` 畫紅框推 `cam_out`）與 `start-fake-camera.ps1`
-皆不需修改：讀取已放行、推流本就免驗證。
-
 ### nginx
 
 `frontend/nginx.conf` 的 `location /api/stream`（SSE 用）會前綴命中 `/api/streams/auth`。
@@ -269,7 +264,7 @@ demo 現場後端不可用時，將 `mediamtx.yml` 的 `authMethod` / `authHTTPA
 | 瀏覽器 CORS 預檢是否放行 `Authorization` | 多帶該 header 會觸發 OPTIONS 預檢，傑雅版實測可行但設定不同 | 立即 |
 | 設定檔熱重載中斷連線 | 已知行為，驗證順序須排定，不可邊測邊改 | — |
 
-無攝影機期間可用 `start-fake-camera.ps1` 推 mp4 完成除「真攝影機」外的全部驗證。
+無攝影機期間可用 ffmpeg 推 mp4 完成除「真攝影機」外的全部驗證。
 
 ## 參考
 

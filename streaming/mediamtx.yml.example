@@ -54,15 +54,15 @@ paths:
   #     ⚠ 帳密不是 TP-Link 登入帳號，要在 Tapo App → 齒輪 → 進階設定 → 攝影機帳號 另外設
   #     ⚠ rtspTransport: tcp 一定要加，走 UDP 會破格
   #
-  # (B) 沒有攝影機：改成 source: publisher，再用 start-fake-camera.ps1 推 mp4 進來
+  # (B) 沒有攝影機：改成 source: publisher，再用 ffmpeg 推 mp4 進來（指令見 README）
   cam_in:
     source: rtsp://<攝影機帳號>:<攝影機密碼>@<攝影機IP>:554/stream2
     rtspTransport: tcp
     sourceOnDemand: no        # no = MediaMTX 一啟動就去連攝影機，不等有人看才連
 
   # ── cam_out：AI 畫框後的畫面 ──
-  # 正式來源是 AI 端的推論程式（讀 cam_in → 畫框 → 推回這裡），該功能尚未實作。
-  # A 階段用 start-fake-detect.ps1 推一個固定紅框上來，驗證前端切換功能。
+  # 來源是 AI 端的推論程式（讀 cam_in → 畫框 → 推回這裡），2026-07-29 起可用。
+  # 他們沒開時這個頻道就沒畫面，前端切「偵測」會顯示連線失敗。
   cam_out:
     source: publisher
 

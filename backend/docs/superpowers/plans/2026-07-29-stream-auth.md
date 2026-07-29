@@ -34,7 +34,7 @@
 
 ## Task 切線
 
-Task 1-5 今天可完成（無需攝影機，用 `start-fake-camera.ps1` 推 mp4）。
+Task 1-5 今天可完成（無需攝影機，用 ffmpeg 推 mp4）。
 Task 6 需真攝影機，明天執行。
 
 ---
@@ -216,7 +216,7 @@ props 增 `channel: string | null`；在 `waitForIceGathering(pc)` **之後**呼
 
 **Files:**
 - Modify: `streaming/mediamtx.yml.example`、本機的 `streaming/mediamtx.yml`（不進 git）、
-  `streaming/start-fake-detect.ps1`（讀取網址帶帳密）、`frontend/nginx.conf`
+  `frontend/nginx.conf`
 
 **Consumes:** Task 2 的 `POST /streams/auth`、Task 4 的前端
 
@@ -241,7 +241,7 @@ props 增 `channel: string | null`；在 `waitForIceGathering(pc)` **之後**呼
 
 - [ ] **Step 4：啟動並端到端驗證**
 
-啟動順序：後端 `uv run uvicorn main:app --reload` → MediaMTX → `start-fake-camera.ps1` → 前端 `npm run dev`
+啟動順序：後端 `uv run uvicorn main:app --reload` → MediaMTX → 推流端 → 前端 `npm run dev`
 
 | 驗收項 | 期待 |
 | --- | --- |
@@ -258,7 +258,7 @@ props 增 `channel: string | null`；在 `waitForIceGathering(pc)` **之後**呼
 | 驗收項 | 期待 |
 | --- | --- |
 | Larix 推 `phone_a`（不帶帳密） | 推得進去 |
-| `start-fake-detect.ps1`（讀 `cam_in` 推 `cam_out`，網址不動） | 正常運作 |
+| ffmpeg 讀 `cam_in` 推 `cam_out`（網址不動） | 正常運作 |
 
 **完成標準：** 上表全數通過。兩項核心證明：
 

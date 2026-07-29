@@ -7,8 +7,8 @@
 
 | 頻道 | 內容 | 誰推進來 |
 | --- | --- | --- |
-| `cam_in` | 原始畫面 | Tapo 攝影機（MediaMTX 主動拉），或 `start-fake-camera.ps1` 推 mp4 |
-| `cam_out` | 畫框後 | AI 端的推論程式（2026-07-29 起可用，設 `DETECT_STREAM=1`）；他們沒開時用 `start-fake-detect.ps1` 頂著 |
+| `cam_in` | 原始畫面 | Tapo 攝影機（MediaMTX 主動拉），或用 ffmpeg 推 mp4 頂替 |
+| `cam_out` | 畫框後 | AI 端的推論程式（2026-07-29 起可用，設 `DETECT_STREAM=1`） |
 | `phone_a` / `phone_b` / `phone_c` | 手機畫面 | 手機推流 App |
 
 （傑雅版原本叫 `my_camera_tapo`，語意等同 `cam_in`。）
@@ -92,28 +92,33 @@ WHEP 網址由**回應請求的那台後端**組出來，所以要設在哪，�
 B 階段起已開啟身分驗證，沒有權杖看不到。這是刻意的，不是壞掉。
 只想確認「MediaMTX 到底有沒有收到畫面」的話看 log 有沒有 `stream is available and online`。
 
-## 假的偵測畫面（cam_out）
+## 偵測畫面（cam_out）
+
+來源是 AI 端的推論程式（讀 `cam_in` → 畫框 → 推 `cam_out`），2026-07-29 起可用，
+他們設 `DETECT_STREAM=1` 即會推上來。**他們的機器沒開時，前端切到「偵測」會顯示連線失敗。**
+
+## 沒有攝影機、或想在沒有 AI 端的情況下測
+
+用 ffmpeg 推一支 mp4 進去頂替（原本有兩支 .ps1 腳本做這件事，已於 2026-07-29 刪除，
+要用再照下面重寫）。前提：`mediamtx.yml` 的目標頻道要是 `source: publisher`，
+設成 `rtsp://`（主動拉攝影機）的話推不進去。
 
 ```powershell
-.\start-fake-detect.ps1
+# 假攝影機：循環推 mp4 當作 cam_in
+ffmpeg -nostdin -re -stream_loop -1 -i ..\frontend\public\videos\fall-demo.mp4 `
+    -an -c:v copy -rtsp_transport tcp -f rtsp rtsp://localhost:8554/cam_in
+
+# 假偵測畫面：讀 cam_in 畫個固定紅框推到 cam_out（只證明前端切換鈕有效，不是 AI）
+ffmpeg -nostdin -rtsp_transport tcp -i rtsp://localhost:8554/cam_in `
+    -vf "drawbox=x=iw/4:y=ih/4:w=iw/2:h=ih/2:color=red@0.9:t=6" -an `
+    -c:v libx264 -preset ultrafast -tune zerolatency -g 30 `
+    -rtsp_transport tcp -f rtsp rtsp://localhost:8554/cam_out
 ```
 
-從 `cam_in` 拉畫面、畫一個固定紅框、推到 `cam_out`。
-**紅框位置固定，與畫面內容無關**——它只證明前端切換鈕有生效，不證明任何 AI 能力。
-
-AI 端的真推流已經可用（2026-07-29），他們有開的話把這支關掉即可，前後端與資料庫都不用改。
-
-開了身分驗證也不用改這支：它讀 `cam_in` 走 RTSP（已放行）、推 `cam_out` 也免驗證。
-
-## 沒有攝影機時
-
-`mediamtx.yml` 的 `cam_in` 改成 `source: publisher`，然後：
-
-```powershell
-.\start-fake-camera.ps1 -Video ..\frontend\public\videos\fall-demo.mp4 -Channel cam_in
-```
-
-影片不是 H.264 的話加 `-Transcode`（會吃 CPU）。
+參數說明：`-re` 用真實速度播（不加會用最快速度衝完）、`-stream_loop -1` 無限循環、
+`-an` 不要聲音（少一條軌少一種相容問題）、`-c:v copy` 不轉碼（來源已是 H.264 時 CPU 幾乎零負擔，
+不是的話改成 `-c:v libx264 -preset ultrafast -tune zerolatency -g 30`）、
+`-rtsp_transport tcp` 走 TCP 避免 UDP 掉包破格。畫框一定要重新編碼，不能 `-c:v copy`。
 
 ## 手機當鏡頭（2026-07-28 三支手機實測通過）
 
@@ -226,7 +231,7 @@ MediaMTX 偵測到設定檔變動會自動重載（log 出現 `reloading configu
 **重載時所有連線都會被砍掉重建**：
 
 - 攝影機斷線後自行重連（幾秒）
-- `start-fake-detect.ps1` 的 ffmpeg **直接結束**，要手動重跑
+- 用 ffmpeg 推的假畫面**直接結束**，要手動重跑
 - 手機端要重新按推流
 
 **demo 進行中絕對不要改這個檔案。** 要加新頻道請在開場前一次改完。
@@ -237,13 +242,13 @@ MediaMTX 偵測到設定檔變動會自動重載（log 出現 `reloading configu
 ## 電腦重開機後要重跑的東西
 
 ```powershell
-# 1. MediaMTX（cam_in 會自動去連攝影機）
+# 1. 後端（一定要先起，MediaMTX 要問它）
+cd backend; uv run uvicorn main:app --reload
+
+# 2. MediaMTX（cam_in 會自動去連攝影機）
 cd streaming; .\mediamtx.exe .\mediamtx.yml
 
-# 2. 假偵測畫面（另開一個視窗）
-.\start-fake-detect.ps1
-
-# 3. 手機三支重新按推流
+# 3. 手機三支重新按推流；AI 端的 cam_out 由他們那邊啟動
 ```
 
 攝影機的 IP **換 Wi-Fi 就會變**，變了要改 `mediamtx.yml`；
@@ -277,7 +282,7 @@ MediaMTX 每次有人要看都得問後端。**後端沒起來，所有觀看都
 ```
 1. 後端      cd backend; uv run uvicorn main:app --reload
 2. MediaMTX  .\mediamtx.exe .\mediamtx.yml
-3. 推流端    start-fake-camera.ps1 / 手機 Larix（可有可無，跟驗證無關）
+3. 推流端    攝影機 / 手機 Larix / AI 端（可有可無，跟驗證無關）
 4. 前端      cd frontend; npm run dev
 ```
 
@@ -289,7 +294,7 @@ MediaMTX 每次有人要看都得問後端。**後端沒起來，所有觀看都
 rtsp://<host>:8554/cam_in
 ```
 
-AI 端與 `start-fake-detect.ps1` 都不必因為開了驗證而修改。
+AI 端不必因為開了驗證而修改任何東西。
 
 ### 退路：demo 現場怎麼把驗證關掉
 
