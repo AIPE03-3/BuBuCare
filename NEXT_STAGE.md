@@ -29,8 +29,81 @@ Kafka 進不了資料庫）、補上偵測畫面推流讓前端「偵測」真�
 | 7 | 接回 main 的 `stream_channel` 改名（解後端全面 500）| ✅ 已完成並實測 |
 | 8 | 偵測畫面推流 `cam_out`（前端「偵測」畫面）| ✅ 已完成並實測 |
 | 9 | 接真攝影機（手機）實測，修掉兩個被掩蓋的缺陷 | ✅ 已完成 |
+| 10 | MLOps 進版控 + 跑通標註→重訓→熱部署完整迴路 | ✅ 已完成並實測 |
 
 第 5、6 兩項互不依賴，可分頭進行。
+
+---
+
+## 10.【已完成】MLOps 進版控 —— 換一台機器整條不再消失
+
+分支 `feat/mlops-into-vcs`。完整 runbook 見 **[`ai/MLOPS.md`](ai/MLOPS.md)**。
+
+### 原本壞在哪
+
+MLOps 是本專案主打的一環，但版控裡幾乎不存在，**換一台機器整條就沒了**。
+實際查下去比預期的還糟，四條路徑同時是斷的：
+
+1. **`ai/export_models.py` 不存在**，但 `CONTRIBUTING.md:24`、`ai/run_triton.sh:82`、
+   `scripts/check_guardrails.py:131` **三個地方都叫人跑它**重建模型。
+2. **`ai/data.yaml` 不存在**，訓練腳本指向它，所以在這台從來沒跑起來過。
+3. **`ai/webhook_receiver.py` 已進版控，但第 13 行 import 的 `submit_task` 從來不存在**
+   —— 自動點火那條 import 就掛。這條原本沒被列進來，是查的時候才發現的。
+4. 訓練腳本沒進版控，而且寫死 `/home/rapubuntu/...`，直接 commit 會被護欄擋。
+
+### 做了什麼
+
+八支腳本移植進 `ai/`（來源是 `origin/albert_chiang:Fall/tools/`），路徑全走 `cfg()`
+或 `__file__` 基準，護欄全綠。ClearML / Label Studio 的 compose 也進版控，
+volume 名沿用既有的，接得上這台先前的實驗與標註資料。
+
+### 上游那份**照抄就會出事**的地方（這是這輪最有價值的部分）
+
+每一個都是「跑得動、不報錯、結果是錯的」那種，靠 code review 抓不到：
+
+| # | 照抄會怎樣 |
+|---|---|
+| 1 | **`data.yaml` 的類別名整組錯**。上游是 wheelchair/slipper/wire/obstacle/walker，這台的資料其實是 person/chair/sofa/bed/tv。訓練照樣成功，只是每個類別的語意都不對 |
+| 2 | **假標註被截成合理的框**。上游的清洗是「每行留前 5 欄」，那 21 個寫死的假 pose 標註截完會變成看起來很正常、實際憑空捏造的框混進訓練集 |
+| 3 | **mAP 是拿訓練集量的**。上游 `data.yaml` 的 `train` 與 `val` 指同一個目錄 |
+| 4 | **滾動式重訓從來沒滾動過**。上游用 `Model.created` 排序找上一輪最強模型，那個欄位在 clearml 2.1.10 不存在，AttributeError 被 except 吞掉、每輪冷啟動 |
+| 5 | **一輪爛訓練會毒害後續所有輪**。上游每輪無條件標 `best`，下一輪去繼承它、部署端抓它上線 |
+| 6 | **部署打到 backend**。上游 Triton 埠寫死 8000，那是這台 backend 的 uvicorn |
+| 7 | **部署失敗會謊報成功**。上游有一段「連不上 Triton 就 return True」（他 Mac 沒 N 卡）|
+| 8 | **只丟 ONNX 會讓整支 Triton 起不來**。這台 `rt_detr` 是 `tensorrt_plan`，要編 Blackwell 引擎 |
+
+### 實測數字
+
+| 項目 | 結果 |
+|---|---|
+| 模型重建 | 三顆全部從 `.pt`/`.pth` 重建，`rt_detr` 的 TensorRT 引擎 69.1MB（trtexec FP16，3m57s），Triton 三顆 READY |
+| 資料清洗 | 標註行保留 362 / 丟棄 41；圖片 111 → 可用 90、隔離 21；train 72 / val 18 |
+| 重訓 | 100 epochs / batch 8 / 0.155 小時，**mAP50=0.9912、mAP50-95=0.9851** |
+| 熱部署 | `rt_detr` v1 → v2，v2 READY 200 / v1 400；同張圖推論輸出確實改變（7 框 COCO → 5 框新類別）|
+| 推論與 fps | `test6.mp4` 部署前 8.3 fps → 部署後 **8.4 fps**（+1.2%），兩次都抓到同樣兩位跌倒者、片段幀數一致 |
+| 回滾 | `--rollback` 實測可用，v1 回到 READY |
+
+### ⚠️ mAP 0.99 不要拿去當泛化能力的證據
+
+111 張快照來自同幾個房間同幾支相機、內容高度重複（同一行標註出現在 22 個檔案裡），
+80/20 隨機切分會把「同場景相鄰幾秒」的畫面分到 train 與 val 兩邊 —— 等於考已經念過的
+內容。而且 `bed` 一個標註都沒有、`sofa` 只有 5 個框。
+
+**這個數字證明的是「重訓管線是通的」，不是「模型在新病房也有 99%」。**
+要回答後者得補資料、並改成**按場景/相機/日期分組切分**。這是下一步最該做的事，
+不是再調參數。理由與細節見 [`ai/MLOPS.md`](ai/MLOPS.md) 第三節。
+
+### 順手修好的兩件事
+
+- **ClearML 的 fileserver 與 webserver 壞了一週沒人發現**（`docker ps -a` 顯示
+  Exited 7 天 / 3 天，只有 apiserver 活著）。原因是它們照上游 compose 的**服務名**
+  互打（nginx 寫死 `upstream apiserver`、fileserver 連 `redis:6379`），而手動
+  `docker run` 起的容器沒有那些名字。fileserver 是模型權重的落地點，它掛著等於
+  重訓產物根本存不上去。compose 補 network aliases 就解了。
+- `ai/triton_detr_client.py` 的 `NAMES` 仍是 COCO 80 類，與 v2 的 5 類對不上。
+  現在**不會壞**（唯一下游 `inference_test.py:714-728` 算完沒有任何地方讀，
+  原讀取者 `bed_exit`/`chair_slip` 已刪），但已在該檔寫明：要把那兩個值接回使用前，
+  先對齊當下 serving 版本的類別表。
 
 ---
 

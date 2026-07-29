@@ -101,3 +101,9 @@ streaming/*.log
 streaming/*.zip
 streaming/*.crt
 streaming/*.key
+
+# submit_task.py 產生的訓練腳本副本（機器產物，原始碼是 ai/clearml_train_pipeline.py）。
+# 它是先前那份寫死 /home/rapubuntu/... 的 151 行檔的來源，不要再 commit 進來。
+ai/clearml_train_pipeline_final.py
+# model_deployment_agent.py 的下載暫存
+ai/temp_downloaded_model*
