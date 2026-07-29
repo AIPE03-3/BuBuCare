@@ -70,6 +70,14 @@ for message in consumer:
         "yolo_score": clean_yolo_score,                                 # confidence(字串) -> yolo_score (float)
         "vlm_summary": result["vlm_summary"],                           # Router 回填的 VLM 判讀文字
     }
+    # 多人同時跌倒：主迴圈會為每個倒地的人各發一筆事件，兩筆在事件中心的相機、時間、
+    # 畫面全都一樣，護理師分不出是兩個人還是系統重複報。主迴圈把「第 N 位」放在
+    # person_label（AI 內部欄位，不外發後端），這裡把它接到 VLM 判讀文字前面 ——
+    # 否則上面那行會把主迴圈原本寫在 vlm_summary 裡的「第 N 位」整段覆蓋掉。
+    # 後端欄位一個字沒加：person_label 本身不外發，只是併進既有的 vlm_summary 字串。
+    _person_label = event_data.get("person_label") or ""
+    if _person_label:
+        final_report["vlm_summary"] = f"【{_person_label}】{final_report['vlm_summary']}"
     # 注意:Router 內部另有 fall_reason_item/item_description(方案 B,給主動學習用),
     # 刻意不放進 final_report —— 後端 EventCreateRequest 無此欄位,守住後端零感知。
 

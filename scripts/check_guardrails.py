@@ -61,10 +61,13 @@ CONTRACT_KEYS = {
     "image_filename", "yolo_score", "vlm_summary",
 }
 # 只在 AI 內部流通、刻意不外發後端的欄位，允許在 payload 裡額外出現。
-# yolo_threshold 只出現在慢速道（nursing-home-alerts → vlm_worker / agent）：agent 的
-# judge prompt 要拿它跟 yolo_score 比大小（見 agent/prompts.py 的 describe_score_vs_threshold，
-# 那是防地端小模型自己比錯大小的防呆）。二審端重組外發 payload 時不會把它帶去後端。
-INTERNAL_ONLY_KEYS = {"yolo_threshold"}
+# 只出現在慢速道（nursing-home-alerts → vlm_worker / agent，收件人都是 AI 內部），
+# 二審端重組外發 payload 時不會把它們帶去後端。加東西進來要寫清楚用途：
+#   · yolo_threshold —— agent 的 judge prompt 要拿它跟 yolo_score 比大小（見 agent/prompts.py
+#     的 describe_score_vs_threshold，那是防地端小模型自己比錯大小的防呆）。
+#   · person_label —— 多人同時跌倒時標示「畫面內第 N 位倒地者」。慢車道的 vlm_summary 會被
+#     vlm_worker 用 VLM 判讀結果整段覆蓋，所以「第 N 位」不能只寫在那句文字裡。
+INTERNAL_ONLY_KEYS = {"yolo_threshold", "person_label"}
 CONTRACT_FILE = "ai/inference_test.py"
 CONTRACT_FUNC = "route_by_confidence"
 
