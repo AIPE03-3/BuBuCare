@@ -45,6 +45,8 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
+from pose_features import is_feature_valid, pose_feature
+
 # 對齊 inference_test.py:564 的 conf=0.45。門檻不同，選中的人可能就不同，
 # 拿別的值測出來的結論套不回正式管線。
 DEFAULT_CONF = 0.45
@@ -133,7 +135,7 @@ def analyze(result, conf_threshold):
         return {"person_count": len(boxes_conf), "best_idx": -1}
 
     keypoints = keypoints_norm[best_idx]
-    feature_34 = keypoints[:17, :2].flatten()
+    feature_34 = pose_feature(keypoints)
     _, _, width, height = boxes_xywh[best_idx]
     angle = body_angle_degrees(keypoints)
     aspect_ratio = float(width / height) if height else 0.0
@@ -144,8 +146,7 @@ def analyze(result, conf_threshold):
         "person_count": len(boxes_conf),
         "best_idx": int(best_idx),
         "best_conf": float(boxes_conf[best_idx]),
-        # 全零＝餵給 AcT 也是廢的，等同這幀沒偵測到（對齊 :683）
-        "feature_valid": bool(not np.all(feature_34 == 0)),
+        "feature_valid": is_feature_valid(feature_34),
         "missing_keypoints": [
             KEYPOINT_NAMES[i] for i in range(17)
             if keypoints[i][0] == 0 and keypoints[i][1] == 0

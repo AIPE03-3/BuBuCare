@@ -21,7 +21,7 @@
 | `conf=0.45` | `inference_test.py:564` |
 | 跳幀 `frame_count % 2` | `:536` |
 | 選人 `conf × 框面積` | `:672-678` |
-| 34 維特徵 `kp[:17,:2].flatten()` | `:682` |
+| 34 維特徵 `pose_features.pose_feature()` | 同一個函式 |
 | 躺平 `角度<40°` 或 `w/h>1.25` | `:697` |
 | 遮擋 `h/normal_h<0.70` 且 `y2>img_h/2` | `:702` |
 | 視窗 30 幀、`softmax`/`argmax` | `:718-733` |
@@ -81,6 +81,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from ultralytics import YOLO
+
+from pose_features import empty_feature, is_feature_valid, pose_feature
 
 _AI_DIR = Path(__file__).resolve().parent
 DEFAULT_POSE_WEIGHTS = _AI_DIR / "yolo11s-pose.pt"
@@ -363,7 +365,7 @@ def extract_pose_state(result, normal_height_reference, image_height,
     回傳 dict。沒有可用的人時 `feature` 為全零向量（等同正式管線的無效幀）。
     """
     state = {
-        "feature": np.zeros(34, dtype=np.float32),
+        "feature": empty_feature(),
         "valid": False,
         "is_lying": False,
         "is_occluded": False,
@@ -392,10 +394,9 @@ def extract_pose_state(result, normal_height_reference, image_height,
         return state
 
     keypoints = keypoints_all[best_idx]
-    feature = keypoints[:17, :2].flatten().astype(np.float32)
+    feature = pose_feature(keypoints)
     state["best_conf"] = float(boxes_conf[best_idx])
-    # 全零＝關鍵點全沒抓到，餵給 AcT 也是廢的（對齊 :683 的 np.all(...==0) 檢查）
-    if not np.all(feature == 0):
+    if is_feature_valid(feature):
         state["feature"] = feature
         state["valid"] = True
 

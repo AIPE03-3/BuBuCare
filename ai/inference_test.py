@@ -25,6 +25,7 @@ from triton_pose_client import TritonPoseModel          # Triton 版 yolo_pose c
 from triton_detr_client import TritonDetrModel          # Triton 版 rt_detr client（環境物件偵測）
 from triton_act_client import TritonActModel            # Triton 版 action_transformer client（時序跌倒分類）
 
+from pose_features import empty_feature, is_feature_valid, pose_feature  # AcT 34 維輸入的唯一定義
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
     build_camera_channels, BackendUnavailable, BACKEND_API_URL, cfg,
@@ -414,7 +415,7 @@ def camera_worker(camera_id, video_source):
     vlm_triggered = False
     vlm_report = "Waiting for alert..."
     
-    last_pose_feat = np.zeros(34, dtype=np.float32)
+    last_pose_feat = empty_feature()
     has_seen_person = False
     last_valid_annotated_frame = None
     frame_count = 0
@@ -488,7 +489,7 @@ def camera_worker(camera_id, video_source):
                 # 第一幀，等於偽造一個瞬間姿態跳變，那正是 AcT 判定跌倒的特徵，會誤報。
                 # 既有的 len<30 → "Buffering" 路徑會自然接手，累滿 30 幀後恢復判定。
                 frame_window.clear()
-                last_pose_feat = np.zeros(34, dtype=np.float32)
+                last_pose_feat = empty_feature()
                 has_seen_person = False
                 # 別讓中斷時間污染下一段區間 FPS（否則會印出荒謬的 <1 fps 像是退化）。
                 # normal_h_reference / frame_count / ever_detected_fall / 六個偵測器物件
@@ -661,7 +662,7 @@ def camera_worker(camera_id, video_source):
                 if yolo_env_model.names[cls_id] == "bed":
                     bed_box_xyxy = box.xyxy.cpu().numpy()[0]
 
-        current_pose_feat = np.zeros(34, dtype=np.float32)
+        current_pose_feat = empty_feature()
         is_current_frame_valid = False
         is_physically_lying = False  
         is_occluded_fall = False     
@@ -688,9 +689,9 @@ def camera_worker(camera_id, video_source):
                             if score > max_score: max_score = score; best_idx = idx
                     
                     if best_idx != -1:
-                        kp = kpts_data[best_idx]  
-                        temp_feat = kp[:17, :2].flatten()
-                        if not np.all(temp_feat == 0):
+                        kp = kpts_data[best_idx]
+                        temp_feat = pose_feature(kp)
+                        if is_feature_valid(temp_feat):
                             current_pose_feat = temp_feat.copy(); last_pose_feat = current_pose_feat.copy()
                             has_seen_person = True; is_current_frame_valid = True  
                         
