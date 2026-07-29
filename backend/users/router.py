@@ -175,6 +175,36 @@ def update_user(user_id: int, body: UpdateUserRequest,
             "full_name": user.full_name, "role": user.role}
 
 
+class UpdateRoleRequest(BaseModel):
+    role: Literal["staff", "admin"]  # 只收這兩種值，其他直接 422（同 RegisterRequest）
+
+
+# ════════════════════════════════════════════════════════
+# 路由九：PATCH /users/{user_id}/role（需 admin；改別人的角色）
+# 獨立一支不併進 PATCH /users/{user_id}：改權限是敏感操作，跟改名字一件事一個入口
+# ════════════════════════════════════════════════════════
+@router.patch("/users/{user_id}/role")
+def update_user_role(user_id: int, body: UpdateRoleRequest,
+                     current_user: dict = Depends(require_admin),
+                     db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="找不到使用者")
+
+    # 不能改自己：防 admin 手滑把自己降成 staff 後沒人能開帳號（同 DELETE /users/{id}）
+    # 這條也順便保證系統永遠至少留一個 admin，不必再寫「最後一個 admin」的檢查
+    if user.employee_id == current_user["sub"]:
+        raise HTTPException(status_code=400, detail="不能改自己的角色")
+
+    # 角色寫在 JWT 裡、權限檢查不查庫（見 core/dependencies.py），
+    # 所以這裡改完，對方手上的舊 token 仍是舊角色，要重新登入才生效——這是刻意的
+    user.role = body.role
+    db.commit()
+    db.refresh(user)
+    return {"id": user.id, "employee_id": user.employee_id,
+            "full_name": user.full_name, "role": user.role}
+
+
 # ════════════════════════════════════════════════════════
 # 路由七：GET /users（需 admin；使用者管理名單）
 # ════════════════════════════════════════════════════════
