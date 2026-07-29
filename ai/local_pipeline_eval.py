@@ -92,7 +92,7 @@ POSE_CONF = 0.45          # :564
 WINDOW_SIZE = 30          # :403 deque(maxlen=30)
 LYING_ANGLE_DEG = 40.0    # :697
 LYING_ASPECT_RATIO = 1.25 # :697
-OCCLUDED_HEIGHT_RATIO = 0.70  # :702
+OCCLUDED_HEIGHT_RATIO = 0.50  # :702（2026-07-29 從 0.70 調降，見 docs/2026-07-29-pipeline-false-alarm-fix.md）
 AI_THINKING_CONF = 0.35   # :744
 DIRECT_TRIGGER_CONF = 0.55  # :749
 
@@ -117,9 +117,10 @@ COLOR_BUFFER = (0, 255, 255)  # 黃
 #   geo-first    90.0% (18/20)  12.1%    0.64s   ← 誤報降 4.7 倍，只多漏 1 段
 #   geo-strict   65.0% (13/20)   7.1%    0.91s   ← 不要用，理由見下
 TRIGGER_MODES = {
-    # 正式管線現況（inference_test.py:744-749）
+    # 2026-07-29 之前的正式管線行為。留著是為了做 A/B 對照，不是預設。
     "current": {"act_alone": True, "occluded_needs_act": False},
-    # AcT 不能單獨觸發。誤報主因就是「幾何正常但 AcT 說跌倒」（佔誤報 78.7%），砍掉這條
+    # AcT 不能單獨觸發。誤報主因就是「幾何正常但 AcT 說跌倒」（佔誤報 78.7%），砍掉這條。
+    # ✅ 已於 2026-07-29 帶進正式管線（ACT_ALONE_CAN_TRIGGER=false）
     "geo-first": {"act_alone": False, "occluded_needs_act": False},
     # ⚠ 實測失敗的方案，保留是為了記錄「試過、不行」，不要再走一次。
     # 動機是 OCCLUDED 涉及 geo-first 殘餘誤報的 87%（人蹲下/坐下/彎腰/走到家具後面
@@ -127,7 +128,7 @@ TRIGGER_MODES = {
     # 要求 AcT 附議等於連真跌倒一起砍——換來 5 個百分點的誤報改善，代價是 5 次漏報。
     "geo-strict": {"act_alone": False, "occluded_needs_act": True},
 }
-DEFAULT_TRIGGER_MODE = "current"
+DEFAULT_TRIGGER_MODE = "geo-first"  # 對齊正式管線；要重現舊行為請加 --trigger-mode current --occ-height 0.70
 
 
 class ActionTransformer(nn.Module):
@@ -550,6 +551,9 @@ def main():
                         choices=sorted(TRIGGER_MODES),
                         help="觸發策略：current=正式管線現況／"
                              "geo-first=AcT 不能單獨觸發／geo-strict=OCCLUDED 也要 AcT 附議")
+    parser.add_argument("--occ-height", type=float, default=OCCLUDED_HEIGHT_RATIO,
+                        help=f"遮擋判斷的高度門檻，預設 {OCCLUDED_HEIGHT_RATIO}（＝正式管線現況）；"
+                             f"實測 0.50 可把彎腰／坐下的誤報砍掉一半")
     args = parser.parse_args()
 
     pose_path, act_path = Path(args.pose_weights), Path(args.act_weights)
@@ -564,7 +568,13 @@ def main():
         return 1
 
     device = pick_device()
+    # 把「現在跑的是哪一組設定」印在最前面。手動測時最容易踩的坑就是不知道自己
+    # 跑的是哪一組，看到誤報就以為改善無效。
+    matches_production = (args.trigger_mode == DEFAULT_TRIGGER_MODE
+                          and args.occ_height == OCCLUDED_HEIGHT_RATIO)
     print(f"🚀 裝置：{device}")
+    print(f"⚙️  策略 {args.trigger_mode}｜遮擋高度門檻 {args.occ_height}"
+          f"　←　{'＝正式管線現況' if matches_production else '⚠ 與正式管線不同（自訂對照組）'}")
     print(f"📦 載入 pose：{pose_path.name}｜AcT：{act_path.name}")
     pose_model = YOLO(str(pose_path))
     pose_model.to(device)
@@ -662,7 +672,8 @@ def main():
 
             image_height = frame.shape[0]
             result = pose_model(frame, verbose=False, conf=args.conf)[0]
-            pose_state = extract_pose_state(result, normal_height_reference, image_height)
+            pose_state = extract_pose_state(result, normal_height_reference, image_height,
+                                            args.occ_height)
 
             # 身高基準取前期幾幀，之後拿來判斷「突然變矮」（遮擋防線的分母）。
             # 正式管線用 10<frame_count<40 的原始幀號（:689），跳幀後約等於第 5~20 個處理幀。

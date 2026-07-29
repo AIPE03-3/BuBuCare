@@ -86,6 +86,16 @@ HAZARD_CONFIRM_FRAMES = int(cfg("HAZARD_CONFIRM_FRAMES", "5"))
 # 連續 M 次沒看到才判定物品已移除（防短暫遮擋就誤判消失，導致一移開就重報）。
 HAZARD_GONE_FRAMES = int(cfg("HAZARD_GONE_FRAMES", "30"))
 
+# 「跌倒防線 B」的高度門檻：人框縮到正常身高的幾成以下，才算被家具遮擋的跌倒（見 :702）。
+# 曾是寫死的 0.70，實測那個值把「彎腰撿東西」「坐下」一起吃進來——這兩種動作框會縮到
+# 六~七成，跟跌倒躺平的五成以下重疊。改 0.50 後，撿東西影片的誤報幀從 195 降到 7。
+# 完整量測見 docs/2026-07-29-pipeline-false-alarm-fix.md。
+OCCLUDED_HEIGHT_RATIO = float(cfg("OCCLUDED_HEIGHT_RATIO", "0.50"))
+# AcT 能否在幾何完全正常（沒躺平、沒遮擋）時單獨發動告警。
+# 實測 AcT 在單一動作短片上會對正常走路連報數十次，關掉這條後正常動作的幀誤報率
+# 從 44.7% 降到 2.0%。設 true 可回到舊行為。
+ACT_ALONE_CAN_TRIGGER = cfg("ACT_ALONE_CAN_TRIGGER", "false").strip().lower() == "true"
+
 
 def camera_numeric_id(camera_id):
     """相機代號取數字當 device_id（Room_301_Bed → 301）；取不到退 1（同原地端行為）。"""
@@ -699,7 +709,7 @@ def camera_worker(camera_id, video_source):
                             
                         # 跌倒防線 B (幾何遮擋防禦)
                         if normal_h_reference is not None:
-                            if (h_box / normal_h_reference) < 0.70 and y2 > (img_h * 0.5): is_occluded_fall = True
+                            if (h_box / normal_h_reference) < OCCLUDED_HEIGHT_RATIO and y2 > (img_h * 0.5): is_occluded_fall = True
                                 
                         # 模組 A：離床預警呼叫
                         is_leaving_bed = bed_detector.process(kp, bed_box_xyxy, img_h, is_physically_lying, producer)
@@ -744,9 +754,10 @@ def camera_worker(camera_id, video_source):
         is_ai_thinking_fall = (pred_class == 0 and act_confidence > 0.35) if len(frame_window) == 30 else False
         should_trigger_fall = False
         if has_seen_person:
-            if is_physically_lying or is_occluded_fall:  
+            if is_physically_lying or is_occluded_fall:
                 if len(frame_window) < 30 or is_ai_thinking_fall or is_occluded_fall: should_trigger_fall = True
-            elif len(frame_window) == 30 and pred_class == 0 and act_confidence > 0.55: should_trigger_fall = True
+            # 幾何正常時 AcT 單獨發動：預設關閉，理由見 ACT_ALONE_CAN_TRIGGER 的註解。
+            elif ACT_ALONE_CAN_TRIGGER and len(frame_window) == 30 and pred_class == 0 and act_confidence > 0.55: should_trigger_fall = True
 
         # === 模組 H：多模態音訊特徵融合運算 ===
         should_trigger_fall, act_confidence, fusion_reason = audio_engine.listen_and_fuse(should_trigger_fall, act_confidence)
