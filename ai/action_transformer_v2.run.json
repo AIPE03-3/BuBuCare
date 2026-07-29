@@ -1,0 +1,54 @@
+{
+  "created_at": "2026-07-29T19:30:35",
+  "weights": "/Users/xieyuquan/Documents/BuBuCare/aipe03-3/ai/action_transformer_v2.pth",
+  "best_epoch": 22,
+  "val": {
+    "loss": 0.008358237653737888,
+    "accuracy": 0.9992295839753467,
+    "fall_precision": 1.0,
+    "fall_recall": 0.994413407821229
+  },
+  "hyperparams": {
+    "epochs": 100,
+    "batch_size": 64,
+    "lr": 0.001,
+    "stride": 1,
+    "seed": 42
+  },
+  "window_rule": {
+    "window_size": 30,
+    "frame_skip": 2,
+    "positive_coverage": 0.8
+  },
+  "samples": {
+    "train": 5517,
+    "val": 1298,
+    "train_fall": 946,
+    "val_fall": 179
+  },
+  "splits_rules": {
+    "split_subjects": {
+      "train": [
+        1,
+        3,
+        4,
+        6,
+        7
+      ],
+      "val": [
+        8,
+        9
+      ],
+      "test": [
+        2,
+        5,
+        10
+      ]
+    },
+    "flip_offset": 10,
+    "splits_allowing_flip": [
+      "train"
+    ],
+    "critical": "S<n+10> 是 S<n> 的水平鏡像，是同一個人。兩者必須在同一個 split，否則測試集洩漏且指標看不出異常。"
+  }
+}
