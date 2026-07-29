@@ -37,7 +37,10 @@ sys.path.insert(0, str(_AI_DIR))
 from local_pipeline_eval import (  # noqa: E402
     DIRECT_TRIGGER_CONF, WINDOW_SIZE, ActionTransformer, pick_device,
 )
-from evaluate_act import file_digest, load_model, load_test_videos  # noqa: E402
+from evaluate_act import (  # noqa: E402
+    file_digest, load_model, load_test_videos, weights_feature_norm,
+)
+from pose_features import DEFAULT_FEATURE_NORM, FEATURE_NORMS  # noqa: E402
 from plot_eval import setup_font  # noqa: E402
 
 DEFAULT_DATASET = _AI_DIR / "train" / "dataset"
@@ -171,13 +174,25 @@ def parse_args():
     parser.add_argument("--split", default="test")
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--fpr-budget", type=float, default=FPR_BUDGET)
+    parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
+                        help="用哪一份特徵。會跟權重 run.json 記的模式核對")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
     dataset_dir = Path(args.dataset).resolve()
-    videos, features_by_stem, _, skipped = load_test_videos(dataset_dir, args.split)
+
+    mismatched = [(Path(p).name, weights_feature_norm(p)) for p in args.models
+                  if weights_feature_norm(p) != args.feature_norm]
+    if mismatched:
+        print(f"❌ 以下權重不是用 {args.feature_norm} 特徵訓練的：", file=sys.stderr)
+        for name, norm in mismatched:
+            print(f"   {name}（訓練時用 {norm}）", file=sys.stderr)
+        return 1
+
+    videos, features_by_stem, _, skipped = load_test_videos(
+        dataset_dir, args.split, args.feature_norm)
     if not videos:
         print("❌ 測試集沒有可用影片", file=sys.stderr)
         return 1
@@ -237,6 +252,7 @@ def main():
     json_path.write_text(json.dumps(
         {"evaluated_at": datetime.now().isoformat(timespec="seconds"),
          "split": args.split, "fpr_budget": args.fpr_budget,
+         "feature_norm": args.feature_norm,
          "videos": len(videos), "skipped": skipped, "models": summary},
         ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 

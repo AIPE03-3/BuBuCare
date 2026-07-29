@@ -32,6 +32,7 @@ from local_pipeline_eval import (  # noqa: E402  （要先插 sys.path 才 impor
     DEFAULT_POSE_WEIGHTS, OCCLUDED_HEIGHT_RATIO, POSE_CONF,
     extract_pose_state, select_main_person,
 )
+from pose_features import DEFAULT_FEATURE_NORM, FEATURE_NORMS  # noqa: E402
 import dataset_utils as du  # noqa: E402
 
 DEFAULT_DATASET = _AI_DIR / "train" / "dataset"
@@ -60,7 +61,7 @@ SEARCH_START_AFTER = 5       # 前幾個處理幀不找跌落起點（身高基�
 # ────────────────────────────────────────────────────────────────────────
 
 
-def extract_one_video(video_path, pose_model, conf, occluded_height_ratio):
+def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, feature_norm):
     """跑一支影片，回傳逐處理幀的特徵與幾何旗標（各為等長 array）。"""
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
@@ -82,7 +83,7 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio):
         image_height = frame.shape[0]
         result = pose_model(frame, verbose=False, conf=conf)[0]
         state = extract_pose_state(result, normal_height_reference, image_height,
-                                   occluded_height_ratio)
+                                   occluded_height_ratio, feature_norm)
 
         # 身高基準：取前期幾幀的人框高度，之後拿來判斷「突然變矮」
         if normal_height_reference is None and state["valid"] \
@@ -111,6 +112,9 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio):
         "height_ratio": np.asarray(height_ratios, dtype=np.float32),
         "valid": np.asarray(valids, dtype=bool),
         "frame_skip": np.int32(FRAME_SKIP),
+        # 特徵是哪種正規化算出來的，跟著特徵一起走。train_act.py 靠它擋混用，
+        # 光看 .npz 的數值分不出 image 還是 bbox（都是 34 維 float32）
+        "feature_norm": np.str_(feature_norm),
     }
 
 
@@ -189,6 +193,9 @@ def parse_args():
     parser.add_argument("--overwrite", action="store_true", help="重算已存在的特徵")
     parser.add_argument("--drafts-only", action="store_true",
                         help="不跑 pose，直接讀現成的 .npz 重算標註初稿（調參數用）")
+    parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
+                        help="特徵正規化基準：image=整張畫面（預設）／bbox=人物框。"
+                             "各自存到不同目錄，不會覆蓋對方")
     return parser.parse_args()
 
 
@@ -196,7 +203,7 @@ def main():
     args = parse_args()
     dataset_dir = Path(args.dataset).resolve()
     videos_dir = dataset_dir / "videos"
-    features_dir = dataset_dir / "features"
+    features_dir = du.features_dir(dataset_dir, args.feature_norm)
     drafts_dir = dataset_dir / "labels_draft"
 
     splits = du.load_splits(dataset_dir)
@@ -249,7 +256,8 @@ def main():
                 failed.append(name)
                 continue
 
-            data = extract_one_video(video_path, pose_model, args.conf, args.occ_height)
+            data = extract_one_video(video_path, pose_model, args.conf, args.occ_height,
+                                     args.feature_norm)
             if data is None:
                 print(f"❌ [{index}/{len(names)}] {name}｜讀不到任何幀")
                 failed.append(name)

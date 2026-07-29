@@ -45,7 +45,9 @@ import numpy as np
 import torch
 from ultralytics import YOLO
 
-from pose_features import is_feature_valid, pose_feature
+# 這支量的是「關鍵點抓得好不好」，跟 AcT 用哪種正規化無關，故固定用 image-norm
+# （bbox-norm 只是同一組點的線性變換，抓不到就是抓不到，換基準不會變出點來）
+from pose_features import is_feature_valid, pose_feature_image_norm
 
 # 對齊 inference_test.py:564 的 conf=0.45。門檻不同，選中的人可能就不同，
 # 拿別的值測出來的結論套不回正式管線。
@@ -135,7 +137,7 @@ def analyze(result, conf_threshold):
         return {"person_count": len(boxes_conf), "best_idx": -1}
 
     keypoints = keypoints_norm[best_idx]
-    feature_34 = pose_feature(keypoints)
+    feature_34 = pose_feature_image_norm(keypoints)
     _, _, width, height = boxes_xywh[best_idx]
     angle = body_angle_degrees(keypoints)
     aspect_ratio = float(width / height) if height else 0.0

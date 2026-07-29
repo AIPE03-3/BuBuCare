@@ -45,6 +45,7 @@ from local_pipeline_eval import (  # noqa: E402
     AI_THINKING_CONF, DIRECT_TRIGGER_CONF, WINDOW_SIZE, ActionTransformer,
     decide_trigger, parse_label_file, pick_device,
 )
+from pose_features import DEFAULT_FEATURE_NORM, FEATURE_NORMS  # noqa: E402
 import dataset_utils as du  # noqa: E402
 
 DEFAULT_DATASET = _AI_DIR / "train" / "dataset"
@@ -179,10 +180,10 @@ def evaluate_strategy(videos, fired_by_video):
     }
 
 
-def load_test_videos(dataset_dir, split):
+def load_test_videos(dataset_dir, split, feature_norm=DEFAULT_FEATURE_NORM):
     """載入該 split 的特徵與標註遮罩。回傳 (videos, features_by_stem, data_by_stem)。"""
     splits = du.load_splits(dataset_dir)
-    features_dir = Path(dataset_dir) / "features"
+    features_dir = du.features_dir(dataset_dir, feature_norm)
     videos, features_by_stem, data_by_stem = [], {}, {}
     skipped = []
 
@@ -193,6 +194,11 @@ def load_test_videos(dataset_dir, split):
             skipped.append(stem)
             continue
         data = np.load(feature_path)
+        if du.read_feature_norm(data) != feature_norm:
+            raise ValueError(
+                f"{feature_path} 的 feature_norm 是 {du.read_feature_norm(data)}，"
+                f"但要求 {feature_norm}。目錄與內容不符，請重抽特徵"
+            )
         features = data["features"]
         total = len(features)
         if total < WINDOW_SIZE:
@@ -282,13 +288,39 @@ def parse_args():
     parser.add_argument("--act-threshold", type=float, default=DIRECT_TRIGGER_CONF,
                         help=f"AcT 隔離評估的信心門檻（預設 {DIRECT_TRIGGER_CONF}，"
                              f"對齊正式管線單獨觸發的門檻）")
+    parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
+                        help="用哪一份特徵評估。會跟每顆權重 run.json 記的模式核對，"
+                             "不一致直接擋下")
     return parser.parse_args()
+
+
+def weights_feature_norm(weights_path):
+    """這顆權重是用哪種正規化訓練的。沒有 run.json 就當 image（舊權重都是）。"""
+    record_path = Path(weights_path).with_suffix(".run.json")
+    if not record_path.is_file():
+        return DEFAULT_FEATURE_NORM
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    return du.check_feature_norm(record.get("feature_norm", DEFAULT_FEATURE_NORM))
 
 
 def main():
     args = parse_args()
     dataset_dir = Path(args.dataset).resolve()
-    videos, features_by_stem, data_by_stem, skipped = load_test_videos(dataset_dir, args.split)
+
+    # 先擋掉「權重與特徵不同調」，再花時間載模型跑推論。這種錯不會拋例外，
+    # 只會安靜地產出一份錯的評估報告——那比直接失敗糟糕得多
+    mismatched = [(Path(p).name, weights_feature_norm(p)) for p in args.models
+                  if weights_feature_norm(p) != args.feature_norm]
+    if mismatched:
+        print(f"❌ 以下權重不是用 {args.feature_norm} 特徵訓練的：", file=sys.stderr)
+        for name, norm in mismatched:
+            print(f"   {name}（訓練時用 {norm}）", file=sys.stderr)
+        print(f"   請改用 --feature-norm {mismatched[0][1]}，"
+              f"或改比同一種正規化的權重", file=sys.stderr)
+        return 1
+
+    videos, features_by_stem, data_by_stem, skipped = load_test_videos(
+        dataset_dir, args.split, args.feature_norm)
     if not videos:
         print("❌ 測試集沒有可用影片（先跑 extract_features.py）", file=sys.stderr)
         return 1
@@ -312,6 +344,7 @@ def main():
         },
         "params": {"frame_skip": FRAME_SKIP, "window_size": WINDOW_SIZE,
                    "act_threshold": args.act_threshold,
+                   "feature_norm": args.feature_norm,
                    "ai_thinking_conf": AI_THINKING_CONF,
                    "direct_trigger_conf": DIRECT_TRIGGER_CONF},
         "strategies": strategies,

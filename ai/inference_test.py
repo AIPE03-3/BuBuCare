@@ -25,7 +25,9 @@ from triton_pose_client import TritonPoseModel          # Triton 版 yolo_pose c
 from triton_detr_client import TritonDetrModel          # Triton 版 rt_detr client（環境物件偵測）
 from triton_act_client import TritonActModel            # Triton 版 action_transformer client（時序跌倒分類）
 
-from pose_features import empty_feature, is_feature_valid, pose_feature  # AcT 34 維輸入的唯一定義
+from pose_features import (                             # AcT 34 維輸入的唯一定義
+    DEFAULT_FEATURE_NORM, check_feature_norm, empty_feature, is_feature_valid, pose_feature,
+)
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
     build_camera_channels, BackendUnavailable, BACKEND_API_URL, cfg,
@@ -96,6 +98,12 @@ OCCLUDED_HEIGHT_RATIO = float(cfg("OCCLUDED_HEIGHT_RATIO", "0.50"))
 # 實測 AcT 在單一動作短片上會對正常走路連報數十次，關掉這條後正常動作的幀誤報率
 # 從 44.7% 降到 2.0%。設 true 可回到舊行為。
 ACT_ALONE_CAN_TRIGGER = cfg("ACT_ALONE_CAN_TRIGGER", "false").strip().lower() == "true"
+
+# AcT 34 維特徵的正規化基準：image=對整張畫面（現行）／bbox=對人物框。
+# ⚠ 這個值**必須跟 Triton 上那顆 AcT 訓練時用的一致**。不一致不會報錯、shape 也一樣，
+# 但模型看到的是完全不同語意的向量，輸出全是垃圾。換模型時務必一起換。
+# 訓練端用的模式記在 <權重>.run.json 的 feature_norm，對照那裡設。
+ACT_FEATURE_NORM = check_feature_norm(cfg("ACT_FEATURE_NORM", DEFAULT_FEATURE_NORM))
 
 
 def camera_numeric_id(camera_id):
@@ -678,7 +686,9 @@ def camera_worker(camera_id, video_source):
                 conf_data = results_pose[0].boxes.conf.cpu().numpy()  
                 boxes_data = results_pose[0].boxes.xywh.cpu().numpy()  
                 boxes_xyxy = results_pose[0].boxes.xyxy.cpu().numpy()
-                
+                # xyxyn 與 xyn 同樣對整張畫面正規化，座標系一致，bbox 正規化才算得對
+                boxes_xyxyn = results_pose[0].boxes.xyxyn.cpu().numpy()
+
                 if kpts_data.ndim == 3 and kpts_data.shape[0] > 0:
                     best_idx = -1; max_score = -1.0  
                     for idx in range(kpts_data.shape[0]):
@@ -690,7 +700,7 @@ def camera_worker(camera_id, video_source):
                     
                     if best_idx != -1:
                         kp = kpts_data[best_idx]
-                        temp_feat = pose_feature(kp)
+                        temp_feat = pose_feature(kp, boxes_xyxyn[best_idx], ACT_FEATURE_NORM)
                         if is_feature_valid(temp_feat):
                             current_pose_feat = temp_feat.copy(); last_pose_feat = current_pose_feat.copy()
                             has_seen_person = True; is_current_frame_valid = True  

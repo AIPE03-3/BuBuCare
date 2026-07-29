@@ -82,7 +82,9 @@ import torch
 import torch.nn as nn
 from ultralytics import YOLO
 
-from pose_features import empty_feature, is_feature_valid, pose_feature
+from pose_features import (
+    DEFAULT_FEATURE_NORM, FEATURE_NORMS, empty_feature, is_feature_valid, pose_feature,
+)
 
 _AI_DIR = Path(__file__).resolve().parent
 DEFAULT_POSE_WEIGHTS = _AI_DIR / "yolo11s-pose.pt"
@@ -359,10 +361,14 @@ def select_main_person(boxes_conf, boxes_xywh):
 
 
 def extract_pose_state(result, normal_height_reference, image_height,
-                       occluded_height_ratio=OCCLUDED_HEIGHT_RATIO):
+                       occluded_height_ratio=OCCLUDED_HEIGHT_RATIO,
+                       feature_norm=DEFAULT_FEATURE_NORM):
     """從一幀 pose 結果抽出：34 維特徵、躺平旗標、遮擋旗標、身高參考值。
 
     回傳 dict。沒有可用的人時 `feature` 為全零向量（等同正式管線的無效幀）。
+
+    `feature_norm` 只影響 34 維特徵，不影響躺平/遮擋判斷——那兩條防線本來就
+    吃畫面座標的框，跟關鍵點怎麼正規化無關。
     """
     state = {
         "feature": empty_feature(),
@@ -385,6 +391,8 @@ def extract_pose_state(result, normal_height_reference, image_height,
     boxes_conf = result.boxes.conf.cpu().numpy()
     boxes_xywh = result.boxes.xywh.cpu().numpy()
     boxes_xyxy = result.boxes.xyxy.cpu().numpy()
+    # xyxyn 與 xyn 同樣對整張畫面正規化，兩者座標系一致，bbox 正規化才算得對
+    boxes_xyxyn = result.boxes.xyxyn.cpu().numpy()
     state["person_count"] = len(boxes_conf)
     if keypoints_all.ndim != 3 or keypoints_all.shape[0] == 0:
         return state
@@ -394,7 +402,7 @@ def extract_pose_state(result, normal_height_reference, image_height,
         return state
 
     keypoints = keypoints_all[best_idx]
-    feature = pose_feature(keypoints)
+    feature = pose_feature(keypoints, boxes_xyxyn[best_idx], feature_norm)
     state["best_conf"] = float(boxes_conf[best_idx])
     if is_feature_valid(feature):
         state["feature"] = feature
@@ -555,6 +563,9 @@ def main():
     parser.add_argument("--occ-height", type=float, default=OCCLUDED_HEIGHT_RATIO,
                         help=f"遮擋判斷的高度門檻，預設 {OCCLUDED_HEIGHT_RATIO}（＝正式管線現況）；"
                              f"實測 0.50 可把彎腰／坐下的誤報砍掉一半")
+    parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
+                        help="AcT 特徵正規化基準：image=整張畫面（預設、現行）／bbox=人物框。"
+                             "⚠ 必須跟權重訓練時用的一致，否則輸出無意義")
     args = parser.parse_args()
 
     pose_path, act_path = Path(args.pose_weights), Path(args.act_weights)
@@ -572,9 +583,11 @@ def main():
     # 把「現在跑的是哪一組設定」印在最前面。手動測時最容易踩的坑就是不知道自己
     # 跑的是哪一組，看到誤報就以為改善無效。
     matches_production = (args.trigger_mode == DEFAULT_TRIGGER_MODE
-                          and args.occ_height == OCCLUDED_HEIGHT_RATIO)
+                          and args.occ_height == OCCLUDED_HEIGHT_RATIO
+                          and args.feature_norm == DEFAULT_FEATURE_NORM)
     print(f"🚀 裝置：{device}")
     print(f"⚙️  策略 {args.trigger_mode}｜遮擋高度門檻 {args.occ_height}"
+          f"｜特徵正規化 {args.feature_norm}"
           f"　←　{'＝正式管線現況' if matches_production else '⚠ 與正式管線不同（自訂對照組）'}")
     print(f"📦 載入 pose：{pose_path.name}｜AcT：{act_path.name}")
     pose_model = YOLO(str(pose_path))
@@ -674,7 +687,7 @@ def main():
             image_height = frame.shape[0]
             result = pose_model(frame, verbose=False, conf=args.conf)[0]
             pose_state = extract_pose_state(result, normal_height_reference, image_height,
-                                            args.occ_height)
+                                            args.occ_height, args.feature_norm)
 
             # 身高基準取前期幾幀，之後拿來判斷「突然變矮」（遮擋防線的分母）。
             # 正式管線用 10<frame_count<40 的原始幀號（:689），跳幀後約等於第 5~20 個處理幀。

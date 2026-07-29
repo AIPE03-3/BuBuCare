@@ -6,7 +6,13 @@
 
 import json
 import re
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+# check_feature_norm 一併轉出：呼叫端讀 run.json 的模式時也要驗，不必各自 import
+from pose_features import DEFAULT_FEATURE_NORM, check_feature_norm  # noqa: E402,F401
 
 _SUBJECT_PATTERN = re.compile(r"S(\d+)$", re.IGNORECASE)
 _LEFT_RIGHT_PATTERN = re.compile(r"left|right", re.IGNORECASE)
@@ -46,6 +52,32 @@ def all_assigned_files(splits):
     for files in splits["splits"].values():
         names.extend(files)
     return sorted(names)
+
+
+def features_dir(dataset_dir, feature_norm=DEFAULT_FEATURE_NORM):
+    """特徵目錄。**每種正規化各存一份，不互相覆蓋。**
+
+        image（預設）→ dataset/features/
+        bbox          → dataset/features-bbox/
+
+    為什麼不共用一個目錄：抽一次特徵要跑 150 支影片的 YOLO（約 20 分鐘），
+    共用目錄的話每次切換模式都得重抽，而且中途中斷會留下兩種模式混在一起的
+    npz——那種資料看不出異常，訓練照跑，只是結果沒有意義。
+    分開存則兩份並存，A/B 對照隨時可跑，也不會毀掉既有的 image 特徵。
+    """
+    norm = check_feature_norm(feature_norm)
+    suffix = "" if norm == DEFAULT_FEATURE_NORM else f"-{norm}"
+    return Path(dataset_dir) / f"features{suffix}"
+
+
+def read_feature_norm(data):
+    """從 .npz 讀出它是哪種正規化算的。
+
+    2026-07-29 之前抽的 npz 沒有這個欄位，一律當 image——那時只有這一種。
+    """
+    if "feature_norm" not in getattr(data, "files", []):
+        return DEFAULT_FEATURE_NORM
+    return check_feature_norm(str(data["feature_norm"]))
 
 
 def parse_subject(stem):
