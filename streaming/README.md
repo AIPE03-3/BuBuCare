@@ -8,7 +8,7 @@
 | 頻道 | 內容 | 誰推進來 |
 | --- | --- | --- |
 | `cam_in` | 原始畫面 | Tapo 攝影機（MediaMTX 主動拉），或 `start-fake-camera.ps1` 推 mp4 |
-| `cam_out` | 畫框後 | 正式來源是 AI 端的推論程式（**尚未實作**）；A 階段用 `start-fake-detect.ps1` 頂著 |
+| `cam_out` | 畫框後 | AI 端的推論程式（2026-07-29 起可用，設 `DETECT_STREAM=1`）；他們沒開時用 `start-fake-detect.ps1` 頂著 |
 | `phone_a` / `phone_b` / `phone_c` | 手機畫面 | 手機推流 App |
 
 （傑雅版原本叫 `my_camera_tapo`，語意等同 `cam_in`。）
@@ -86,7 +86,11 @@ WHEP 網址由**回應請求的那台後端**組出來，所以要設在哪，�
 
 ## 看畫面
 
-瀏覽器開 `http://<你的IP>:8889/cam_in`，MediaMTX 內建的播放頁會直接放。
+**從前端網站看**（登入後首頁四宮格）。前端會自動跟後端換權杖再連 MediaMTX。
+
+⚠ 直接開 `http://<你的IP>:8889/cam_in`（MediaMTX 內建播放頁）**現在會回 401**——
+B 階段起已開啟身分驗證，沒有權杖看不到。這是刻意的，不是壞掉。
+只想確認「MediaMTX 到底有沒有收到畫面」的話看 log 有沒有 `stream is available and online`。
 
 ## 假的偵測畫面（cam_out）
 
@@ -97,7 +101,11 @@ WHEP 網址由**回應請求的那台後端**組出來，所以要設在哪，�
 從 `cam_in` 拉畫面、畫一個固定紅框、推到 `cam_out`。
 **紅框位置固定，與畫面內容無關**——它只證明前端切換鈕有生效，不證明任何 AI 能力。
 
-AI 端的推流做好之後把這支關掉即可，前後端與資料庫都不用改。
+AI 端的真推流已經可用（2026-07-29），他們有開的話把這支關掉即可，前後端與資料庫都不用改。
+
+⚠ 這支腳本是 **RTSP 讀取端**（讀 `cam_in`），B 階段起要帶帳密：
+網址改成 `rtsp://<STREAM_RTSP_USER>:<STREAM_RTSP_PASS>@127.0.0.1:8554/cam_in`。
+它推到 `cam_out` 的那一段**不用**帳密（推流已放行）。
 
 ## 沒有攝影機時
 
@@ -243,7 +251,72 @@ cd streaming; .\mediamtx.exe .\mediamtx.yml
 攝影機的 IP **換 Wi-Fi 就會變**，變了要改 `mediamtx.yml`；
 電腦自己的 IP 變了要改後端 `.env` 的 `MEDIAMTX_BASE_URL`。
 
-## 安全性
+## 安全性（B 階段起已有身分驗證）
 
-**A 階段沒有任何驗證**：同一個 Wi-Fi 上任何人只要知道網址就看得到住民畫面。
-僅適用於開發與受控的 demo 場地，上正式環境前必須補上串流驗證（排在 A 階段之後緊接著做）。
+2026-07-29 起 `mediamtx.yml` 開啟 `authMethod: http`：**每一個觀看請求，MediaMTX
+都會回頭打後端 `POST /streams/auth` 問「這個人能不能看」。** 光有網址看不到畫面。
+
+| 誰 | 憑什麼進來 | 沒有的話 |
+| --- | --- | --- |
+| 瀏覽器 | 先跟後端換 60 秒短命權杖，帶 `Authorization: Bearer` 打 WHEP | 401 |
+| AI 端（RTSP 讀 `cam_in`） | `.env` 的 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` | 401 |
+| 推流端（手機 Larix、AI 端推 `cam_out`） | **不需要任何憑證**（`authHTTPExclude` 放行） | — |
+
+設計規格：`backend/docs/superpowers/specs/2026-07-29-stream-auth-design.md`
+
+### 啟動順序：後端一定要先起
+
+MediaMTX 每次有人要看都得問後端。**後端沒起來，所有觀看都會失敗（畫面全黑）。**
+
+```
+1. 後端      cd backend; uv run uvicorn main:app --reload
+2. MediaMTX  .\mediamtx.exe .\mediamtx.yml
+3. 推流端    start-fake-camera.ps1 / 手機 Larix（可有可無，跟驗證無關）
+4. 前端      cd frontend; npm run dev
+```
+
+### RTSP 讀取端要帶帳密
+
+AI 端的推論程式讀 `cam_in` 走 RTSP，拿不到瀏覽器才有的短命權杖，所以另給一組固定帳密。
+`.env` 填好 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` 之後，讀取網址寫成：
+
+```
+rtsp://<帳號>:<密碼>@<host>:8554/cam_in
+```
+
+`streaming/start-fake-detect.ps1` 也是讀取端，同樣要帶。**推流端不用改。**
+
+⚠ **兩個環境變數任一為空 → 一律拒絕**（fail-closed）。寧可「忘了設就讀不到」，
+也不要「忘了設就對外全開」。
+
+### 退路：demo 現場怎麼把驗證關掉
+
+把 `mediamtx.yml` 的 `authMethod` / `authHTTPAddress` / `authHTTPExclude`
+整段每行開頭加 `#` 註解掉，存檔即熱重載生效（約 30 秒，含所有連線重連）。
+驗完把 `#` 拿掉就恢復。
+
+**⚠ 退路只對「MediaMTX 問不到後端」有效**（位址打錯、防火牆擋住、雲端位址填錯字），
+對「後端整個掛掉」無效——前端連換票那一步都會失敗。不過後端掛掉時整個系統
+（登入、事件、鏡頭清單）本來就全死，不只串流。
+
+### 2026-07-29 真機實測結果
+
+真 Tapo C210 + 本機後端，全部驗過：
+
+| 驗收 | 結果 |
+| --- | --- |
+| 開啟驗證後 MediaMTX 仍拉得到攝影機 | ✅ `source: rtsp://…` 是 MediaMTX 主動外連，不受此機制管轄 |
+| 瀏覽器登入後四宮格有畫面 | ✅ 後端記錄 4 筆 `token 200` + 4 筆 `auth 204` |
+| 不帶權杖開內建播放頁 / WHEP | ✅ 401 |
+| 不帶帳密的 RTSP（等同用 VLC 偷看） | ✅ 401 |
+| 帶帳密的 RTSP（等同 AI 端） | ✅ 讀到 `h264 + pcm_alaw` |
+| 關掉驗證後恢復可看 | ✅ 401 → 200 |
+
+### 還做不到的事
+
+**權杖只在建立連線那一刻驗一次，之後 MediaMTX 不會再問。**
+所以權杖過期、使用者登出、帳號被停用，**都不會中斷已經在播的畫面**。
+擋的是「新連線」，不是「踢掉正在看的人」。要真的中斷只能關瀏覽器分頁或重啟 MediaMTX。
+
+換票與 WHEP 協商走 http 明文，同網段抓封包可撿到那 60 秒的權杖。
+（WebRTC 影像本身是加密的，不受影響。）根治要整套上 HTTPS，屬後續階段。
