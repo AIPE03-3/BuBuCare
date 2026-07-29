@@ -67,3 +67,7 @@ S3_URL_TTL = int(os.getenv("S3_URL_TTL", "3600"))  # 限時網址存活秒數，
 # 換場地或換電腦只要改這一個值、重啟後端即可，前端不用重新 build、資料庫不用改。
 # ⚠ 前端若跑在 https，這裡必須一併改成 https://——瀏覽器不允許 https 頁面載入 http 串流。
 MEDIAMTX_BASE_URL = os.getenv("MEDIAMTX_BASE_URL", "")
+
+# 串流權杖有效秒數。刻意設很短：權杖會出現在 MediaMTX 與 nginx 的存取紀錄裡，
+# 過期越快、萬一外流可用的時間越短。60 秒足夠瀏覽器完成一次 WHEP 協商。
+STREAM_TOKEN_EXPIRE_SECONDS = int(os.getenv("STREAM_TOKEN_EXPIRE_SECONDS", "60"))

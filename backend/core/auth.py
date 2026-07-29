@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 
-from core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_DAYS
+from core.config import (
+    SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_DAYS, STREAM_TOKEN_EXPIRE_SECONDS,
+)
 # SECRET_KEY：簽名用的密鑰（從 .env 來）
 # ALGORITHM：簽名演算法　ACCESS_TOKEN_EXPIRE_DAYS：token 有效天數
+# STREAM_TOKEN_EXPIRE_SECONDS：串流權杖有效秒數（預設 60）
 
 # ---------------------------------------------
 # 把資料包進 token 裡，簽名產出一串 token 字串
@@ -22,6 +25,24 @@ def create_access_token(data: dict):
 
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     # jwt.encode(資料, 密鑰, algorithm=演算法) → 把字典加簽名，產出 token 字串
+
+# ---------------------------------------------
+# 簽一張串流權杖：只能看指定的一個頻道，60 秒後作廢
+# ---------------------------------------------
+# 跟 create_access_token 放同一個檔案，是因為兩者用「同一把 SECRET_KEY」簽名——
+# 光看 token 外觀分不出是登入用還是串流用，所以才需要 scope 這個欄位當記號。
+# 兩邊門口都要檢查：驗票時沒有 scope=stream 就擋（防止拿一整天有效的登入 token 來看畫面）、
+# get_current_user 看到 scope=stream 也要擋（防止拿串流權杖去呼叫一般 API）。
+def create_stream_token(channel: str, sub: str):
+    expire = datetime.now(timezone.utc) + timedelta(seconds=STREAM_TOKEN_EXPIRE_SECONDS)
+    to_encode = {
+        "sub": sub,          # 誰要看（員編），出事查得到
+        "scope": "stream",   # 「僅限串流」的記號
+        "path": channel,     # 綁死哪一個頻道，拿去看別的頻道無效
+        "exp": expire,
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 # ---------------------------------------------
 # 把 token 拆開來看，如果是合法、沒過期的 token，回傳裡面的資料；如果是假的或過期的，回傳 None
