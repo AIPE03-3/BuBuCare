@@ -4,15 +4,22 @@ default_model_filename: "model.plan"
 max_batch_size: 0
 
 # ── 版本鎖（version pin）─────────────────────────────────────────────────────
-# 只 serve version 1。原因：platform=tensorrt_plan 要求每個版本目錄都有 model.plan
-# （本機 RTX 5060 Ti / Blackwell 專屬編出的 TensorRT 引擎）。目前只有 rt_detr/1/ 有
-# 已驗證可用的 model.plan；rt_detr/3/ 只有一份 model.onnx、沒有配套 .plan。
-# Triton 預設載「版本號最大」的版本(=3)，會去找 3/model.plan 找不到 → 整支 server
-# 啟動失敗、連 yolo_pose/action_transformer 兩顆一起陪葬(explicit 模式一顆倒全倒)。
-# 用 version_policy 明確鎖 v1，避免「載到沒測過/缺引擎的版本」。
-# 未來要上新版本：先為該版本目錄產出 Blackwell model.plan(不能只丟 onnx)，驗過後再把
-# versions: 改成新版本號(或用 latest{num_versions:1})；務必讓被 serve 的版本都有 .plan。
-version_policy: { specific { versions: [ 1 ] } }
+# platform=tensorrt_plan 要求「每個被 serve 的版本目錄」都有 model.plan（本機
+# RTX 5060 Ti / Blackwell 專屬編出的 TensorRT 引擎），光丟 model.onnx 沒有用。
+# Triton 預設載「版本號最大」的版本，只要有人丟一個編號更大、卻缺引擎的目錄進來，
+# 下次重啟就整支 server 起不來，連 yolo_pose/action_transformer 兩顆一起陪葬
+#（explicit 模式一顆倒全倒；2026-07-26 就是這樣炸過一次，記錄在 ../README.md）。
+# 所以這裡一律用 version_policy 明確鎖版，不要改成隱式載最大版。
+#
+# ⚠️ **下面這一行由 ai/model_deployment_agent.py 自動改寫，不要手動編輯**。
+#    部署新版： python ai/model_deployment_agent.py          （拉 ClearML 上標 best 的權重）
+#    切回上一版： python ai/model_deployment_agent.py --rollback
+#    舊版本目錄與其 model.plan 一律保留不刪，回滾才走得通。
+#
+# 版本沿革：
+#   v1  rtdetr-l.pt（COCO 80 類）—— 原始上線版本，保留當回滾點
+#   v2  2026-07-29 重訓產出（person/chair/sofa/bed/tv 5 類，mAP50=0.9912）
+version_policy: { specific { versions: [ 2 ] } }
 
 input [
   {

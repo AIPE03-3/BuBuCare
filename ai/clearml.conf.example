@@ -1,0 +1,40 @@
+# ClearML client 設定範本。複製到 `~/clearml.conf` 後把 <> 的部分換成自己的值。
+#
+#   cp ai/clearml.conf.example ~/clearml.conf
+#
+# ⚠️ **真的那份不要放進 repo**：它含 ClearML 的 access/secret 與 AWS 金鑰，
+#    護欄的明文金鑰規則（AKIA…）也會擋下來。ClearML SDK 固定讀 `~/clearml.conf`，
+#    放在專案裡它也不會讀，沒有理由讓它進版控。
+#
+# credentials 怎麼來：起好 server 之後開 http://localhost:8085 →
+# Settings → Workspace → Create new credentials，把產生的那組貼進來。
+# 首次登入的帳號來自 `ai/clearml_server_config/apiserver.conf` 的 fixed_users
+# （那個檔含明文密碼，同樣不進 repo；沒有它就走網頁自助註冊）。
+
+api {
+    # 這三個埠要與 ai/docker-compose-clearml.yml 對得上
+    web_server: http://localhost:8085
+    api_server: http://localhost:8008
+    files_server: http://localhost:8081
+    credentials {
+        "access_key" = "<your_clearml_access_key>"
+        "secret_key" = "<your_clearml_secret_key>"
+    }
+}
+
+sdk {
+    aws {
+        s3 {
+            # 模型權重會上傳到 S3，所以這裡要能寫。用 repo 根目錄 .env 裡的
+            # S3_RW_* 那組（讀寫），不是後端用的唯讀那組——兩組刻意分開＝最小權限，
+            # 理由見 CLAUDE.md 第三節。
+            region: "<your_aws_region>"
+            key: "<your_s3_rw_access_key_id>"
+            secret: "<your_s3_rw_secret_access_key>"
+            use_credentials_chain: false
+        }
+    }
+    development {
+        default_output_uri: ""
+    }
+}

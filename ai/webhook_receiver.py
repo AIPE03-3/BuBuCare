@@ -9,8 +9,11 @@ from clearml import Task  # 🎯 導入 Task 以便進行環境防禦配置
 # 確保路徑正確以載入 submit_task
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
-    # 🎯 🌟 [重要] 這裡的 trigger_clearml_training 呼叫會排隊發射
-    from submit_task import main as trigger_clearml_training
+    # 🎯 🌟 [重要] 這裡的 trigger_clearml_training 呼叫會排隊發射。
+    # ⚠️ 呼叫 submit() 而不是 submit_task.main()：main() 會去 parse sys.argv，
+    #    在 uvicorn 行程裡拿到的是 uvicorn 的參數，會直接 SystemExit。
+    #    （這支檔在 2026-07-29 之前 import 的是不存在的模組，等於整條點火是斷的。）
+    from submit_task import submit as trigger_clearml_training
 except ImportError as e:
     print(f"❌ 無法載入 submit_task 零件: {e}")
     trigger_clearml_training = None
@@ -18,7 +21,8 @@ except ImportError as e:
 app = FastAPI()
 
 ANNOTATION_COUNT = 0
-# 業界生產規格累積 50 張才點火；本機 sanity 可用環境變數 TRIGGER_THRESHOLD 暫調小（如 1~3）。
+# 累積幾則標註才點火。預設 50 是生產規格；本機驗證整條迴路時用環境變數調小
+#（例：TRIGGER_THRESHOLD=3），不要為了測試改這裡的預設值。
 TRIGGER_THRESHOLD = int(os.environ.get("TRIGGER_THRESHOLD", "50"))
 
 async def async_clearml_fire():

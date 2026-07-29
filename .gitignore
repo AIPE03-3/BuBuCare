@@ -73,6 +73,12 @@ runs/
 
 # 主動學習資料集（重訓用的圖與標註，機器產物）
 ai/active_learning_dataset/
+# ai/prepare_dataset.py 清洗後的訓練資料集（同樣是機器產物；跑一次就能重建）。
+# ⚠️ train/val 的切分名單 ai/dataset_splits/ 刻意**要**進版控——那是「這次的 mAP 是拿
+#    哪 18 張圖量的」的唯一證據，沒有它下一輪重訓的數字就沒得比。
+ai/detection_dataset/
+# data.yaml 的絕對路徑展開版（mlops_paths.resolve_data_yaml() 執行時生成）
+ai/data.runtime.yaml
 
 # agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
 ai/agent_shadow.jsonl
@@ -95,3 +101,9 @@ streaming/*.log
 streaming/*.zip
 streaming/*.crt
 streaming/*.key
+
+# submit_task.py 產生的訓練腳本副本（機器產物，原始碼是 ai/clearml_train_pipeline.py）。
+# 它是先前那份寫死 /home/rapubuntu/... 的 151 行檔的來源，不要再 commit 進來。
+ai/clearml_train_pipeline_final.py
+# model_deployment_agent.py 的下載暫存
+ai/temp_downloaded_model*
