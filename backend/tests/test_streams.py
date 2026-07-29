@@ -242,3 +242,42 @@ def test_rtsp_read_denied_when_env_unset(client, monkeypatch):
     ))
 
     assert res.status_code == 401
+
+
+# ════════════════════════════════════════════════════════
+# 反向檢查：串流權杖不可用於一般 API
+# ════════════════════════════════════════════════════════
+# 兩種票由同一把 SECRET_KEY 簽，外觀分不出來，所以兩邊門口都要檢查：
+#   /streams/auth   ：沒有 scope=stream → 擋（上面已測）
+#   get_current_user：有  scope=stream → 擋（以下）
+#
+# 實際危害不大（串流權杖沒有 role，admin 端點仍被 require_admin 擋在 403），
+# 但權杖會寫進 MediaMTX 與 nginx 的存取紀錄，log 外流時 60 秒內可被冒用。
+# 一張票只該能做一件事。
+
+def _stream_token_headers(client, auth_headers):
+    return {"Authorization": f"Bearer {get_stream_token(client, auth_headers)}"}
+
+
+def test_stream_token_rejected_by_normal_api(client, auth_headers):
+    res = client.get("/me", headers=_stream_token_headers(client, auth_headers))
+    assert res.status_code == 401
+
+
+def test_stream_token_rejected_by_events_api(client, auth_headers):
+    res = client.get("/events", headers=_stream_token_headers(client, auth_headers))
+    assert res.status_code == 401
+
+
+def test_stream_token_cannot_issue_another_token(client, auth_headers):
+    # 拿串流權杖再去換一張新的 → 擋。否則 60 秒的壽命可以無限續，等同永不過期
+    res = client.post("/streams/cam_in/token",
+                      headers=_stream_token_headers(client, auth_headers))
+    assert res.status_code == 401
+
+
+def test_login_token_still_works(client, auth_headers):
+    # 反向確認：正常的登入 token 沒被一起擋掉。
+    # AI 端啟動時就是用登入 JWT 打 GET /devices 抓鏡頭清單，這條路不能斷
+    res = client.get("/me", headers=auth_headers)
+    assert res.status_code == 200
