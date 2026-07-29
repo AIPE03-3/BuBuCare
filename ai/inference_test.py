@@ -201,6 +201,48 @@ def _video_fourcc(code):
     return fn(*code)
 
 
+def _write_frames_h264_pyav(frames, out_path, fps):
+    """用 PyAV（libx264）把 BGR 幀寫成瀏覽器播得動的 H.264 mp4；成功回 True。
+
+    為什麼需要這條路：OpenCV 的 `avc1` 能不能開，取決於那顆 OpenCV 帶的 ffmpeg 選到哪個
+    H.264 編碼器。WSL2 這台選到 `h264_v4l2m2m`（V4L2 硬體編碼器），而 WSL2 沒有那個裝置：
+
+        [h264_v4l2m2m] Could not find a valid device
+        [ERROR] Could not open codec h264_v4l2m2m ... Failed to initialize VideoWriter
+
+    於是每一支片段都靜靜地退到 `mp4v`（MPEG-4 Part 2）。檔案寫得出來、一般播放器也開得起來，
+    所以 log 全綠、S3 上傳成功、後端 presigned URL 回 200 —— **只有瀏覽器播不動**，
+    前端事件詳情頁的 <video> onError 之後只剩「案件片段影像」五個字。
+    2026-07-29 實測：`ai/clips/` 裡當時的 18 支片段全部都是 mpeg4，等於前端從來沒播成功過。
+
+    PyAV 是本專案既有依賴（`av_reader.py` 就在用），其 wheel 自帶 libx264，不需要系統裝
+    ffmpeg，也就不受上面那個硬體編碼器的影響。
+    """
+    import av  # 與 boto3 同樣 lazy import：這條路沒被走到的機器不必為它付出 import 成本
+
+    h, w = frames[0].shape[:2]
+    # yuv420p 要求邊長為偶數（_downscale_for_clip 已抹掉寬的奇數位，但 CLIP_WIDTH=0
+    # 不縮放時高仍可能是奇數）。多切掉一列/一行比讓編碼器整支失敗划算。
+    w -= w % 2
+    h -= h % 2
+    container = av.open(out_path, "w")
+    try:
+        stream = container.add_stream("libx264", rate=max(1, int(round(fps))))
+        stream.width, stream.height = w, h
+        stream.pix_fmt = "yuv420p"
+        # faststart：moov atom 搬到檔頭，瀏覽器不必下載完整支才能開始播。
+        stream.options = {"movflags": "+faststart", "preset": "veryfast", "crf": "23"}
+        for f in frames:
+            frame = av.VideoFrame.from_ndarray(f[:h, :w], format="bgr24")
+            for pkt in stream.encode(frame):
+                container.mux(pkt)
+        for pkt in stream.encode():   # flush 編碼器內部緩衝，少了會掉尾巴幾幀
+            container.mux(pkt)
+    finally:
+        container.close()
+    return True
+
+
 def write_event_clip(frames, out_path, fps, camera_id, s3_key=None):
     """把 frames 寫成 mp4；設了 CLIP_S3_BUCKET 就再上傳一份。
 
@@ -212,18 +254,32 @@ def write_event_clip(frames, out_path, fps, camera_id, s3_key=None):
     try:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         h, w = frames[0].shape[:2]
-        # avc1（H.264）瀏覽器 <video> 才播得動；有些 OpenCV build 沒帶 H.264 編碼器，
-        # 開不起來就退 mp4v（一般播放器仍可開，只是瀏覽器相容性差）。
+        # 編碼器三段式：avc1（OpenCV）→ libx264（PyAV）→ mp4v（最後手段）。
+        # 前兩段都是 H.264＝瀏覽器播得動；只有兩段都失敗才退 mp4v，並且**明講**退了，
+        # 因為 mp4v 的症狀是「一切正常但前端播不出來」，不印出來就查不到（見
+        # _write_frames_h264_pyav 的說明）。
+        codec_used = "avc1 (OpenCV)"
         writer = cv2.VideoWriter(out_path, _video_fourcc("avc1"), fps, (w, h))
-        if not writer.isOpened():
-            writer = cv2.VideoWriter(out_path, _video_fourcc("mp4v"), fps, (w, h))
-        if not writer.isOpened():
-            print(f"❌ [{camera_id}] 片段寫檔失敗：avc1 / mp4v 編碼器都開不起來 → {out_path}")
-            return
-        for f in frames:
-            writer.write(f)
-        writer.release()
-        print(f"🎬 [{camera_id}] 事件片段已寫入（{len(frames)} 幀 @ {fps:.1f}fps）：{out_path}")
+        if writer.isOpened():
+            for f in frames:
+                writer.write(f)
+            writer.release()
+        else:
+            writer.release()
+            try:
+                _write_frames_h264_pyav(frames, out_path, fps)
+                codec_used = "libx264 (PyAV)"
+            except Exception as e:
+                print(f"⚠️ [{camera_id}] PyAV libx264 寫檔失敗，改用 mp4v：{e}")
+                writer = cv2.VideoWriter(out_path, _video_fourcc("mp4v"), fps, (w, h))
+                if not writer.isOpened():
+                    print(f"❌ [{camera_id}] 片段寫檔失敗：avc1 / libx264 / mp4v 都開不起來 → {out_path}")
+                    return
+                for f in frames:
+                    writer.write(f)
+                writer.release()
+                codec_used = "mp4v ⚠️ 非 H.264，瀏覽器 <video> 播不動"
+        print(f"🎬 [{camera_id}] 事件片段已寫入（{len(frames)} 幀 @ {fps:.1f}fps，{codec_used}）：{out_path}")
 
         if not s3_key:
             return
