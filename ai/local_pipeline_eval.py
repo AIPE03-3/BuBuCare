@@ -85,6 +85,7 @@ from ultralytics import YOLO
 from pose_features import (
     DEFAULT_FEATURE_NORM, FEATURE_NORMS, empty_feature, is_feature_valid, pose_feature,
 )
+from person_tracks import PersonTrackStore, build_tracker
 
 _AI_DIR = Path(__file__).resolve().parent
 DEFAULT_POSE_WEIGHTS = _AI_DIR / "yolo11s-pose.pt"
@@ -408,10 +409,29 @@ def extract_pose_state(result, normal_height_reference, image_height,
         state["feature"] = feature
         state["valid"] = True
 
-    _, _, box_width, box_height = boxes_xywh[best_idx]
-    _, _, _, y2 = boxes_xyxy[best_idx]
+    state.update(person_geometry(keypoints, boxes_xywh[best_idx], boxes_xyxy[best_idx],
+                                 image_height, normal_height_reference,
+                                 occluded_height_ratio))
+    return state
+
+
+def person_geometry(keypoints, box_xywh, box_xyxy, image_height,
+                    height_reference, occluded_height_ratio=OCCLUDED_HEIGHT_RATIO):
+    """單一人物的幾何判斷：躺平（防線 A）、遮擋（防線 B）、軀幹角、寬高比。
+
+    單人與多人兩條路徑共用這一份——寫兩份的話，多人模式修了門檻而單人沒修
+    （或反過來），兩邊數字對不起來時完全查不出是哪邊的問題。
+
+    `height_reference` 是這個人站立時的框高。多人模式下每個 track 各有一份
+    （見 person_tracks.PersonTrack）；單人模式沿用全域那一個。
+    """
+    result = {"is_lying": False, "is_occluded": False, "body_angle": None,
+              "aspect_ratio": 0.0, "height_ratio": None, "y2_ratio": 0.0}
+
+    _, _, box_width, box_height = box_xywh
+    _, _, _, y2 = box_xyxy
     aspect_ratio = float(box_width / box_height) if box_height else 0.0
-    state["aspect_ratio"] = aspect_ratio
+    result["aspect_ratio"] = aspect_ratio
 
     # 躺平判斷（防線 A，:693-697）
     shoulder_x = (keypoints[LEFT_SHOULDER][0] + keypoints[RIGHT_SHOULDER][0]) / 2.0
@@ -420,21 +440,21 @@ def extract_pose_state(result, normal_height_reference, image_height,
     hip_y = (keypoints[LEFT_HIP][1] + keypoints[RIGHT_HIP][1]) / 2.0
     if shoulder_x != 0 and hip_x != 0:  # xyn 為 0 代表該點沒抓到
         angle = float(np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x))))
-        state["body_angle"] = angle
+        result["body_angle"] = angle
         if angle < LYING_ANGLE_DEG:
-            state["is_lying"] = True
+            result["is_lying"] = True
     if aspect_ratio > LYING_ASPECT_RATIO:
-        state["is_lying"] = True
+        result["is_lying"] = True
 
     # 遮擋判斷（防線 B，:701-702）：人突然「變矮」且位置偏下 → 可能倒在遮蔽物後面
-    if normal_height_reference is not None:
+    if height_reference is not None:
         # 原始數值一併留下，讓離線掃描能重算不同門檻，不必為了試一個參數就重跑推論
-        state["height_ratio"] = float(box_height / normal_height_reference)
-        state["y2_ratio"] = float(y2 / image_height) if image_height else 0.0
-        if state["height_ratio"] < occluded_height_ratio and state["y2_ratio"] > 0.5:
-            state["is_occluded"] = True
+        result["height_ratio"] = float(box_height / height_reference)
+        result["y2_ratio"] = float(y2 / image_height) if image_height else 0.0
+        if result["height_ratio"] < occluded_height_ratio and result["y2_ratio"] > 0.5:
+            result["is_occluded"] = True
 
-    return state
+    return result
 
 
 def run_act(act_model, window, device):
@@ -446,6 +466,96 @@ def run_act(act_model, window, device):
         pred_class = int(torch.argmax(prob, dim=1).item())
         confidence = float(prob[0][pred_class].item())
     return pred_class, confidence
+
+
+def run_act_batch(act_model, windows, device):
+    """多人版：一次推論所有人的視窗。回傳 [(pred_class, confidence), …]。
+
+    AcT 只有 71k 參數，N 個人合成一批的成本跟單人幾乎一樣——
+    逐人呼叫 N 次才是浪費（每次都要付一趟 host↔device 搬運）。
+    """
+    if not windows:
+        return []
+    batch = torch.from_numpy(np.concatenate(windows, axis=0)).to(device)
+    with torch.no_grad():
+        prob = torch.softmax(act_model(batch), dim=1)
+        classes = torch.argmax(prob, dim=1)
+        confidences = prob.gather(1, classes[:, None]).squeeze(1)
+    return list(zip(classes.cpu().tolist(), confidences.cpu().tolist()))
+
+
+def observe_tracks(result, tracker, store, image_height, occluded_height_ratio,
+                   feature_norm, frame_index):
+    """跑追蹤器、逐人抽特徵與幾何，更新每人狀態。
+
+    回傳 [(PersonTrack, 幾何 dict, box_xyxy), …]，只含這一幀有看到的人。
+    """
+    if result.boxes is None or len(result.boxes) == 0 or result.keypoints is None:
+        store.update({}, frame_index)
+        return []
+
+    tracked = tracker.update(result.boxes.cpu())
+    if len(tracked) == 0:
+        store.update({}, frame_index)
+        return []
+
+    keypoints_all = result.keypoints.xyn.cpu().numpy()
+    boxes_xywh = result.boxes.xywh.cpu().numpy()
+    boxes_xyxy = result.boxes.xyxy.cpu().numpy()
+    boxes_xyxyn = result.boxes.xyxyn.cpu().numpy()
+
+    observations, geometry_by_id, box_by_id = {}, {}, {}
+    for row in tracked:
+        # BYTETracker 回傳 [x1,y1,x2,y2, track_id, score, cls, det_idx]，
+        # 最後一欄是原始偵測索引——靠它把 track 對回同一個人的關鍵點
+        track_id, detection_index = int(row[4]), int(row[7])
+        if detection_index >= len(keypoints_all):
+            continue
+        keypoints = keypoints_all[detection_index]
+        feature = pose_feature(keypoints, boxes_xyxyn[detection_index], feature_norm)
+        existing = store.tracks.get(track_id)
+        geometry = person_geometry(
+            keypoints, boxes_xywh[detection_index], boxes_xyxy[detection_index],
+            image_height, existing.height_reference if existing else None,
+            occluded_height_ratio,
+        )
+        observations[track_id] = {
+            "feature": feature,
+            "box_height": float(boxes_xywh[detection_index][3]),
+            "is_lying": geometry["is_lying"],
+            "valid": is_feature_valid(feature),
+        }
+        geometry_by_id[track_id] = geometry
+        box_by_id[track_id] = boxes_xyxy[detection_index]
+
+    seen = store.update(observations, frame_index)
+    return [(track, geometry_by_id[track.track_id], box_by_id[track.track_id])
+            for track in seen]
+
+
+def evaluate_tracks(act_model, observed, device, mode):
+    """逐人跑 AcT 與觸發判斷。回傳 [(PersonTrack, 幾何, box, 判斷 dict), …]。"""
+    ready = [(index, track) for index, (track, _, _) in enumerate(observed)
+             if track.window_array() is not None]
+    predictions = run_act_batch(act_model, [track.window_array() for _, track in ready], device)
+
+    verdict_by_index = {}
+    for (index, _), (pred_class, confidence) in zip(ready, predictions):
+        verdict_by_index[index] = (pred_class, confidence)
+
+    results = []
+    for index, (track, geometry, box) in enumerate(observed):
+        pred_class, confidence = verdict_by_index.get(index, (1, 0.0))
+        should_trigger, _ = decide_trigger(geometry, len(track.window), pred_class,
+                                           confidence, track.has_seen, mode=mode)
+        if should_trigger:
+            track.latched = True
+        results.append((track, geometry, box, {
+            "pred_class": pred_class,
+            "act_confidence": confidence,
+            "should_trigger": should_trigger,
+        }))
+    return results
 
 
 def decide_trigger(pose_state, window_len, pred_class, act_confidence, has_seen_person,
@@ -515,6 +625,30 @@ def draw_overlay(frame, info):
     return frame
 
 
+def draw_person_labels(frame, evaluated):
+    """多人模式：每個人各自標框、ID 與判斷依據。
+
+    重點是看得出「系統把誰當成誰」——單人模式最大的問題就是主要人物在幀之間
+    偷偷換人而畫面上完全看不出來。標了 ID 之後，換人一眼就發現。
+    """
+    for track, geometry, box, verdict in evaluated:
+        x1, y1, x2, y2 = (int(v) for v in box[:4])
+        color = COLOR_FALL if (verdict["should_trigger"] or track.latched) else COLOR_NORMAL
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+        flags = "".join([" L" if geometry["is_lying"] else "",
+                         " O" if geometry["is_occluded"] else ""])
+        label = (f"#{track.track_id} "
+                 f"{'FALL' if verdict['pred_class'] == 0 else 'norm'} "
+                 f"{verdict['act_confidence']:.2f} "
+                 f"[{len(track.window)}/{WINDOW_SIZE}]{flags}")
+        (text_w, text_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(frame, (x1, max(0, y1 - text_h - 8)), (x1 + text_w + 6, y1), color, -1)
+        cv2.putText(frame, label, (x1 + 3, max(text_h, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
+    return frame
+
+
 def open_source(source):
     """影片檔或攝影機索引。回傳 (capture, 是否為攝影機)。"""
     if str(source).isdigit():
@@ -566,6 +700,9 @@ def main():
     parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
                         help="AcT 特徵正規化基準：image=整張畫面（預設、現行）／bbox=人物框。"
                              "⚠ 必須跟權重訓練時用的一致，否則輸出無意義")
+    parser.add_argument("--multi-person", action="store_true",
+                        help="追蹤畫面裡所有人，每人各一個 30 幀視窗與身高基準。"
+                             "⚠ 正式管線目前是單人（只看最近最大的那個），這是對照組")
     args = parser.parse_args()
 
     pose_path, act_path = Path(args.pose_weights), Path(args.act_weights)
@@ -584,10 +721,12 @@ def main():
     # 跑的是哪一組，看到誤報就以為改善無效。
     matches_production = (args.trigger_mode == DEFAULT_TRIGGER_MODE
                           and args.occ_height == OCCLUDED_HEIGHT_RATIO
-                          and args.feature_norm == DEFAULT_FEATURE_NORM)
+                          and args.feature_norm == DEFAULT_FEATURE_NORM
+                          and not args.multi_person)
     print(f"🚀 裝置：{device}")
     print(f"⚙️  策略 {args.trigger_mode}｜遮擋高度門檻 {args.occ_height}"
           f"｜特徵正規化 {args.feature_norm}"
+          f"｜{'多人追蹤' if args.multi_person else '單人（最近最大者）'}"
           f"　←　{'＝正式管線現況' if matches_production else '⚠ 與正式管線不同（自訂對照組）'}")
     print(f"📦 載入 pose：{pose_path.name}｜AcT：{act_path.name}")
     pose_model = YOLO(str(pose_path))
@@ -635,6 +774,12 @@ def main():
         )
 
     frame_window = deque(maxlen=WINDOW_SIZE)
+    # 多人模式才建追蹤器。單人模式下這兩個是 None，整條舊路徑一行都沒動
+    tracker = build_tracker() if args.multi_person else None
+    track_store = PersonTrackStore(WINDOW_SIZE) if args.multi_person else None
+    evaluated = []
+    window_len = 0
+    driver_id = ""
     frame_count = start_frame
     processed_count = 0
     records = []
@@ -682,41 +827,80 @@ def main():
                         # 身高基準也一起重置：新場景的人距離鏡頭可能完全不同，
                         # 沿用舊基準會讓遮擋判斷（h/normal_h）整段失準
                         normal_height_reference = None
+                        # 多人模式連 track 一起丟：剪接後的 track_id 跟剪接前
+                        # 沒有對應關係，留著等於把兩個不同的人接成同一個
+                        if track_store is not None:
+                            track_store.reset()
                 previous_hist = current_hist
 
             image_height = frame.shape[0]
             result = pose_model(frame, verbose=False, conf=args.conf)[0]
-            pose_state = extract_pose_state(result, normal_height_reference, image_height,
-                                            args.occ_height, args.feature_norm)
 
-            # 身高基準取前期幾幀，之後拿來判斷「突然變矮」（遮擋防線的分母）。
-            # 正式管線用 10<frame_count<40 的原始幀號（:689），跳幀後約等於第 5~20 個處理幀。
-            # 這裡改用處理幀計數：--start 跳著播時原始幀號早就超過 40，用它會永遠取不到基準。
-            if normal_height_reference is None and 5 <= processed_count <= 20 and pose_state["valid"]:
-                if result.boxes is not None and len(result.boxes) > 0:
-                    best_idx = select_main_person(
-                        result.boxes.conf.cpu().numpy(), result.boxes.xywh.cpu().numpy()
-                    )
-                    if best_idx >= 0:
-                        normal_height_reference = float(result.boxes.xywh.cpu().numpy()[best_idx][3])
+            if tracker is not None:
+                # 多人：每個人各自一份視窗、身高基準與閂鎖，不再有「主要人物」
+                evaluated = evaluate_tracks(
+                    act_model,
+                    observe_tracks(result, tracker, track_store, image_height,
+                                   args.occ_height, args.feature_norm, processed_count),
+                    device, args.trigger_mode,
+                )
+                # 逐幀的彙總欄位取「最像跌倒的那個人」——CSV 與指標維持一列一幀，
+                # 只是多一欄 track_id 說明是誰造成的
+                driver = max(evaluated, key=lambda item: (item[3]["should_trigger"],
+                                                          item[3]["pred_class"] == 0,
+                                                          item[3]["act_confidence"]),
+                             default=None)
+                if driver is None:
+                    pose_state = {"is_lying": False, "is_occluded": False, "body_angle": None,
+                                  "aspect_ratio": 0.0, "valid": False, "best_conf": 0.0,
+                                  "person_count": len(track_store.tracks), "feature": None}
+                    pred_class, act_confidence, should_trigger = 1, 0.0, False
+                    window_len, driver_id = 0, ""
+                else:
+                    track, geometry, _, verdict = driver
+                    pose_state = dict(geometry, valid=track.has_seen, best_conf=0.0,
+                                      person_count=len(evaluated))
+                    pred_class = verdict["pred_class"]
+                    act_confidence = verdict["act_confidence"]
+                    should_trigger = verdict["should_trigger"]
+                    window_len, driver_id = len(track.window), track.track_id
+                has_seen_person = has_seen_person or any(t.has_seen for t in track_store.tracks.values())
+            else:
+                driver_id = ""
+                pose_state = extract_pose_state(result, normal_height_reference, image_height,
+                                                args.occ_height, args.feature_norm)
 
-            if pose_state["valid"]:
-                has_seen_person = True
-            frame_window.append(pose_state["feature"])
+                # 身高基準取前期幾幀，之後拿來判斷「突然變矮」（遮擋防線的分母）。
+                # 正式管線用 10<frame_count<40 的原始幀號（:689），跳幀後約等於第 5~20 個處理幀。
+                # 這裡改用處理幀計數：--start 跳著播時原始幀號早就超過 40，用它會永遠取不到基準。
+                if normal_height_reference is None and 5 <= processed_count <= 20 and pose_state["valid"]:
+                    if result.boxes is not None and len(result.boxes) > 0:
+                        best_idx = select_main_person(
+                            result.boxes.conf.cpu().numpy(), result.boxes.xywh.cpu().numpy()
+                        )
+                        if best_idx >= 0:
+                            normal_height_reference = float(result.boxes.xywh.cpu().numpy()[best_idx][3])
 
-            pred_class, act_confidence = 1, 0.0
-            if len(frame_window) == WINDOW_SIZE:
-                pred_class, act_confidence = run_act(act_model, frame_window, device)
+                if pose_state["valid"]:
+                    has_seen_person = True
+                frame_window.append(pose_state["feature"])
 
-            should_trigger, _ = decide_trigger(
-                pose_state, len(frame_window), pred_class, act_confidence, has_seen_person,
-                mode=args.trigger_mode,
-            )
+                pred_class, act_confidence = 1, 0.0
+                if len(frame_window) == WINDOW_SIZE:
+                    pred_class, act_confidence = run_act(act_model, frame_window, device)
+
+                should_trigger, _ = decide_trigger(
+                    pose_state, len(frame_window), pred_class, act_confidence, has_seen_person,
+                    mode=args.trigger_mode,
+                )
+                window_len = len(frame_window)
+
             if should_trigger:
                 trigger_count += 1
                 if not ever_detected_fall:
+                    who = f"｜track #{driver_id}" if driver_id != "" else ""
                     print(f"🚨 第 {frame_count} 幀觸發跌倒｜AcT conf={act_confidence:.2f}"
-                          f"｜lying={pose_state['is_lying']}｜occluded={pose_state['is_occluded']}")
+                          f"｜lying={pose_state['is_lying']}｜occluded={pose_state['is_occluded']}{who}")
                 ever_detected_fall = True
 
             # 逐幀留底給指標計算與 CSV。evaluable＝視窗滿且看過人，
@@ -728,7 +912,7 @@ def main():
                 # exclude 模式：剪接後 3 秒內視窗仍混著上一段的姿態，這種幀的判斷
                 # 結果不能代表系統能力，排除在指標之外（比清空視窗誠實——清空會製造
                 # 一段 AcT 完全不作用的空窗，反而砍掉真跌倒，實測 F1 更差）
-                "evaluable": (len(frame_window) == WINDOW_SIZE and has_seen_person
+                "evaluable": (window_len == WINDOW_SIZE and has_seen_person
                               and not (cut_handling == "exclude" and last_cut_frame is not None
                                        and frame_count - last_cut_frame <= cut_pollution_span)),
                 "act_fall": pred_class == 0,
@@ -740,6 +924,8 @@ def main():
                 "pose_conf": round(pose_state["best_conf"], 4),
                 "body_angle": round(pose_state["body_angle"], 1) if pose_state["body_angle"] is not None else "",
                 "aspect_ratio": round(pose_state["aspect_ratio"], 3),
+                # 多人模式：這一幀的彙總數字是哪個 track 造成的（單人模式為空）
+                "track_id": driver_id,
             })
 
             # 顯示用的鎖存：正式管線觸發後永久停在 FALL（ever_detected_fall），
@@ -747,7 +933,7 @@ def main():
             latched_fall = ever_detected_fall and not args.no_latch
             if should_trigger or latched_fall:
                 status_text, color, draw_border = "FALL DETECTED!", COLOR_FALL, True
-            elif len(frame_window) < WINDOW_SIZE:
+            elif window_len < WINDOW_SIZE:
                 status_text, color, draw_border = "Buffering...", COLOR_BUFFER, False
             else:
                 status_text, color, draw_border = "Normal", COLOR_NORMAL, True
@@ -765,7 +951,7 @@ def main():
                 "draw_border": draw_border,
                 "act_label": "FALL" if pred_class == 0 else "normal",
                 "act_confidence": act_confidence,
-                "window_len": len(frame_window),
+                "window_len": window_len,
                 "person_count": pose_state["person_count"],
                 "best_conf": pose_state["best_conf"],
                 "angle_text": f"{angle:.0f}deg" if angle is not None else "n/a",
@@ -779,6 +965,8 @@ def main():
                              f"{int(frame_count / source_fps) % 60:02d}",
                 "in_truth_segment": in_any_segment(frame_count, segments) if segments else False,
             })
+            if tracker is not None:
+                annotated = draw_person_labels(annotated, evaluated)
 
             if writer:
                 writer.write(annotated)
