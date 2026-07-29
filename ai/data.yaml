@@ -18,11 +18,24 @@ path: detection_dataset
 train: train.txt
 val: val.txt
 
-# 類別映射表：與 Label Studio 的標籤、ai/inference_to_labelstudio_sdk.py 的
-# ENV_LABEL_TO_YOLO 三邊必須一致，改一邊就要三邊一起改。
+# 類別映射表 —— **這裡是唯一真相**，ai/inference_to_labelstudio_sdk.py 會讀這份去對
+# Label Studio 的標籤名，不要在程式裡另外寫一份（上游就是寫死在腳本裡才會對不上）。
+#
+# ⚠️ 這五個名字**不是**上游 albert 那份 data.yaml 的 wheelchair/slipper/wire/obstacle/
+#    walker。照抄他那份會讓整個重訓的類別語意全錯。實際比對這台的資料：
+#
+#      | class id       |   0    |   1   |   2  |  3  |   4   |
+#      | Label Studio   | person | chair | sofa | bed |  tv   |  85 / 92 / 5 / 0 / 179
+#      | 本地標註檔統計 |   86   |  92   |   5  |  0  |  179  |
+#
+#    兩邊逐類對得上（person 差 1 是因為本地有 90 張可用圖、LS 只有 89 個 task），
+#    可以確定本地標註的 class id 是照這台 Label Studio 專案
+#    `Fall_Detection_Active_Learning` 的標籤順序編的，不是照上游那套危害物清單。
+#
+# ⚠️ class 3（bed）目前一個標註都沒有 —— 模型不會學到床。要它學會就得先去標。
 names:
-  0: wheelchair
-  1: slipper
-  2: wire
-  3: obstacle
-  4: walker
+  0: person
+  1: chair
+  2: sofa
+  3: bed
+  4: tv
