@@ -46,18 +46,18 @@ MediaMTX 內建播放頁 `http://<host>:8889/cam_in` 直接可播）。
 
 ### 1. 只擋觀看，推流放行
 
-`authHTTPExclude` 列入 `action: publish`。理由：手機 Larix、albert 的 ffmpeg、
+`authHTTPExclude` 列入 `action: publish`。理由：手機 Larix、AI 端的 ffmpeg、
 `start-fake-camera.ps1` / `start-fake-detect.ps1` 全都不需改設定，demo 前不必重設三支手機。
 代價：同網段可推垃圾畫面蓋掉 `cam_out`，demo 情境風險可接受。
 
 ### 2. AI 端以 RTSP 讀取 `cam_in`，走專屬帳密
 
-albert 的推論程式「讀 `cam_in` → 畫框 → 推 `cam_out`」，其中**讀**走 RTSP、非 WebRTC，
+AI 端的推論程式「讀 `cam_in` → 畫框 → 推 `cam_out`」，其中**讀**走 RTSP、非 WebRTC，
 不可能持有瀏覽器才拿得到的短命權杖。若不處理，開啟驗證即中斷整條偵測管線。
 
 做法：`/streams/auth` 對 `protocol == "rtsp" and action == "read"` 走另一條分支，
 比對 `.env` 的 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`（`hmac.compare_digest` 比對，避免時序側漏）。
-albert 端只需把讀取網址改為 `rtsp://<帳號>:<密碼>@<host>:8554/cam_in`，一行。
+AI 端只需把讀取網址改為 `rtsp://<帳號>:<密碼>@<host>:8554/cam_in`，一行。
 他的**推流**不受影響（決定 1 已放行 publish）。
 
 未設定 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS` 時一律拒絕（fail-closed）。
@@ -194,7 +194,7 @@ authHTTPExclude:
 ### 串流腳本
 
 `streaming/start-fake-detect.ps1` 也是 RTSP 讀取端（讀 `cam_in` 畫紅框推 `cam_out`），
-與 albert 的程式同樣需在讀取網址帶上 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`。
+與 AI 端的程式同樣需在讀取網址帶上 `STREAM_RTSP_USER` / `STREAM_RTSP_PASS`。
 `start-fake-camera.ps1` 是 publish，不受影響。
 
 ### nginx
@@ -272,7 +272,7 @@ demo 現場後端不可用時，將 `mediamtx.yml` 的 `authMethod` / `authHTTPA
 | MediaMTX 拉取真攝影機是否受驗證影響 | `source: rtsp://...` 是 MediaMTX 主動外連，推論不受 auth 管轄，未實測 | 攝影機到位後 |
 | 瀏覽器 CORS 預檢是否放行 `Authorization` | 多帶該 header 會觸發 OPTIONS 預檢，傑雅版實測可行但設定不同 | 立即 |
 | 設定檔熱重載中斷連線 | 已知行為，驗證順序須排定，不可邊測邊改 | — |
-| AI 端帶帳密後能否讀到 `cam_in` | 我方以 `start-fake-detect.ps1` 先行驗證同一條路徑；albert 端須自行確認 | 立即（我方）／待 albert 回報 |
+| AI 端帶帳密後能否讀到 `cam_in` | 我方以 `start-fake-detect.ps1` 先行驗證同一條路徑；AI 端須自行確認 | 立即（我方）／待 AI 端回報 |
 
 無攝影機期間可用 `start-fake-camera.ps1` 推 mp4 完成除「真攝影機」外的全部驗證。
 
