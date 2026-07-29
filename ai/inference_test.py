@@ -151,6 +151,10 @@ _CLIP_POST_SEC = float(cfg("CLIP_POST_SEC", "5"))
 # 接真攝影機（worker 一跑好幾天）等於這個指示燈失效。實測用手機當攝影機時複現。
 # 也不能純粹看當下那一幀：偵測會逐幀跳動，紅框會閃爍到無法判讀。故用「保持數秒」。
 _FALL_DISPLAY_HOLD_SEC = float(cfg("FALL_DISPLAY_HOLD_SEC", "10"))
+# 多人畫面時「逐人幾何判定」log 的最小間隔（秒）。防線 A/B 逐人化後，現場需要知道
+# 被判倒地的是誰、是不是又落在最大框那位身上；但逐幀印會刷屏（每秒十幾行），故節流。
+# 單人畫面完全不印，log 乾淨度與改動前相同。
+_MULTI_LOG_MIN_GAP_SEC = float(cfg("MULTI_PERSON_LOG_SEC", "3"))
 # 緩衝存的是「原始幀」（塞在跳幀之前），1080p 全解析度下前後 10 秒每台相機要吃 ~1.8GB，
 # 多路併發直接 OOM。故片段緩衝獨立降寬——推論吃的仍是原圖，完全不受影響。
 # H.264 要求邊長為偶數，故抹掉奇數位。設 0＝不縮放（記憶體自負）。
@@ -370,6 +374,7 @@ def camera_worker(camera_id, video_source, detect_url=None):
     frame_count = 0
     normal_h_reference = None
     triton_down_warned = False  # Triton 斷線降級提示只印一次，避免逐幀刷屏
+    _multi_log_t = 0.0          # 上次印「多人逐人判定」的時刻（節流用，見下方主迴圈）
 
     # ── FPS 量測（只印 log，不影響推論邏輯）──────────────────────────────
     # 每 FPS_LOG_EVERY 個「實際處理的幀」印一次區間實測 FPS。量的是「經過 Triton 三顆
@@ -573,9 +578,17 @@ def camera_worker(camera_id, video_source, detect_url=None):
                     
         current_pose_feat = np.zeros(34, dtype=np.float32)
         is_current_frame_valid = False
-        is_physically_lying = False  
+        is_physically_lying = False
         is_occluded_fall = False
         is_whitespace = False
+        # 多人獨立跌倒判定：防線 A/B 逐人各算一次的結果。
+        #   person_fall_flags: [(idx, is_lying_i, is_occluded_i)]，保留每個人的旗標，
+        #     供畫面標註（本次）與之後的前端逐人廣播（尚未做）使用。
+        #   fall_person_boxes: 被判定跌倒者的 xyxy 框，Step D 拿去畫紅框。
+        # 兩個都在這裡初始化（而不是在 results_pose 分支裡），確保沒偵測到人、或下面
+        # try 落到 except 時，後面的 any()/畫圖仍拿得到一個空 list。
+        person_fall_flags = []
+        fall_person_boxes = []
 
         if results_pose and len(results_pose[0].keypoints) > 0:
             kpts_obj = results_pose[0].keypoints
@@ -586,46 +599,101 @@ def camera_worker(camera_id, video_source, detect_url=None):
                 boxes_xyxy = results_pose[0].boxes.xyxy.cpu().numpy()
                 
                 if kpts_data.ndim == 3 and kpts_data.shape[0] > 0:
-                    best_idx = -1; max_score = -1.0  
+                    # ── 第 1 趟：挑出 best_idx（只給 AcT 用），順便收齊「通過門檻的所有人」──
+                    # valid_idxs 的篩選條件與原本挑 best_idx 的條件一字不差，再加一個
+                    # `idx < len(boxes_xyxy)`：防線 B 要用 xyxy，四個陣列
+                    #（kpts_data / conf_data / boxes_data / boxes_xyxy）索引必須同時有效才收。
+                    # 第 2 趟直接吃這份名單，避免兩處篩選條件日後各自漂移。
+                    best_idx = -1; max_score = -1.0
+                    valid_idxs = []
                     for idx in range(kpts_data.shape[0]):
                         if idx < len(conf_data) and conf_data[idx] < 0.45: continue
-                        if idx < len(boxes_data):
+                        if idx < len(boxes_data) and idx < len(boxes_xyxy):
+                            valid_idxs.append(idx)
                             _, _, w_box, h_box = boxes_data[idx]
                             score = conf_data[idx] * (w_box * h_box)
                             if score > max_score: max_score = score; best_idx = idx
-                    
+
                     if best_idx != -1:
-                        kp = kpts_data[best_idx]  
+                        # ── best_idx 專屬：餵 AcT 的 34 維特徵 ──────────────────────
+                        # AcT 時序**刻意維持單人序列**：仍只餵 best_idx 一個人、單一 30 幀
+                        # window、單次 Triton 呼叫。真正的逐人時序要有 tracker 才做得到
+                        #（每條 track 各自一個 window），那是另一個題目。
+                        # 空骨架防呆 np.all(temp_feat == 0) 與 last_pose_feat 補幀是綁在
+                        #「餵 AcT 的那一個人」身上的邏輯，不套用到其他人。
+                        kp = kpts_data[best_idx]
                         temp_feat = kp[:17, :2].flatten()
                         if not np.all(temp_feat == 0):
                             current_pose_feat = temp_feat.copy(); last_pose_feat = current_pose_feat.copy()
-                            has_seen_person = True; is_current_frame_valid = True  
-                        
+                            has_seen_person = True; is_current_frame_valid = True
+
                         _, _, w_box, h_box = boxes_data[best_idx]
-                        x1, y1, x2, y2 = boxes_xyxy[best_idx]
+                        # normal_h_reference：**維持單一參考值、全員共用**（這是選擇，不是漏改）。
+                        #   為什麼不逐人各自校準：參考值的語意是「這個人站著時的正常身高」，
+                        #   要累積它就得先知道「跨幀的哪個框是同一個人」＝ tracker。YOLO 的偵測
+                        #   索引每幀都可能換人，照索引存參考值等於把 A 的身高記到 B 頭上，
+                        #   比共用單一值更錯。本次範圍明確不引入 tracker。
+                        #   代價（要知道）：離鏡頭遠、或本來就矮的人 h_box 天生小，比值可能
+                        #   直接低於 0.70 而誤判。這是 NEXT_STAGE.md 第 9 節「缺陷三」那個
+                        #   既有問題的擴大版（參考值只校準一次、換來源不重設），不是新機制。
+                        #   既有的 `y2 > img_h*0.5` 條件仍在，擋掉一部分「遠處站著的人」
+                        #  （框底落在畫面上半）。真要修，要跟缺陷三一起改，不在本次範圍。
                         if normal_h_reference is None and frame_count > 10 and frame_count < 40: normal_h_reference = h_box
-                            
-                        # 跌倒防線 A
-                        try:
-                            shoulder_x = (kp[5][0] + kp[6][0]) / 2.0; shoulder_y = (kp[5][1] + kp[6][1]) / 2.0
-                            hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + kp[12][1]) / 2.0
-                            if not (shoulder_x == 0 or hip_x == 0):
-                                body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
-                                # body_angle 是「肩→髖」向量與水平線的夾角，值域 0~180°：
-                                #   站立 → 髖在肩正下方 → 約 90°
-                                #   躺著、頭朝右 → 約 0°
-                                #   躺著、頭朝左 → 約 180°   ← 只寫 `< 40` 會整個漏掉這一半
-                                # 取 min(a, 180-a) 換算成「離水平多遠」，兩個躺向都涵蓋。
-                                # 門檻 40 沒動：頭朝右那半的判定與改動前完全相同。
-                                # 實測抓到的：手機當攝影機時量到 167~177°，體角判定形同虛設，
-                                # 全靠長寬比在撐；人朝鏡頭方向倒下（人形框不會變寬）就會漏報。
-                                tilt_from_horizontal = min(body_angle, 180.0 - body_angle)
-                                if tilt_from_horizontal < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
-                        except Exception: pass
-                            
-                        # 跌倒防線 B (幾何遮擋防禦)
-                        if normal_h_reference is not None:
-                            if (h_box / normal_h_reference) < 0.70 and y2 > (img_h * 0.5): is_occluded_fall = True
+
+                        # ── 第 2 趟：防線 A / B 對「每一個通過門檻的人」各算一次 ──────
+                        # 原本兩道防線只算 best_idx（信心×面積最大的那個人）一個人，畫面裡
+                        # 有兩個人、而跌倒的不是面積最大那位時（照顧者站著、被照顧者倒在
+                        # 地上所以框小），兩個旗標都不會被設起來 → 整起事件不觸發，是漏報。
+                        # 公式與門檻完全照舊，只是把 best_idx 換成逐人的 idx。
+                        for idx in valid_idxs:
+                            kp_i = kpts_data[idx]
+                            _, _, w_box_i, h_box_i = boxes_data[idx]
+                            x1, y1, x2, y2 = boxes_xyxy[idx]
+                            is_lying_i = False
+                            is_occluded_i = False
+
+                            # 跌倒防線 A
+                            try:
+                                shoulder_x = (kp_i[5][0] + kp_i[6][0]) / 2.0; shoulder_y = (kp_i[5][1] + kp_i[6][1]) / 2.0
+                                hip_x = (kp_i[11][0] + kp_i[12][0]) / 2.0; hip_y = (kp_i[11][1] + kp_i[12][1]) / 2.0
+                                if not (shoulder_x == 0 or hip_x == 0):
+                                    body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
+                                    # body_angle 是「肩→髖」向量與水平線的夾角，值域 0~180°：
+                                    #   站立 → 髖在肩正下方 → 約 90°
+                                    #   躺著、頭朝右 → 約 0°
+                                    #   躺著、頭朝左 → 約 180°   ← 只寫 `< 40` 會整個漏掉這一半
+                                    # 取 min(a, 180-a) 換算成「離水平多遠」，兩個躺向都涵蓋。
+                                    # 門檻 40 沒動：頭朝右那半的判定與改動前完全相同。
+                                    # 實測抓到的：手機當攝影機時量到 167~177°，體角判定形同虛設，
+                                    # 全靠長寬比在撐；人朝鏡頭方向倒下（人形框不會變寬）就會漏報。
+                                    tilt_from_horizontal = min(body_angle, 180.0 - body_angle)
+                                    if tilt_from_horizontal < 40.0 or (w_box_i / h_box_i) > 1.25: is_lying_i = True
+                            except Exception: pass
+
+                            # 跌倒防線 B (幾何遮擋防禦)
+                            if normal_h_reference is not None:
+                                if (h_box_i / normal_h_reference) < 0.70 and y2 > (img_h * 0.5): is_occluded_i = True
+
+                            person_fall_flags.append((idx, is_lying_i, is_occluded_i))
+                            if is_lying_i or is_occluded_i:
+                                fall_person_boxes.append((x1, y1, x2, y2))
+
+                        # 迴圈外的兩個旗標＝逐人結果的 any()：任何一個人被判倒地就算數。
+                        # 下游（AcT 幾何模擬分支、終極決策中樞、route_by_confidence 的
+                        # is_occluded_fall 參數）語意不變，仍是「這一幀這台相機有沒有人倒地」。
+                        is_physically_lying = any(l for _, l, _ in person_fall_flags)
+                        is_occluded_fall = any(o for _, _, o in person_fall_flags)
+
+                        # 多人時把逐人判定印出來（節流：最多每 _MULTI_LOG_MIN_GAP_SEC 一次）。
+                        # 單人畫面完全不印，維持原本的 log 乾淨度；這條在現場查
+                        #「到底是誰被判倒地、是不是又是最大框那位」時是唯一的線索。
+                        if len(valid_idxs) > 1 and (is_physically_lying or is_occluded_fall):
+                            _now_log = time.time()
+                            if _now_log - _multi_log_t >= _MULTI_LOG_MIN_GAP_SEC:
+                                _multi_log_t = _now_log
+                                _flagged = [(i, int(l), int(o)) for i, l, o in person_fall_flags if l or o]
+                                print(f"👥 [{camera_id}] 逐人幾何判定：{len(valid_idxs)} 人通過門檻，"
+                                      f"best_idx={best_idx}（餵 AcT）｜判定倒地 (idx, 防線A, 防線B)={_flagged}")
 
             except Exception: pass
 
@@ -774,6 +842,14 @@ def camera_worker(camera_id, video_source, detect_url=None):
                         color_mask[mask_resized > 0.5] = [0, 255, 0] # 綠色實例輪廓
                         # 以 0.4 的透明度疊加到主畫面
                         annotated_frame = cv2.addWeighted(annotated_frame, 1.0, color_mask, 0.4, 0)
+
+            # 逐人標註：把「這一幀被判定倒地的那個人」框成紅色。多人時這是畫面上唯一
+            # 能看出「系統認為是誰倒了」的資訊——.plot() 畫的框每個人都長一樣。
+            # 刻意用當幀結果（不套 fall_display_until 的保持機制）：那個機制是給整張畫面的
+            # 狀態燈用的，逐人框要對得上當下這一幀的骨架位置，延後顯示會框到別的地方。
+            # 代價是判定逐幀跳動時紅框會閃，屬已知取捨。
+            for _fx1, _fy1, _fx2, _fy2 in fall_person_boxes:
+                cv2.rectangle(annotated_frame, (int(_fx1), int(_fy1)), (int(_fx2), int(_fy2)), (0, 0, 255), 3)
 
             if draw_border: cv2.rectangle(annotated_frame, (0, 0), (img_w, img_h), color, 12)
             cv2.putText(annotated_frame, status_text, (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3, cv2.LINE_AA)
