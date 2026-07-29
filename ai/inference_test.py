@@ -69,7 +69,8 @@ TOPIC_NURSING_HOME_ALERTS = "nursing-home-alerts"  # 低信心 → VLM 二審佇
 
 def route_by_confidence(*, act_confidence, is_occluded_fall,
                         event_label, numeric_id, clip_path, detected_at,
-                        snapshot_full_path, snapshot_name, final_score, yolo_thresh):
+                        snapshot_full_path, snapshot_name, final_score, yolo_thresh,
+                        person_label=""):
     """依 AcT 信心把單一跌倒事件路由到對應 Kafka topic，回傳 (topic, payload)。
 
     這是 C 組信心分流的乾淨抽離點（原本寫死在 camera_worker 裡的 if/else）：
@@ -101,6 +102,12 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
     `video_source`——影片檔時代那就是那支 mp4 還說得過去，但接上 RTSP 之後會變成一個
     `rtsp://` 網址，前端點下去沒有「事發當時」可看。欄位名是契約不動，只換裡面的值。
     """
+    # person_label：多人同時跌倒時，兩筆事件在事件中心的相機、時間、畫面都一樣，護理師
+    # 分不出是兩個人還是系統重複報。後端沒有「人」這個欄位，加欄位要跨組協調，所以先把
+    # 「畫面內第 N 位」寫進**現有的 vlm_summary 文字**裡 —— 欄位 key 一個字沒動，
+    # 護欄看的是 keys，值不在檢查範圍（見 CLAUDE.md 契約邊界那節）。
+    # 代價要知道：這是文字不是結構化欄位，前端不能拿它篩選或排序。
+    _who = f"（{person_label}）" if person_label else ""
     is_fast_track = act_confidence >= FAST_TRACK_CONF and not is_occluded_fall
 
     if is_fast_track:
@@ -114,7 +121,7 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
             "snapshot_path": snapshot_full_path,
             "image_filename": snapshot_name,
             "yolo_score": final_score,
-            "vlm_summary": "【緊急通報】邊緣端偵測到嚴重跌倒！請立刻前往救援。",
+            "vlm_summary": f"【緊急通報】邊緣端偵測到嚴重跌倒{_who}！請立刻前往救援。",
         }
         return TOPIC_PROCESSED_REPORTS, payload
 
@@ -129,7 +136,12 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
         "image_filename": snapshot_name,
         "yolo_score": final_score,
         "yolo_threshold": yolo_thresh,   # 只在 AI 內部流通，二審端不會把它外發後端
-        "vlm_summary": "【AI 信心度不足】已觸發大模型二審，正在分析影像特徵並生成詳細報告...",
+        # person_label 同樣只在 AI 內部流通（已登記在護欄的 INTERNAL_ONLY_KEYS）。
+        # 為什麼要獨立欄位而不是只靠上面那句文字：慢車道的 vlm_summary 會被 vlm_worker
+        # 用 VLM 判讀結果**整段覆蓋**，「第 N 位」會消失。多人同時跌倒時兩筆事件在事件
+        # 中心的相機/時間/畫面全一樣，沒有這個就分不出是兩個人還是重複報。
+        "person_label": person_label,
+        "vlm_summary": f"【AI 信心度不足】已觸發大模型二審{_who}，正在分析影像特徵並生成詳細報告...",
     }
     return TOPIC_NURSING_HOME_ALERTS, payload
 
@@ -155,6 +167,77 @@ _FALL_DISPLAY_HOLD_SEC = float(cfg("FALL_DISPLAY_HOLD_SEC", "10"))
 # 被判倒地的是誰、是不是又落在最大框那位身上；但逐幀印會刷屏（每秒十幾行），故節流。
 # 單人畫面完全不印，log 乾淨度與改動前相同。
 _MULTI_LOG_MIN_GAP_SEC = float(cfg("MULTI_PERSON_LOG_SEC", "3"))
+# ── 多人分案：每個人各自一筆事件 ──────────────────────────────────────────
+# 逐人幾何（防線 A/B 對每個人各算一次）解決的是「漏報」，但它**沒有身分**：YOLO 的偵測
+# 索引每幀都可能換人（實測 test6：同一個人的索引在 0/1 之間跳），所以沒辦法說
+#「這是 A 的事件、那是 B 的事件」，事件也只能每個 worker 發一筆。
+# 這裡補上跨幀身分（ByteTrack）之後才做得到「同時段兩人跌倒 → 兩筆各自的事件」。
+_MULTI_TRACK = cfg("MULTI_PERSON_TRACK", "1").strip().lower() not in ("0", "false", "no")
+# 連續幾個處理幀都判倒地才真的算數。單幀就觸發的話，被桌子擋住只露上半身的人、
+# 蹲著綁鞋帶的人都會誤報（test7.mp4 第 0.27 秒即實測到）。有了跨幀身分才做得準，
+# 所以 debounce 跟追蹤是同一件事的兩半。
+_FALL_CONSECUTIVE_FRAMES = int(cfg("FALL_CONSECUTIVE_FRAMES", "4"))
+# 已發過事件的人，連續幾個處理幀「不再是倒地」就把他的狀態重置、允許再次發報。
+# 沒有這個的話，同一個人第二次跌倒永遠不會再示警（現況就是這樣，見 NEXT_STAGE 第 5 項）。
+_FALL_RECOVERY_FRAMES = int(cfg("FALL_RECOVERY_FRAMES", "90"))
+# 一個人連續幾幀沒被看到才把他的狀態忘掉。刻意設得比 ByteTrack 自己的 track_buffer 寬鬆：
+# 忘太快＝忘了「他已經發過事件」，人被擋一下再出現就重複發報。
+_TRACK_FORGET_FRAMES = int(cfg("TRACK_FORGET_FRAMES", "300"))
+# 同一個位置在這段秒數內已經發過事件，就不再發第二筆（IoU 高於門檻視為同一個人）。
+# 為什麼需要：ByteTrack 在遮擋時會**換號**——實測 test6 三個人出現過 6 個 track_id，
+# 換號之後那個人在系統眼中是「新的人」，會再發一筆重複事件。這層是換號的補救。
+_FALL_DEDUP_SEC = float(cfg("FALL_DEDUP_SEC", "30"))
+# 判準用「中心點距離 ÷ 框的平均尺寸」，不是 IoU。
+# 為什麼不用 IoU：實測 test6 同一個人換號前後兩個框的 IoU 只有 0.34（人在地上會翻動、
+# 框會縮放），但兩個**不同**的人在地上並排時 IoU 也可能有 0.2~0.3 —— IoU 分不開這兩種情形。
+# 中心距離可以，因為人體是實心的：**兩個不同的人不可能中心點只差半個身位**。
+# 實測那組換號的中心距離是 0.41 個身位，遠低於「並排兩人」的 1.0 個身位。
+_FALL_DEDUP_DIST = float(cfg("FALL_DEDUP_DIST", "0.6"))
+
+
+def _same_spot(a, b):
+    """兩個 xyxy 框是不是「同一個位置的同一個人」。回傳 (是否相同, 中心距離/身位)。"""
+    acx, acy = (a[0] + a[2]) / 2.0, (a[1] + a[3]) / 2.0
+    bcx, bcy = (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0
+    dist = ((acx - bcx) ** 2 + (acy - bcy) ** 2) ** 0.5
+    # 身位＝兩個框對角線長度的平均，對「人躺下之後框變寬變扁」比單看寬或高穩定
+    diag_a = ((a[2] - a[0]) ** 2 + (a[3] - a[1]) ** 2) ** 0.5
+    diag_b = ((b[2] - b[0]) ** 2 + (b[3] - b[1]) ** 2) ** 0.5
+    scale = (diag_a + diag_b) / 2.0
+    if scale <= 0:
+        return False, 999.0
+    ratio = dist / scale
+    return ratio <= _FALL_DEDUP_DIST, ratio
+
+
+def _make_person_tracker():
+    """建立 ByteTrack 追蹤器；任何一步失敗都回 None（退回原本「每個 worker 一筆事件」的行為）。
+
+    為什麼是「拿 ByteTrack 吃我們自己的偵測結果」而不是 `YOLO(...).track()`：
+    `.track()` 是 ultralytics **本機模型**才有的方法，主線三顆模型全走 Triton，
+    `TritonPoseModel` 沒有那個方法。但它回傳的是**標準 ultralytics Results 物件**
+    （見 triton_pose_client.py 檔頭），而 BYTETracker 本來就是吃 `results.boxes`，
+    所以可以獨立拿來用 —— 保住 Triton，也不必自己手寫 IoU 配對。
+
+    實測（test6.mp4，158 個處理幀）：兩位主角的 track_id 存活率 99% / 96%。
+    已知限制：遮擋時會換號（3 個人出現過 6 個 id），那是 ByteTrack 的固有行為。
+
+    ⚠️ 需要 `lap` 套件（ultralytics 會在首次使用時自動安裝）。AI 端目前沒有
+    requirements 檔，所以這件事只能記在這裡：換機器時若 ByteTrack 起不來，
+    先 `pip install "lap>=0.5.12"`。
+    """
+    try:
+        from ultralytics.trackers.byte_tracker import BYTETracker
+        from ultralytics.utils import IterableSimpleNamespace, YAML
+        from ultralytics.utils.checks import check_yaml
+        args = IterableSimpleNamespace(**YAML.load(check_yaml("bytetrack.yaml")))
+        try:
+            return BYTETracker(args)
+        except TypeError:
+            return BYTETracker(args, frame_rate=30)  # 舊版 ultralytics 的建構子多一個參數
+    except Exception as e:
+        print(f"⚠️ 多人追蹤停用（ByteTrack 初始化失敗，退回「每路一筆事件」的原行為）：{e}")
+        return None
 # 緩衝存的是「原始幀」（塞在跳幀之前），1080p 全解析度下前後 10 秒每台相機要吃 ~1.8GB，
 # 多路併發直接 OOM。故片段緩衝獨立降寬——推論吃的仍是原圖，完全不受影響。
 # H.264 要求邊長為偶數，故抹掉奇數位。設 0＝不縮放（記憶體自負）。
@@ -431,6 +514,18 @@ def camera_worker(camera_id, video_source, detect_url=None):
     normal_h_reference = None
     triton_down_warned = False  # Triton 斷線降級提示只印一次，避免逐幀刷屏
     _multi_log_t = 0.0          # 上次印「多人逐人判定」的時刻（節流用，見下方主迴圈）
+    # ── 多人分案狀態（每路相機各自一份）──────────────────────────────────
+    person_tracker = _make_person_tracker() if _MULTI_TRACK else None
+    # track_id -> {"lying": 連續判倒地的處理幀數, "recovery": 連續非倒地的處理幀數,
+    #              "fired": 這個人是否已發過事件, "occluded": 最後一幀的防線 B 結果,
+    #              "label": 給人看的「第 N 位」}
+    person_states = {}
+    # 「第 N 位倒地者」的流水號。**在發事件的當下才編號**，不是看到人就編 ——
+    # ByteTrack 會跳號（實測 3 個人出現過 6 個 id），照 track 編號會出現「第 6 位」
+    # 這種護理師看不懂的數字。照事件編號則與事件中心的筆數一一對應。
+    _fall_seq = 0
+    # 最近已發過事件的框 [(xyxy, 發送時刻)]，供 IoU 去重用（見 _FALL_DEDUP_SEC）。
+    recent_fired_boxes = []
 
     # ── FPS 量測（只印 log，不影響推論邏輯）──────────────────────────────
     # 每 FPS_LOG_EVERY 個「實際處理的幀」印一次區間實測 FPS。量的是「經過 Triton 三顆
@@ -645,6 +740,9 @@ def camera_worker(camera_id, video_source, detect_url=None):
         # try 落到 except 時，後面的 any()/畫圖仍拿得到一個空 list。
         person_fall_flags = []
         fall_person_boxes = []
+        # 這一幀「連續倒地幀數剛達門檻、且還沒發過事件」的人，等 AcT 算完再決定要不要外發。
+        # 元素是 (track_id, is_occluded_i)。沒有追蹤器時恆為空，走原本的單筆事件路徑。
+        fall_candidates = []
 
         if results_pose and len(results_pose[0].keypoints) > 0:
             kpts_obj = results_pose[0].keypoints
@@ -654,6 +752,21 @@ def camera_worker(camera_id, video_source, detect_url=None):
                 boxes_data = results_pose[0].boxes.xywh.cpu().numpy()  
                 boxes_xyxy = results_pose[0].boxes.xyxy.cpu().numpy()
                 
+                # ── 跨幀身分：把這一幀的框餵給 ByteTrack，換回每個偵測索引的 track_id ──
+                # 放在逐人幾何之前，讓下面那個迴圈能直接把判定結果記到「這個人」身上。
+                # 失敗（例如缺 lap 套件）就讓 idx_to_track 保持空的 —— 逐人幾何照跑，
+                # 只是退回「每路一筆事件」的原行為，不會讓 worker 掛掉。
+                idx_to_track = {}
+                if person_tracker is not None:
+                    try:
+                        _det = results_pose[0].boxes.cpu().numpy()
+                        for _row in person_tracker.update(_det, frame):
+                            # 欄位：x1,y1,x2,y2,track_id,conf,cls,idx（最後一欄對回原偵測索引）
+                            idx_to_track[int(_row[-1])] = int(_row[4])
+                    except Exception as e:
+                        if not triton_down_warned:
+                            print(f"⚠️ [{camera_id}] 多人追蹤更新失敗（本幀退回無身分模式）：{e}")
+
                 if kpts_data.ndim == 3 and kpts_data.shape[0] > 0:
                     # ── 第 1 趟：挑出 best_idx（只給 AcT 用），順便收齊「通過門檻的所有人」──
                     # valid_idxs 的篩選條件與原本挑 best_idx 的條件一字不差，再加一個
@@ -727,12 +840,65 @@ def camera_worker(camera_id, video_source, detect_url=None):
                             except Exception: pass
 
                             # 跌倒防線 B (幾何遮擋防禦)
-                            if normal_h_reference is not None:
-                                if (h_box_i / normal_h_reference) < 0.70 and y2 > (img_h * 0.5): is_occluded_i = True
+                            # 參考身高優先用「這個人自己站著時的身高」，沒有才退回全域單一值。
+                            # 為什麼現在做得到、之前做不到：參考值的語意是「這個人站著時的
+                            # 正常身高」，要累積它就得知道跨幀的哪個框是同一個人 —— 有了
+                            # track_id 才成立（逐人幾何那一版的註解就說明過這個限制）。
+                            # 為什麼非做不可：共用單一參考值時，「離鏡頭比校準者遠的人」
+                            # 身高天生就矮 → 一律被判倒地。以前所有人共用一筆事件還看不太
+                            # 出來，改成逐人各發一筆之後，教室裡每個站得比較遠的人都會變成
+                            # 一筆獨立的誤報事件（test7.mp4 實測 4 筆，實際只有 1 人跌倒）。
+                            _h_ref = None
+                            _st_peek = person_states.get(idx_to_track.get(idx))
+                            if _st_peek is not None and _st_peek.get("h_frames", 0) >= 5:
+                                _h_ref = _st_peek.get("h_ref")
+                            if _h_ref is None:
+                                _h_ref = normal_h_reference
+                            if _h_ref is not None:
+                                if (h_box_i / _h_ref) < 0.70 and y2 > (img_h * 0.5): is_occluded_i = True
 
                             person_fall_flags.append((idx, is_lying_i, is_occluded_i))
                             if is_lying_i or is_occluded_i:
                                 fall_person_boxes.append((x1, y1, x2, y2))
+
+                            # ── 逐人狀態機（有 track_id 才做得了，因為要跨幀累積）──
+                            _tid = idx_to_track.get(idx)
+                            if _tid is not None:
+                                st = person_states.get(_tid)
+                                if st is None:
+                                    st = {"lying": 0, "recovery": 0, "fired": False,
+                                          "occluded": False, "label": None,
+                                          "box": None, "seen": frame_count,
+                                          "h_ref": None, "h_frames": 0}
+                                    person_states[_tid] = st
+                                st["occluded"] = is_occluded_i
+                                st["seen"] = frame_count
+                                st["box"] = (float(x1), float(y1), float(x2), float(y2))
+                                # 逐人身高校準：只在「這個人沒被判臥倒」時累積（躺著時框本來
+                                # 就矮，拿來當站立參考會讓防線 B 永遠不成立）。取看過的最大值，
+                                # 對「被家具擋住半身」那種偏矮的框有抵抗力。
+                                if not is_lying_i:
+                                    st["h_frames"] = st.get("h_frames", 0) + 1
+                                    st["h_ref"] = max(st.get("h_ref") or 0.0, float(h_box_i))
+                                if is_lying_i or is_occluded_i:
+                                    st["lying"] += 1
+                                    st["recovery"] = 0
+                                    # 連續 N 幀才算數（debounce）：單幀就發的話，被家具擋住
+                                    # 只露上半身的人、蹲姿的人都會誤報（test7 第 0.27 秒實測）。
+                                    if st["lying"] >= _FALL_CONSECUTIVE_FRAMES and not st["fired"]:
+                                        fall_candidates.append((_tid, is_occluded_i))
+                                else:
+                                    st["lying"] = 0
+                                    # 已發過事件的人站起來夠久 → 解鎖，讓他之後再跌倒還能示警。
+                                    # 這是「每個 worker 只發一次」那個閂鎖的替代品：閂鎖從
+                                    # 「整路相機一次」縮小成「這個人一次，站起來就重置」。
+                                    if st["fired"]:
+                                        st["recovery"] += 1
+                                        if st["recovery"] >= _FALL_RECOVERY_FRAMES:
+                                            st["fired"] = False
+                                            st["recovery"] = 0
+                                            print(f"ℹ️ [{camera_id}] 第 {st['label']} 位（track {_tid}）"
+                                                  f"已站起一段時間，解除該人的事件閂鎖")
 
                         # 迴圈外的兩個旗標＝逐人結果的 any()：任何一個人被判倒地就算數。
                         # 下游（AcT 幾何模擬分支、終極決策中樞、route_by_confidence 的
@@ -785,9 +951,49 @@ def camera_worker(camera_id, video_source, detect_url=None):
         is_ai_thinking_fall = (pred_class == 0 and act_confidence > 0.35) if len(frame_window) == 30 else False
         should_trigger_fall = False
         if has_seen_person:
-            if is_physically_lying or is_occluded_fall:  
+            if is_physically_lying or is_occluded_fall:
                 if len(frame_window) < 30 or is_ai_thinking_fall or is_occluded_fall: should_trigger_fall = True
             elif len(frame_window) == 30 and pred_class == 0 and act_confidence > 0.55: should_trigger_fall = True
+
+        # ── 這一幀要為「哪些人」各發一筆事件 ────────────────────────────────
+        # 閘門條件與上面單筆版完全一樣（window 未滿 / AcT 也覺得跌倒 / 遮擋難判），
+        # 只是逐人套用。AcT 仍是單人序列（只餵 best_idx），所以 is_ai_thinking_fall
+        # 是「整個畫面」的判斷，不是這個人的 —— 這是已知限制，per-track 時序要另外做。
+        tracks_to_fire = []
+        if has_seen_person and fall_candidates:
+            _now_fire = time.time()
+            recent_fired_boxes = [(b, t) for b, t in recent_fired_boxes
+                                  if _now_fire - t <= _FALL_DEDUP_SEC]
+            for _tid, _occ in fall_candidates:
+                if not (len(frame_window) < 30 or is_ai_thinking_fall or _occ):
+                    continue
+                # 同位置去重：ByteTrack 換號後那個人會被當成新人再發一筆。框幾乎重疊
+                # 又在冷卻時間內，就當作同一個人，只把他的閂鎖鎖上、不發第二筆。
+                _box = person_states.get(_tid, {}).get("box")
+                _dup = None
+                if _box is not None:
+                    for _fb, _ft in recent_fired_boxes:
+                        _same, _ratio = _same_spot(_box, _fb)
+                        if _same:
+                            _dup = _ratio
+                            break
+                if _dup is not None:
+                    person_states[_tid]["fired"] = True
+                    print(f"🔁 [{camera_id}] track {_tid} 與 {_FALL_DEDUP_SEC:.0f} 秒內已發報的人"
+                          f"位置幾乎重合（中心距離 {_dup:.2f} 個身位），判定為同一人換號，不重複發事件")
+                    continue
+                tracks_to_fire.append(_tid)
+                if _box is not None:
+                    recent_fired_boxes.append((_box, _now_fire))
+
+        # 回收已經離開畫面的人：worker 一跑好幾天，不清會讓 dict 無限長大。
+        # **但不能「這一幀沒看到就刪」**：人被家具擋一下、ByteTrack 短暫跟丟都會沒看到，
+        # 刪掉等於連「他已經發過事件」也忘了，人一回來就再發一次重複事件。
+        # 所以給寬限期（預設 300 幀，比 ByteTrack 自己的 track_buffer 還寬）。
+        if person_tracker is not None and person_states:
+            for _dead in [t for t, s in person_states.items()
+                          if frame_count - s["seen"] > _TRACK_FORGET_FRAMES]:
+                del person_states[_dead]
 
         # 模組 G：環境安全巡檢定時器呼叫（白名單內唯一的外掛模組）
         # 第 3、4 個參數原本是模組 A 離床 / 模組 E 遊走的旗標，兩個模組已刪除故恆為 False。
@@ -819,7 +1025,16 @@ def camera_worker(camera_id, video_source, detect_url=None):
         # =========================================================================
         # ⚡ ⚡ ⚡ 業界商用規格修改：動態不重複相片命名與傳遞 ⚡ ⚡ ⚡
         # =========================================================================
-        if should_trigger_fall and not vlm_triggered:
+        # 發哪幾筆事件：
+        #   · 有追蹤器 → tracks_to_fire 裡每個人各一筆（同時段兩人跌倒就是兩筆）
+        #   · 沒追蹤器（沒裝 lap、或 MULTI_PERSON_TRACK=0）→ 位元級退回原本的
+        #     「每個 worker 一次性閂鎖、只發一筆」行為
+        if person_tracker is not None:
+            _fire_list = list(tracks_to_fire)
+        else:
+            _fire_list = [None] if (should_trigger_fall and not vlm_triggered) else []
+
+        for _fire_tid in _fire_list:
             # 🧠 1. 解析並對齊 device_id 為 int
             try:
                 numeric_id = int(''.join(filter(str.isdigit, camera_id)))
@@ -835,8 +1050,17 @@ def camera_worker(camera_id, video_source, detect_url=None):
             yolo_thresh = 0.45
 
             # 🧠 4. 【生產品級核心】動態不重複檔名機制 (帶精確時間戳)
+            # 多人同時跌倒時，時間戳只到秒、兩筆會撞檔名，所以帶上第幾位（_p2、_p3…）。
+            # 第 1 位不加後綴＝單人情境的檔名與改動前完全一樣，舊工具不會壞。
+            _p_state = person_states.get(_fire_tid) if _fire_tid is not None else None
+            if _p_state is not None and _p_state.get("label") is None:
+                _fall_seq += 1
+                _p_state["label"] = _fall_seq   # 發事件的當下才編號，與事件筆數一一對應
+            _p_num = _p_state["label"] if _p_state else 1
+            _p_suffix = "" if _p_num <= 1 else f"_p{_p_num}"
+            _person_label = f"畫面內第 {_p_num} 位倒地者" if _fire_tid is not None else ""
             current_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-            snapshot_name = f"snapshot_{camera_id}_{current_time_str}.jpg"  # 不重複檔名
+            snapshot_name = f"snapshot_{camera_id}_{current_time_str}{_p_suffix}.jpg"  # 不重複檔名
             snapshot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "snapshots")
             os.makedirs(snapshot_dir, exist_ok=True)
             snapshot_full_path = os.path.join(snapshot_dir, snapshot_name)
@@ -844,20 +1068,29 @@ def camera_worker(camera_id, video_source, detect_url=None):
 
             if producer is not None:
                 vlm_triggered = True
+                if _p_state is not None:
+                    _p_state["fired"] = True      # 這個人的閂鎖：站起來夠久才會被解開
 
                 # 🧠 5. 事件片段：clip_path 從「影像來源本身」改指向這段前後 N 秒的影片。
                 # 觸發當下就把 pre buffer 拍成快照、把路徑算好，讓 payload 立刻帶著它發出去；
                 # 後段錄滿才在背景寫檔——警報不等影片（跌倒是急救場景，晚 N 秒是真的晚），
                 # 護理師從收到警報到點開影片本來就不只 N 秒，檔案那時早就落地了。
-                clip_name = f"clip_{camera_id}_{current_time_str}.mp4"
-                clip_local_path = os.path.join(_CLIP_DIR, clip_name)
-                clip_s3_key = f"{_CLIP_S3_PREFIX}/{clip_name}" if _CLIP_S3_BUCKET else None
-                # 設了 bucket 才給 s3:// URI（後端只認這個）；否則退本地路徑，見檔頭說明。
-                clip_path = (f"s3://{_CLIP_S3_BUCKET}/{clip_s3_key}"
-                             if clip_s3_key else clip_local_path)
-                pre_clip_snapshot = list(pre_clip_buffer)
-                post_clip_buffer = []
-                is_recording_post = True
+                # 多人同時跌倒時**共用同一支片段**：片段錄的是整個畫面，兩個人本來就在
+                # 同一段影像裡，重錄一次只是同樣內容存兩份。而且錄影是單一插槽
+                #（pre_clip_snapshot / post_clip_buffer 各一份），第二個人重啟錄影會把
+                # 第一個人的後段截斷 —— 那是真的會壞掉，不只是浪費空間。
+                if is_recording_post:
+                    pass  # 沿用這一輪已經算好的 clip_path / clip_local_path / clip_s3_key
+                else:
+                    clip_name = f"clip_{camera_id}_{current_time_str}.mp4"
+                    clip_local_path = os.path.join(_CLIP_DIR, clip_name)
+                    clip_s3_key = f"{_CLIP_S3_PREFIX}/{clip_name}" if _CLIP_S3_BUCKET else None
+                    # 設了 bucket 才給 s3:// URI（後端只認這個）；否則退本地路徑，見檔頭說明。
+                    clip_path = (f"s3://{_CLIP_S3_BUCKET}/{clip_s3_key}"
+                                 if clip_s3_key else clip_local_path)
+                    pre_clip_snapshot = list(pre_clip_buffer)
+                    post_clip_buffer = []
+                    is_recording_post = True
 
                 # 🚦 信心分流抽成 route_by_confidence()：由它決定送哪個 topic、組哪個 payload。
                 # 這裡只負責算好參數、把回傳的 (topic, payload) 送出，路由決策可被 LangGraph 接管。
@@ -872,9 +1105,13 @@ def camera_worker(camera_id, video_source, detect_url=None):
                     snapshot_name=snapshot_name,
                     final_score=final_score,
                     yolo_thresh=yolo_thresh,
+                    person_label=_person_label,   # 只寫進 vlm_summary 文字，欄位 key 沒動
                 )
                 producer.send(topic, value=payload)
                 producer.flush()
+                if _fire_tid is not None:
+                    print(f"🚨 [{camera_id}] 第 {_p_num} 位（track {_fire_tid}）跌倒事件已外發"
+                          f"（topic={topic}，連續 {_FALL_CONSECUTIVE_FRAMES} 幀判定成立）")
                 # 畫面上的 VLM 狀態依落點提示：快速道 vs 送二審佇列。
                 vlm_report = "Fast-track Sent" if topic == TOPIC_PROCESSED_REPORTS else "VLM Queued..."
 
