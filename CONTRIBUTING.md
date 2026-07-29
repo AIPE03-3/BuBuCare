@@ -21,13 +21,36 @@ git hooks **不會跟著 clone/pull 傳過來**，所以每台機器要自己開
 ### 2. 重建模型檔（repo 裡沒有）
 
 ```bash
-python ai/export_models.py
+python ai/export_models.py --plan
 ```
 
-`.onnx`（486MB）、`.pt`、長片 `test4.mp4`（344MB）都**不進 repo**（GitHub 單檔上限 100MB）。
-`ai/triton_repo/` 裡只有 `config.pbtxt`，模型本體要自己在本機產。
+`.onnx`（約 165MB）、`.plan`、`.pt`、長片 `test4.mp4`（344MB）都**不進 repo**
+（GitHub 單檔上限 100MB）。`ai/triton_repo/` 裡只有 `config.pbtxt`，模型本體要自己在本機產。
+
+[`ai/export_models.py`](ai/export_models.py) 從 `ai/` 底下的來源權重重建三顆：
+
+| Triton 模型 | 來源權重 | 產出 |
+|---|---|---|
+| `yolo_pose` | `yolo11s-pose.pt` | `triton_repo/yolo_pose/1/model.onnx` |
+| `rt_detr` | `rtdetr-l.pt`（首次執行 ultralytics 會自動下載）| `.../rt_detr/1/model.onnx` **＋ `model.plan`** |
+| `action_transformer` | `action_transformer.pth`（要跟組員拿）| `.../action_transformer/1/model.onnx` |
+
+⚠️ **`--plan` 不是選配**：這台的 `rt_detr` 是 `platform: tensorrt_plan`，只有 `model.onnx`
+**Triton 會整支起不來**（explicit 模式一顆載入失敗會把另外兩顆一起拖垮，事故記錄見
+[`ai/triton_repo/README.md`](ai/triton_repo/README.md)）。`--plan` 會另開一個 Triton 官方鏡像的
+容器跑 `trtexec` 編出這台 GPU 專屬的引擎，**要 4 分鐘左右**，慢是正常的。
+
+TensorRT 引擎綁「GPU 架構 + TensorRT 版本」，**不能跨機器複製**，每台要自己編。
+Mac 沒有 NVIDIA GPU 編不出來，走第四節的兩個選擇。
+
+匯出參數（固定/動態 shape、opset）是照著已進版控的 `config.pbtxt` 反推的，不是上游預設值，
+**不要隨手改**——對不上 Triton 會直接拒載。
 
 `ai/test_demo/` 只有 test1~3.mp4（各約 1.5MB）；test4.mp4 是 FPS 量測長片，要用請另外跟人要。
+
+### 3. MLOps 迴路（標註 → 重訓 → 熱部署）
+
+那條迴路的服務、腳本與跑法另外寫在 [`ai/MLOPS.md`](ai/MLOPS.md)，日常開發不需要起那些服務。
 
 ---
 
