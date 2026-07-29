@@ -71,3 +71,10 @@ MEDIAMTX_BASE_URL = os.getenv("MEDIAMTX_BASE_URL", "")
 # 串流權杖有效秒數。刻意設很短：權杖會出現在 MediaMTX 與 nginx 的存取紀錄裡，
 # 過期越快、萬一外流可用的時間越短。60 秒足夠瀏覽器完成一次 WHEP 協商。
 STREAM_TOKEN_EXPIRE_SECONDS = int(os.getenv("STREAM_TOKEN_EXPIRE_SECONDS", "60"))
+
+# AI 端讀取串流用的帳密。他們的推論程式走 RTSP 讀 cam_in，拿不到瀏覽器才有的
+# 短命權杖，所以另外給一組固定憑證（推流不受影響，MediaMTX 那邊直接放行）。
+# 預設空字串，且空字串一律拒絕（fail-closed）：
+# 寧可「忘了設 → 讀不到」，也不要「忘了設 → 整條 RTSP 對外全開」。
+STREAM_RTSP_USER = os.getenv("STREAM_RTSP_USER", "")
+STREAM_RTSP_PASS = os.getenv("STREAM_RTSP_PASS", "")
