@@ -8,6 +8,34 @@
 # 頻道命名對齊 AI 端：cam_in（進 AI 前的原味）／cam_out（AI 畫框後）。
 # 傑雅版原本叫 my_camera_tapo，語意等同 cam_in。
 
+# ── 身分驗證（B 階段）──────────────────────────────────
+# 每個「觀看」請求，MediaMTX 都會回頭打後端問「這個人能不能看」。
+# ⚠ 後端必須先啟動，否則 MediaMTX 問不到人，所有觀看都會失敗（畫面全黑）。
+#
+# 兩種觀看者：
+#   瀏覽器 → 先跟後端換 60 秒短命權杖，帶 Authorization: Bearer 打 WHEP
+#   AI 端  → 走 RTSP 讀取，直接用 rtsp://<host>:8554/cam_in，不需憑證
+#            （前提是同屬受控內網；正式環境應把攝影機/MediaMTX/AI 主機切獨立網段）
+authMethod: http
+authHTTPAddress: http://127.0.0.1:8000/streams/auth
+# 雲端 demo 時改用這行（前端在雲端 → 票是雲端後端簽的 → 只能由雲端後端驗）：
+# authHTTPAddress: http://35.221.135.197/api/streams/auth
+
+# 這些動作不用問後端，直接放行
+authHTTPExclude:
+  - action: publish     # 推流不驗證：手機 Larix 與 AI 端推 cam_out 都不必改設定
+  - action: api         # 以下三個是 MediaMTX 自己的管理介面
+  - action: metrics
+  - action: pprof
+
+# 已實測（2026-07-29，真 Tapo C210）：
+#   ✅ 開啟驗證後 MediaMTX 仍拉得到攝影機——source: rtsp://... 是 MediaMTX 主動外連，不受此機制管轄
+#   ✅ 瀏覽器不帶權杖，內建播放頁與 WHEP 皆回 401
+#
+# 退路：demo 現場後端連不上時，把上面 authMethod / authHTTPAddress / authHTTPExclude
+#       整段註解掉並重啟 MediaMTX，即退回無驗證狀態（約 30 秒）。
+# ⚠ 存檔本檔會觸發熱重載，中斷全部現有連線（攝影機與手機都要重連），不要邊測邊改。
+
 webrtc: yes
 webrtcAddress: :8889          # 瀏覽器來報到用（WHEP）
 webrtcLocalUDPAddress: :8189  # 影像實際流動用（ICE），防火牆兩個都要開
@@ -26,15 +54,15 @@ paths:
   #     ⚠ 帳密不是 TP-Link 登入帳號，要在 Tapo App → 齒輪 → 進階設定 → 攝影機帳號 另外設
   #     ⚠ rtspTransport: tcp 一定要加，走 UDP 會破格
   #
-  # (B) 沒有攝影機：改成 source: publisher，再用 start-fake-camera.ps1 推 mp4 進來
+  # (B) 沒有攝影機：改成 source: publisher，再用 ffmpeg 推 mp4 進來（指令見 README）
   cam_in:
     source: rtsp://<攝影機帳號>:<攝影機密碼>@<攝影機IP>:554/stream2
     rtspTransport: tcp
     sourceOnDemand: no        # no = MediaMTX 一啟動就去連攝影機，不等有人看才連
 
   # ── cam_out：AI 畫框後的畫面 ──
-  # 正式來源是 albert 的推論程式（讀 cam_in → 畫框 → 推回這裡），該功能尚未實作。
-  # A 階段用 start-fake-detect.ps1 推一個固定紅框上來，驗證前端切換功能。
+  # 來源是 AI 端的推論程式（讀 cam_in → 畫框 → 推回這裡），2026-07-29 起可用。
+  # 他們沒開時這個頻道就沒畫面，前端切「偵測」會顯示連線失敗。
   cam_out:
     source: publisher
 
@@ -46,7 +74,7 @@ paths:
   phone_c:
     source: publisher
 
-  # ── 手機那三路的 AI 畫框後頻道（albert 的推論程式推進來，尚未實作）──
+  # ── 手機那三路的 AI 畫框後頻道（AI 端的推論程式推進來，尚未實作）──
   # ⚠ 沒有在 paths 底下列出的頻道，MediaMTX 會直接拒收，推不進來。
   #   之後要新增鏡頭，這裡與資料庫都要一起加。
   phone_a_out:

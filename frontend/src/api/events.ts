@@ -63,9 +63,12 @@ export function parseRawEvent(raw: RawEventPayload): CareEvent {
     zone: raw.location ?? '',
     // 後端事件 payload 不帶樓層（僅 GET /devices 有），故固定 null。
     floor: null,
-    // 後端事件 payload 無串流網址與在線狀態（僅 GET /devices 有），先固定值，非程式邏輯遺漏。
+    // 後端事件 payload 無串流網址、頻道名與在線狀態（僅 GET /devices 有），
+    // 先固定值，非程式邏輯遺漏。事件卡片顯示的是事發快照，不播即時畫面。
     stream_url: null,
     stream_url_detect: null,
+    stream_channel: null,
+    stream_channel_detect: null,
     status: 'online',
   };
 

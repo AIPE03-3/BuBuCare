@@ -1,7 +1,9 @@
 export type StreamMode = 'live' | 'detect';
 
-// 顯示文字集中一份，元件外禁止另外硬編碼
-export const STREAM_MODE_LABEL: Record<StreamMode, string> = {
+// 顯示文字集中一份，元件外禁止另外硬編碼。
+// 不 export：目前只有本檔在用，而元件檔額外出口常數會讓 React Fast Refresh
+// 對整個檔案失效（改一行就整頁重載、狀態清空）。將來真的有別處要用再搬去 types/index.ts。
+const STREAM_MODE_LABEL: Record<StreamMode, string> = {
   live: '即時',
   detect: '偵測',
 };
