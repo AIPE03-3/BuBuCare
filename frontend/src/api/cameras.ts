@@ -2,8 +2,11 @@ import { apiClient } from './client';
 import type { Camera, DeviceStatus } from '../types';
 
 // 後端 GET /devices 的原始欄位命名，與前端 Camera 不同，須經下方對照轉換。
-// stream_channel / stream_channel_detect 是給 AI 端組 rtsp:// 用的原始頻道名，
-// 前端用不到（瀏覽器只能走 WebRTC），故不列入。
+//
+// 串流刻意有兩種形式，兩邊都要用：
+//   stream_url*     = 後端組好的 WHEP 網址，瀏覽器拿去連 MediaMTX
+//   stream_channel* = 原始頻道名（cam_in…），拿去跟後端換 60 秒串流權杖
+// MediaMTX 已開啟身分驗證，只有網址沒有權杖一律 401——所以頻道名不能再丟掉。
 interface RawDevice {
   device_id: number;
   device_name: string;
@@ -11,6 +14,8 @@ interface RawDevice {
   floor: string | null;
   stream_url: string | null;        // 已由後端組好的 WHEP 網址
   stream_url_detect: string | null;
+  stream_channel: string | null;    // 換權杖用
+  stream_channel_detect: string | null;
   status: 'active' | 'inactive' | 'fault';
 }
 
@@ -30,6 +35,8 @@ export async function getCameras(): Promise<Camera[]> {
     floor: d.floor,
     stream_url: d.stream_url,
     stream_url_detect: d.stream_url_detect,
+    stream_channel: d.stream_channel,
+    stream_channel_detect: d.stream_channel_detect,
     status: STATUS_MAP[d.status],
   }));
 }

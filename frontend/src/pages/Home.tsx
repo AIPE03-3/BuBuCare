@@ -108,6 +108,11 @@ export function Home() {
   const urlOf = (camera: Camera) =>
     streamMode === 'detect' ? camera.stream_url_detect : camera.stream_url;
 
+  // 頻道名（給 LiveStream 換串流權杖用）。務必與 urlOf 取同一個模式，
+  // 一個給即時、一個給偵測的話，換來的票對不上要看的頻道，MediaMTX 會回 401。
+  const channelOf = (camera: Camera) =>
+    streamMode === 'detect' ? camera.stream_channel_detect : camera.stream_channel;
+
   // 四台都沒有偵測頻道就不顯示切換鈕（按了也只會看到四格空白）
   const hasAnyDetect = gridCameras.some((c) => c.stream_url_detect !== null);
 
@@ -143,6 +148,7 @@ export function Home() {
                 >
                   <LiveStream
                     whepUrl={urlOf(camera)}
+                    channel={channelOf(camera)}
                     emptyLabel={
                       streamMode === 'detect' && camera.stream_url_detect === null
                         ? '此鏡頭無 AI 偵測'

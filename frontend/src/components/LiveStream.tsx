@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { negotiateWhep } from '../api/streams';
+import { fetchStreamToken, negotiateWhep } from '../api/streams';
 import { CAMERA_LABEL } from '../types';
 
 type ConnectionState = 'connecting' | 'connected' | 'failed';
@@ -7,6 +7,12 @@ type ConnectionState = 'connecting' | 'connected' | 'failed';
 interface LiveStreamProps {
   /** 完整 WHEP 網址；null＝這個環境沒有這條串流，顯示占位框 */
   whepUrl: string | null;
+  /**
+   * 頻道名（cam_in / phone_a…），用來跟後端換串流權杖。
+   * ⚠ 必須與 whepUrl 是「同一個模式」的一組——即時就兩個都給即時的，
+   *   不可一個給即時、一個給偵測，否則換來的票對不上要看的頻道，MediaMTX 會回 401。
+   */
+  channel: string | null;
   /** 占位框文字。預設「鏡頭即時影像」；偵測模式下沒有 AI 的鏡頭傳「此鏡頭無 AI 偵測」 */
   emptyLabel?: string;
 }
@@ -27,7 +33,11 @@ function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
   });
 }
 
-export function LiveStream({ whepUrl, emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER }: LiveStreamProps) {
+export function LiveStream({
+  whepUrl,
+  channel,
+  emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER,
+}: LiveStreamProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<ConnectionState>('connecting');
   // 遞增此值即觸發重新連線（重試按鈕用）
@@ -35,7 +45,9 @@ export function LiveStream({ whepUrl, emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!whepUrl || !video) return;
+    // channel 與 whepUrl 一定同時有值（都來自同一台鏡頭的同一個模式）；
+    // 少了 channel 就換不到權杖，連了也是白連，所以一併擋在這裡
+    if (!whepUrl || !channel || !video) return;
 
     let cancelled = false;
     setState('connecting');
@@ -61,7 +73,11 @@ export function LiveStream({ whepUrl, emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         await waitForIceGathering(pc);
-        const answer = await negotiateWhep(whepUrl, pc.localDescription?.sdp ?? '');
+        // 換票刻意排在 ICE 收集之後：收集要花一兩秒，票只有 60 秒命，越晚換剩得越多。
+        // 「重新連線」按鈕會重跑整段 effect，所以每次重試都是一張新票，不會拿到過期的。
+        const streamToken = await fetchStreamToken(channel);
+        if (cancelled) return;
+        const answer = await negotiateWhep(whepUrl, pc.localDescription?.sdp ?? '', streamToken);
         if (cancelled) return;
         await pc.setRemoteDescription({ type: 'answer', sdp: answer });
       } catch {
@@ -77,7 +93,7 @@ export function LiveStream({ whepUrl, emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER
       pc.close();
       video.srcObject = null;
     };
-  }, [whepUrl, attempt]);
+  }, [whepUrl, channel, attempt]);
 
   if (!whepUrl) {
     return (
@@ -96,7 +112,12 @@ export function LiveStream({ whepUrl, emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER
           {state === 'failed' && (
             <button
               type="button"
-              onClick={() => setAttempt((n) => n + 1)}
+              // 首頁四宮格把整格包成一個「點了放大／縮小」的按鈕，這顆重試鈕就在它裡面。
+              // 不擋住事件冒泡的話，按重試會連帶把格子放大或縮小，看起來像沒重試。
+              onClick={(e) => {
+                e.stopPropagation();
+                setAttempt((n) => n + 1);
+              }}
               className="rounded-lg border border-[var(--border)] px-3 py-1 text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
             >
               重新連線

@@ -219,6 +219,11 @@ export interface Camera {
   // null＝這個環境沒有這條串流（後端沒設 MEDIAMTX_BASE_URL，或這台鏡頭沒填該頻道）。
   stream_url: string | null;        // 即時（原味）
   stream_url_detect: string | null; // 偵測（AI 畫框後），沒接 AI 的鏡頭為 null
+  // 頻道名（cam_in / phone_a…），與上面兩條網址一一對應、同時有值或同時為 null。
+  // 用途：向後端 POST /streams/{channel}/token 換取 60 秒串流權杖——
+  // MediaMTX 已開啟身分驗證，沒帶權杖一律回 401，光有網址看不到畫面。
+  stream_channel: string | null;
+  stream_channel_detect: string | null;
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷（online 布林可由 status==='online' 導出）
 }
 
