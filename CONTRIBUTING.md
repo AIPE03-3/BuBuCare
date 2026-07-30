@@ -108,11 +108,22 @@ TRITON_POSE_URL = os.environ.get("TRITON_POSE_URL", "http://127.0.0.1:8000/yolo_
 
 ## 四、macOS 上怎麼跑
 
-`ai/inference_test.py` 本身支援 Mac（`device` 會自動選 MPS），但**三顆模型都打 Triton**，
-所以要有一個 Triton server 才跑得動。Mac 沒有 NVIDIA GPU，`ai/run_triton.sh` 的
-`--gpus all` 用不了。兩個選擇：
+**完整的操作手冊在 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)**（每次開機的啟動順序、埠表、症狀→解法），
+做到哪裡與踩過的坑在 [`MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md)。這裡只講骨架。
 
-1. **Mac 上跑 CPU 版 Triton**：把 `run_triton.sh` 的 `--gpus all` 拿掉自己起一份。慢，但邏輯測得動。
+`ai/inference_test.py` 本身支援 Mac，但**三顆模型都打 Triton**，所以要有一個 Triton server
+才跑得動。Mac 沒有 NVIDIA GPU，兩個選擇：
+
+1. **Mac 上跑 CPU 版 Triton**（已在 M2 Pro 實測跑通全鏈，2.3~2.4 fps）。
+   `run_triton.sh` 本來就支援 `TRITON_GPUS=none`，**不必改腳本**。但有兩個一定會撞到的點：
+
+   - `ai/triton_repo/` 的 `config.pbtxt` 寫死 `instance_group kind: KIND_GPU`，沒 GPU 時
+     三顆全 UNAVAILABLE、explicit 模式**一顆倒全倒**。要先跑 `./ai/make_cpu_repo.sh`
+     產出 `ai/triton_repo_cpu/`（把 `KIND_GPU` 換成 `KIND_CPU`，權重走 hardlink，產物不進版控）。
+   - `rt_detr` 是 `platform: tensorrt_plan`，Mac 編不出引擎。改打同一份權重的 ONNX 版
+     `rt_detr_onnx`，用 `.env` 的 `TRITON_DETR_URL` 指過去就好，**不要改 `config.pbtxt`**
+     （那會弄壞 5060 Ti 那台）。
+
 2. **連到 5060 Ti 那台**（同網段/tailscale）：
 
    ```bash

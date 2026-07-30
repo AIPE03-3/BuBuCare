@@ -201,15 +201,16 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 
 | ID | 任務 | 驗收 | 狀態 | 備註 |
 |---|---|---|---|---|
-| T5-1 | 建 `ai/docker-compose-clearml.mac.yml` override（覆蓋 image tag / `platform`）| 原檔一行不動 | ☐ | 見 D7 |
-| T5-2 | `docker compose -p ai -f ai/docker-compose-clearml.yml -f ...mac.yml up -d` | `:8008/debug.ping`、`:8085` 活著 | ☐ | **`-p ai` 不能省**，volume 名靠它 |
-| T5-3 | 起 Label Studio（`-p ai`）| `:8082` 進得去 | ☐ | 原生 arm64 |
-| T5-4 | `cp ai/clearml.conf.example ~/clearml.conf` 填 credentials | `clearml-agent` 連得上 | ☐ | |
-| T5-5 | `python ai/inference_to_labelstudio_sdk.py` 推預標註 | LS 裡看得到待審任務 | ☐ | |
+| T5-1 | 建 `ai/docker-compose-clearml.mac.yml` override（覆蓋 `platform` / ES heap）| 原檔一行不動 | ☑ | 原檔確認未動。**查了 registry manifest 才知道只有 `clearml/server` 需要模擬**：它是 amd64-only，而 `elasticsearch:7.17.9` / `mongo:5.0.26` / `redis:6.2-alpine` **都有 arm64**（R3 是誤判）→ 三個依賴原生跑，只有 apiserver/fileserver/webserver 加 `platform: linux/amd64`。另把 ES heap 從 2g 砍到 1g（記憶體帳見備註）。`compose config` 驗過合併結果正確 |
+| T5-2 | `docker compose -p ai -f ai/docker-compose-clearml.yml -f ...mac.yml up -d` | `:8008/debug.ping`、`:8085` 活著 | ☑ | 六個容器全 Up。`debug.ping` 回 `result_code: 200`、web `:8085` 200、fileserver `:8081` 200。**`-p ai` 不能省**，volume 名靠它。⚠️ **這台的六個 volume 全是新建的**（log 顯示 `Created` 不是複用）——原 compose 檔頭「這台已經有一份跑過的 ClearML 資料」是在講 5060 Ti 那台，**這台是空的，沒有既有實驗記錄** |
+| T5-3 | 起 Label Studio（`-p ai`）| `:8082` 進得去 | ☑ | `heartexlabs/label-studio:latest` **原生 arm64**。`:8082` 回 302（導向登入頁）、`/user/login` 200，記憶體 0.33 GB。⚠️ **起之前要先 `mkdir -p ai/active_learning_dataset`**：那是 bind mount 來源，不存在時 Docker 會自作主張建一個 **root 擁有**的空目錄，之後容器內寫不進去。同 T5-2，`ai_lsdata` volume 也是新建的 → **這台沒有既有標註資料** |
+| T5-4 | `cp ai/clearml.conf.example ~/clearml.conf` 填 credentials | SDK 認證得過 | ☑ | **實測認證成功**（`users.get_current_user` → 200，身分 `ychsieh`），三個 server 位址都對得上。S3 區段（`sdk.aws.s3`）從 `.env` 的 `S3_RW_*` 自動填入並驗過 SDK 讀得到 → T5-7 上傳權重可用。⚠️ 檔案在**家目錄** `~/clearml.conf`，不是專案內（SDK 寫死只讀這個位置）；含金鑰，權限設成 `600`、不進版控 |
+| T5-5 | `python ai/inference_to_labelstudio_sdk.py` 推預標註 | LS 裡看得到待審任務 | ⚠ | **已修掉一個會直接 404 的 bug**（見下）。**卡在三個前置**，都是「LS 網頁上的東西」而這台的 LS 是全新的：①要先註冊帳號並填 `.env` 的 `LABEL_STUDIO_USERNAME/PASSWORD`（**跟 ClearML 是兩套系統**，帳密不共用）②要有專案 id=1 且 label_config 含 `person/chair/sofa/bed/tv` ③專案裡要有 task。**腳本不建專案、不上傳圖**，只認已存在的。素材可用 `ai/snapshots/` 的 14 張推論證據快照 |
 | T5-6 | `clearml-agent daemon --queue default`（host 原生，**不帶 `--gpus`**）| agent 咬得到單 | ☐ | |
 | T5-7 | `TRAIN_DEVICE=cpu TRAIN_EPOCHS=1 python ai/submit_task.py` | ClearML 有任務、跑完出權重 | ☐ | 見 D8，只驗流程 |
-| T5-8 | `python ai/model_deployment_agent.py` 熱部署 | Triton 載到新版本、推論吃到 | ☐ | Mac 是 ONNX 路線，注意它預期的是 `.plan` 流程，可能要調 |
-| T5-9 | 收尾：`python3 scripts/check_guardrails.py` + 更新 `RUN_ON_MAC.md` | 綠燈、文件與實況一致 | ☐ | |
+| T5-8 | `python ai/model_deployment_agent.py` 熱部署 | Triton 載到新版本、推論吃到 | ⚠ | **熱部署機制本身已在 Mac 驗通（走 AcT/`action_transformer`）**，但 `model_deployment_agent.py` 這支還不能用（4 個障礙見下）。實測全鏈：`act_s42_st1.pth` → ONNX（PyTorch 比對誤差 1.19e-06）→ 熱載 v1→v2（HTTP 200）→ **線上推論輸出與本地權重逐位吻合（4.77e-07）** → 回滾 v2→v1（HTTP 200）|
+| T5-8a | `model_deployment_agent.py` 要能在 Mac 跑，需改的 4 處 | — | ☐ | ①`build_plan()` [無條件呼叫](ai/model_deployment_agent.py#L277) `docker run --gpus all trtexec`，**沒有開關** → 應改成依 `config.pbtxt` 的 `platform` 決定（`tensorrt_plan` 才編 plan），兩台通用 ②`TRITON_REPO_DIR` [寫死](ai/mlops_paths.py#L37) `triton_repo`，但線上掛的是 `triton_repo_cpu` ③`export_onnx()` 寫死 `RTDETR().export()`，AcT 不適用 ④`action_transformer` / `rt_detr_onnx` 的 `config.pbtxt` 沒有 `version_policy` → `current_served_version()` 會 die |
+| T5-9 | 收尾：`python3 scripts/check_guardrails.py` + 更新 `RUN_ON_MAC.md` | 綠燈、文件與實況一致 | ☑ | 護欄綠燈（308 檔）。**新建 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)** —— 定位是「每天開機的操作手冊」（啟動順序／埠表／症狀→解法），與本檔互補不重複。逐項驗過文件裡提到的檔案、`.env` 鍵、`run_triton.sh stop` 都真的存在。**順手更正 `CONTRIBUTING.md` 第四節**：原文說「把 `--gpus all` 拿掉自己起一份」已過時（`run_triton.sh` 本來就支援 `TRITON_GPUS=none`），且漏了 `KIND_GPU` 與 `tensorrt_plan` 兩個必撞的點；同時把 Mac 兩份文件接上入口（先前沒有任何地方連得到）|
 
 ---
 
@@ -217,6 +218,10 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 
 | 日期 | 做了什麼 | 結果 / 實際數字 |
 |---|---|---|
+| 2026-07-30 | **T5-9 收尾**：新建 `RUN_ON_MAC.md`、更正 `CONTRIBUTING.md` 第四節、停背景 agent | 護欄綠燈（308 檔）。文件入口鏈補起來：`CLAUDE.md` → `CONTRIBUTING.md` 第四節 → `RUN_ON_MAC.md` / `MAC_SETUP_WBS.md`（先前兩份 Mac 文件沒有任何地方連得到）|
+| 2026-07-30 | **T5-6 / T5-7 完成，T5-8 熱部署機制驗通**（改走 AcT 而非 rt_detr）| agent 咬單 → CPU 訓練 **32.2 秒/epoch** → mAP50 0.535 未過門檻 0.8 → 權重上 S3 並標 `below-gate`。熱部署：AcT `.pth` → ONNX → 熱載 v1→v2 → **線上輸出與本地權重逐位吻合（4.77e-07）** → 回滾成功。踩到 3 個坑：uv 建的 venv **沒有 pip**（agent 必掛）、torch 2.13 匯出**外部權重檔**、版控 `config.pbtxt` 不能鎖新版（會弄倒另一台）|
+| 2026-07-30 | **T5-3 / T5-4 完成**，T5-5 修掉一個寫死的模型名 | Label Studio 原生 arm64、`:8082` 302；`~/clearml.conf` 認證過（身分 `ychsieh`）。**`inference_to_labelstudio_sdk.py:347` 寫死 `/rt_detr`**，在無 GPU 機器上必 404 —— 改成沿用既有的 `TRITON_DETR_URL` 契約（同 `inference_test.py:419`），沒設時 fallback 回原值，對 5060 Ti 零影響。順手修掉 `check_mac_env.sh` **5 處** bash 3.2 `$VAR）` 地雷（全在失敗分支裡，最需要時才會炸）|
+| 2026-07-30 | **T5-1 / T5-2 完成**：ClearML server 六服務起在 Mac（override 檔隔離差異）| 查 manifest 推翻 R3：**只有 `clearml/server` 是 amd64-only**，ES/mongo/redis 都有 arm64 → 三個依賴原生跑。`debug.ping` 200、web 8085 200、files 8081 200。記憶體 **2.84 GB / 7.75 GB**，比預想寬鬆（R8 解除）|
 | 2026-07-30 | **修 R7**：`backend/core/database.py` 補連線池保鮮（`pool_pre_ping` + `pool_recycle`）| A/B 實測：無 pre_ping 噴 `SSL connection has been closed unexpectedly`，有 pre_ping 自動汰換成功。後端 **176 tests passed**。容器已 rebuild，`engine.pool._pre_ping=True` |
 | 2026-07-30 | 收尾清理：Kafka offset 快轉、刪掉循環測試的 S3 副產品 | `vlm-brain-cluster` LAG 6 → 0；刪 2 段循環測試 clip，T2-6 的 2 段驗證檔保留。順手補正 T3-4 對 `auto_offset_reset` 的理解 |
 | 2026-07-30 | **T4-3 / T4-4 完成，P4 收工**：mp4 → `cam_in` → 推論畫框 → `cam_out` | 兩個頻道都 `ready=True`。從 `cam_out` 抓幀確認骨架框與 `FALL DETECTED!` 都在。**抓到 `SINGLE_SOURCE` 與 `DETECT_STREAM` 互斥**（靜默不推、無錯誤訊息），已寫進定案指令的警告 |
@@ -237,8 +242,11 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 |---|---|---|---|
 | ~~R1~~ | ~~arm64 Triton image 能否啟動~~ | **已解除**：25.10-py3 arm64 原生啟動正常，onnxruntime backend 完整，三顆全載入 | — |
 | ~~R2~~ | ~~CPU 推論太慢~~ | **已量測：2.3~2.4 fps**（`DETR_EVERY_N=5`）。跌倒判定照樣成立（連續 4 幀），事件、片段、追蹤去重都正常 | fps 不要跟 5060 Ti 比（`ai/FPS_NOTES.md`）|
-| R3 | `elasticsearch:7.17.9` 是否有 arm64 | 未確認 | 照 albert 換 Docker Hub `elasticsearch:8.19.9`（他配 `clearml/server:latest` 跑得起來）|
+| ~~R3~~ | ~~`elasticsearch:7.17.9` 是否有 arm64~~ | **已解除**：`docker manifest inspect` 查到它**有 `linux/arm64`**，原生可跑，不必換 8.19.9。同批查證：`mongo:5.0.26` ✅、`redis:6.2-alpine` ✅、**`clearml/server:latest` 是 amd64-only**（唯一要模擬的）| — |
+| ~~R8~~ | ~~ClearML 六個服務 + 現有容器會不會爆記憶體~~ | **已量測，比預想寬鬆**：六個服務**閒置時只佔 1.66 GB**，全部容器合計 **2.84 GB / 7.75 GB（剩 4.91 GB）**。大頭是 `clearml-elastic` 1.28 GB（heap 砍到 1g 的效果），**三個 Rosetta 模擬的 `clearml/server` 加起來才 0.24 GB**——模擬吃的是 CPU 不是記憶體 | 閒置額度夠，`nh-triton` / `nh-kafka-ui` **可以開回來**。真正的壓力點在 T5-7 重訓（CPU + 資料載入），到那步再看 |
 | R4 | RT-DETR 在 MPS 上能否訓練 | **不知道** | 不碰，照 D8 走 CPU |
-| R5 | `model_deployment_agent.py` 是照 TensorRT 流程寫的，Mac 只有 ONNX | 可能要傳參數或跳過編 plan 那步 | 到 T5-8 再看，別提前改 |
+| R5 | `model_deployment_agent.py` 是照 TensorRT 流程寫的，Mac 只有 ONNX | **已查證：環境變數繞不過去，必須改 code**（4 處，見 T5-8a）。但**熱部署機制本身在 Mac 是通的** —— 換走 `action_transformer`（`onnxruntime_onnx`）而非 `rt_detr`（`tensorrt_plan`）就完全不需要 GPU/trtexec | 改 `build_plan` 的觸發條件為「看 `platform` 而不是看機器」，同一份 code 兩台都對 |
+| R9 | **不能在版控的 `config.pbtxt` 加 `version_policy` 鎖新版本** | **實測確認的地雷**：`ai/triton_repo/*/[0-9]*/` 在 `.gitignore` 裡（權重不進版控），所以另一台 pull 到「鎖 v2 的設定檔」卻只有 `1/` 目錄 → 該模型 UNAVAILABLE → **explicit 模式一顆倒全倒，整台 Triton 起不來**（`rt_detr` 踩過，`triton_repo/README.md` 有事故記錄）| 版本鎖只改 `triton_repo_cpu/`（產物、不進版控）。要動版控那份，權重必須同時有辦法讓對方拿到 |
+| R10 | torch 2.13 匯出的 ONNX 預設是**外部權重檔** | 實測踩到：產出 `model.onnx` + `model.onnx.data`，只放前者 → Triton 報 `cannot get file size: ...model.onnx.data`、版本 UNAVAILABLE | 匯出後用 `onnx.save(..., save_as_external_data=False)` 併回單一自包含檔，與 `export_models.py` 產的 v1 格式一致 |
 | ~~R6~~ | ~~唯讀 S3 金鑰上傳會 403~~ | **已解除**：`S3_RW_*` 已填並實測四項全通，T2-6 完成 | — |
 | ~~R7~~ | ~~後端 `create_engine` 缺 `pool_pre_ping=True`~~ | **已修並驗證**（2026-07-30）：`backend/core/database.py` 補 `pool_pre_ping=True` + `pool_recycle=1800`。**A/B 實測**：同一段「把連線放回池裡→從 DB 端 `pg_terminate_backend`→再借一次」的劇本，無 pre_ping 噴 `OperationalError: SSL connection has been closed unexpectedly`，有 pre_ping 自動換新連線成功。後端 176 個測試全過 | **這是後端組的檔案，改動尚未 commit**。不是 Mac 專屬，5060 Ti 那台一樣會中，要另開分支 + PR 知會後端組 |
