@@ -46,64 +46,105 @@ def load_runs(paths):
     return runs
 
 
-def plot_curves(runs, out_path):
-    """train/val loss 曲線。
+def _align_by_epoch(records, key):
+    """把長度不一的多次訓練對齊成 (epochs, 矩陣)，短的補 nan。"""
+    max_epoch = max(h["epoch"] for _, record in records for h in record["history"])
+    matrix = np.full((len(records), max_epoch), np.nan)
+    for row, (_, record) in enumerate(records):
+        for point in record["history"]:
+            matrix[row, point["epoch"] - 1] = point[key]
+    return np.arange(1, max_epoch + 1), matrix
 
-    配色按「有無鏡像」分組而非按 seed——6 條線各給一色會糊成一團，
-    按組上色才看得出結構。組內每個 seed 一條，用低透明度疊加表示分布。
+
+def _valid_epochs(matrix, min_runs=2):
+    """只保留「至少 min_runs 次訓練仍在進行」的 epoch。
+
+    各次訓練早停時機不同，尾端往往只剩一次還在跑——那段的「中位線」其實是
+    單一條曲線，畫出來會讓人誤以為是整組的趨勢。截掉比較誠實。
+    """
+    counts = np.sum(~np.isnan(matrix), axis=0)
+    keep = np.flatnonzero(counts >= min_runs)
+    return (keep[-1] + 1) if keep.size else matrix.shape[1]
+
+
+def _band(axis, epochs, matrix, color, label, linestyle="-", limit=None):
+    """畫中位線＋全距帶。6 條原始線疊在一起會糊成毛線團，中位＋帶才看得出結構。"""
+    limit = limit or matrix.shape[1]
+    epochs, matrix = epochs[:limit], matrix[:, :limit]
+    with np.errstate(all="ignore"):
+        median = np.nanmedian(matrix, axis=0)
+        low, high = np.nanmin(matrix, axis=0), np.nanmax(matrix, axis=0)
+    axis.fill_between(epochs, low, high, color=color, alpha=0.16, linewidth=0)
+    axis.plot(epochs, median, color=color, linewidth=1.9, linestyle=linestyle, label=label)
+
+
+def plot_curves(runs, out_path):
+    """訓練曲線。每組畫「中位線＋全距帶」，不畫每次訓練的原始線。
+
+    左圖：train/val loss —— 兩者的落差就是過擬合程度。
+    右圖：val 的 recall/precision —— 刻意保留，因為它自己就說明了一件事：
+          **val 指標已經飽和（幾乎貼著 1.0），沒有鑑別力**。
+          val split 只有 20 支影片、2 位受試者，模型記住這兩人就能拿滿分。
+          真正可信的是 test split 的幀級指標，不是這裡的數字。
     """
     setup_font()
     figure, axes = plt.subplots(1, 2, figsize=(13.5, 5.4))
-    seen_labels = set()
-
+    groups = {"有鏡像": [], "無鏡像": []}
     for name, record in runs:
-        no_flip = bool(record.get("exclude_flipped"))
-        color = COLOR_NOFLIP if no_flip else COLOR_FLIP
-        group = "無鏡像" if no_flip else "有鏡像"
-        history = record["history"]
-        epochs = [h["epoch"] for h in history]
+        groups["無鏡像" if record.get("exclude_flipped") else "有鏡像"].append((name, record))
 
-        train_label = f"{group} train" if f"{group}-train" not in seen_labels else None
-        val_label = f"{group} val" if f"{group}-val" not in seen_labels else None
-        seen_labels.update({f"{group}-train", f"{group}-val"})
+    best_epochs, limits = [], []
+    for label, color in (("有鏡像", COLOR_FLIP), ("無鏡像", COLOR_NOFLIP)):
+        records = groups[label]
+        if not records:
+            continue
+        epochs, train_matrix = _align_by_epoch(records, "train_loss")
+        _, val_matrix = _align_by_epoch(records, "val_loss")
+        limit = _valid_epochs(train_matrix)
+        limits.append(limit)
+        _band(axes[0], epochs, train_matrix, color, f"{label} train", limit=limit)
+        _band(axes[0], epochs, val_matrix, color, f"{label} val", linestyle="--",
+              limit=limit)
 
-        axes[0].plot(epochs, [h["train_loss"] for h in history], color=color,
-                     linewidth=1.5, alpha=0.75, label=train_label)
-        axes[0].plot(epochs, [h["val_loss"] for h in history], color=color,
-                     linewidth=1.2, linestyle="--", alpha=0.55, label=val_label)
-        best = record.get("best_epoch")
-        best_row = next((h for h in history if h["epoch"] == best), None) if best else None
-        if best_row:
-            axes[0].scatter([best], [best_row["val_loss"]], color=color, s=80,
-                            marker="*", zorder=5, edgecolors="white", linewidths=0.6)
-        axes[1].plot(epochs, [h["val_recall"] for h in history], color=color,
-                     linewidth=1.5, alpha=0.75, label=train_label and f"{group} recall")
-        axes[1].plot(epochs, [h["val_precision"] for h in history], color=color,
-                     linewidth=1.2, linestyle="--", alpha=0.5,
-                     label=val_label and f"{group} precision")
+        _, recall_matrix = _align_by_epoch(records, "val_recall")
+        _, precision_matrix = _align_by_epoch(records, "val_precision")
+        _band(axes[1], epochs, recall_matrix, color, f"{label} recall", limit=limit)
+        _band(axes[1], epochs, precision_matrix, color, f"{label} precision",
+              linestyle="--", limit=limit)
+        best_epochs.extend(record.get("best_epoch", 0) for _, record in records)
+
+    if best_epochs:
+        axes[0].axvspan(min(best_epochs), max(best_epochs), color="#95a5a6", alpha=0.16,
+                        label=f"早停選點範圍（ep {min(best_epochs)}~{max(best_epochs)}）")
 
     axes[0].set_xlabel("Epoch")
     axes[0].set_ylabel("Loss（對數刻度）")
-    axes[0].set_title("損失曲線（實線 train／虛線 val／★ 最佳輪）", fontsize=12)
-    axes[0].grid(alpha=0.25, linestyle="--")
-    axes[0].legend(fontsize=9)
+    axes[0].set_title("損失曲線：中位線＋全距帶（實線 train／虛線 val）", fontsize=12)
     axes[0].set_yscale("log")
-    # train 掉到 1e-4 而 val 停在 1e-2，兩個數量級的落差就是過擬合。
-    # 這是 25 次獨立跌倒事件配 71K 參數的必然結果，早停負責挑出 val 最低的那一輪。
-    axes[0].annotate("train 與 val 差約兩個數量級\n→ 過擬合（早停選 val 最低點）",
-                     xy=(0.42, 0.12), xycoords="axes fraction", fontsize=9,
-                     color="#444", bbox=dict(boxstyle="round,pad=0.4",
-                                             facecolor="#f4f4f4", edgecolor="#ccc"))
+    axes[0].set_ylim(1e-4, 2)
+    axes[0].grid(alpha=0.25, linestyle="--")
+    axes[0].legend(fontsize=8.5, loc="lower left")
+    axes[0].annotate("train 持續下探、val 停在 1e-2 上下\n→ 過擬合，由早停處置",
+                     xy=(0.40, 0.08), xycoords="axes fraction", fontsize=9, color="#444",
+                     bbox=dict(boxstyle="round,pad=0.4", facecolor="#f7f7f7", edgecolor="#ccc"))
 
     axes[1].set_xlabel("Epoch")
     axes[1].set_ylabel("比率")
     axes[1].set_title("驗證集跌倒類（實線 recall／虛線 precision）", fontsize=12)
+    axes[1].set_ylim(0.4, 1.03)
     axes[1].grid(alpha=0.25, linestyle="--")
-    axes[1].legend(fontsize=9, loc="lower right")
-    axes[1].set_ylim(0, 1.05)
+    axes[1].legend(fontsize=8.5, loc="lower right")
+    axes[1].annotate("兩組重疊且長期貼近 1.0\n→ val 指標已飽和、無鑑別力\n"
+                     "（val 僅 20 支影片／2 位受試者）",
+                     xy=(0.30, 0.06), xycoords="axes fraction", fontsize=9, color="#8e2f2f",
+                     bbox=dict(boxstyle="round,pad=0.4", facecolor="#fdf1f1", edgecolor="#e0b4b4"))
 
     figure.suptitle(f"AcT 訓練過程（{len(runs)} 次訓練：3 種子 × 有／無鏡像）", fontsize=15)
-    figure.tight_layout(rect=[0, 0, 1, 0.94])
+    figure.text(0.5, 0.005,
+                f"帶狀範圍＝同組 3 個隨機種子的全距｜曲線只畫到至少 2 次訓練仍在的 epoch"
+                f"（各次早停時機不同）｜驗收請看 test split 指標，非本圖",
+                ha="center", fontsize=9, color="#555")
+    figure.tight_layout(rect=[0, 0.03, 1, 0.94])
     figure.savefig(out_path, dpi=150)
     plt.close(figure)
 

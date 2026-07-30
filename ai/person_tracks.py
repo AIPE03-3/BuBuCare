@@ -152,7 +152,7 @@ class PersonTrackStore:
 
 
 def observe_tracks(result, tracker, store, image_height, occluded_height_ratio,
-                   feature_norm, frame_index):
+                   feature_norm, frame_index, crop_guard=False):
     """跑追蹤器、逐人抽特徵與幾何，更新每人狀態。
 
     回傳 [(PersonTrack, 幾何 dict, box_xyxy), …]，只含這一幀有看到的人。
@@ -184,7 +184,7 @@ def observe_tracks(result, tracker, store, image_height, occluded_height_ratio,
         geometry = person_geometry(
             keypoints, boxes_xywh[detection_index], boxes_xyxy[detection_index],
             image_height, existing.height_reference if existing else None,
-            occluded_height_ratio,
+            occluded_height_ratio, crop_guard=crop_guard,
         )
         observations[track_id] = {
             "feature": feature,
