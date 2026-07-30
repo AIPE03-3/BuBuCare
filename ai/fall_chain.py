@@ -27,14 +27,66 @@ import numpy as np
 LYING_ANGLE_DEG = 40.0       # :718
 LYING_ASPECT_RATIO = 1.25    # :718
 OCCLUDED_Y2_RATIO = 0.5      # :723 —— 人框底緣要低於畫面中線才算「倒在遮蔽物後」
+# 「躺平」的另一半：軀幹角量的是影像平面上肩→臀的方向，頭朝左躺是 ~0°、
+# 頭朝右躺是 ~180°。現行規則只判 <40°，等於只抓到一半的躺姿。
+LYING_ANGLE_DEG_UPPER = 140.0
 
 # COCO 關鍵點索引
 LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
 LEFT_HIP, RIGHT_HIP = 11, 12
 
+# ────────────────────────────────────────────────────────────────────────
+# 躺平規則（防線 A）
+#
+# ⚠ 2026-07-30 實測發現現行規則的軀幹角那一條是**淨負面**的。
+#   test split 30 支影片、逐幀比較（跌倒幀 181 / 正常影片幀 1583）：
+#
+#     規則                        跌倒幀命中   正常幀誤報
+#     current  angle<40 or w/h     16.6%        5.9%
+#     aspect   只有 w/h            14.9%        0.1%   ← 誤報少 59 倍
+#     只有 angle<40                 3.3%        5.9%   ← 誤報全部來自這條
+#     wide     angle<40|>140 or w/h 22.7%        8.0%
+#
+#   軀幹角在 2D 投影下分不出「躺著」和「彎腰撿東西」——兩者肩臀連線都接近水平。
+#   加上 >140° 補回另一半躺姿確實提升召回，但同時把另一半彎腰也收進來，誤報更高。
+#
+#   高處/俯視鏡頭下更嚴重：躺在地上的人在影像上肩臀仍是上下分佈，角度接近 90°，
+#   軀幹角完全沒有訊號（自錄 test6.mp8 實測，含真跌倒那一幀角度都在 99°~117°）。
+# ────────────────────────────────────────────────────────────────────────
+LYING_RULE_CURRENT = "current"    # 正式管線現況
+LYING_RULE_ASPECT = "aspect"      # 只看寬高比
+LYING_RULE_WIDE = "wide"          # 補上 >140° 的另一半躺姿
+LYING_RULES = (LYING_RULE_CURRENT, LYING_RULE_ASPECT, LYING_RULE_WIDE)
+DEFAULT_LYING_RULE = LYING_RULE_CURRENT
+
+
+def check_lying_rule(name):
+    """驗證規則名稱，回傳正規化字串。給 CLI 參數用。"""
+    text = str(name).strip().lower()
+    if text not in LYING_RULES:
+        raise ValueError(f"未知的 lying_rule：{name!r}，可用：{LYING_RULES}")
+    return text
+
+
+def decide_lying(body_angle, aspect_ratio, lying_rule=DEFAULT_LYING_RULE):
+    """依規則判斷躺平。`body_angle` 為 None 代表肩或臀沒抓到，角度那一條直接跳過。
+
+    刻意只吃「角度」與「寬高比」兩個純量，不吃關鍵點——這樣離線掃描可以直接
+    拿 features/*.npz 裡存的原始數值重算，不必為了試一個規則就重跑一遍 YOLO。
+    """
+    wide = aspect_ratio > LYING_ASPECT_RATIO
+    if lying_rule == LYING_RULE_ASPECT:
+        return wide
+    if body_angle is None:
+        return wide
+    if lying_rule == LYING_RULE_WIDE:
+        return wide or body_angle < LYING_ANGLE_DEG or body_angle > LYING_ANGLE_DEG_UPPER
+    return wide or body_angle < LYING_ANGLE_DEG
+
 
 def person_geometry(keypoints, box_xywh, box_xyxy=None, image_height=0,
-                    height_reference=None, occluded_height_ratio=0.0):
+                    height_reference=None, occluded_height_ratio=0.0,
+                    lying_rule=DEFAULT_LYING_RULE):
     """單一人物的幾何判斷：躺平（防線 A）、遮擋（防線 B）、軀幹角、寬高比。
 
     keypoints: 這個人的 `xyn` 關鍵點（對整張畫面正規化）。
@@ -60,12 +112,9 @@ def person_geometry(keypoints, box_xywh, box_xyxy=None, image_height=0,
     hip_x = (keypoints[LEFT_HIP][0] + keypoints[RIGHT_HIP][0]) / 2.0
     hip_y = (keypoints[LEFT_HIP][1] + keypoints[RIGHT_HIP][1]) / 2.0
     if shoulder_x != 0 and hip_x != 0:  # xyn 為 0 代表該點沒抓到，不是「在畫面左上角」
-        angle = float(np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x))))
-        result["body_angle"] = angle
-        if angle < LYING_ANGLE_DEG:
-            result["is_lying"] = True
-    if aspect_ratio > LYING_ASPECT_RATIO:
-        result["is_lying"] = True
+        result["body_angle"] = float(np.abs(np.degrees(
+            np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x))))
+    result["is_lying"] = decide_lying(result["body_angle"], aspect_ratio, lying_rule)
 
     # 防線 B：人突然「變矮」且位置偏下 → 可能倒在家具後面
     if height_reference is not None and box_xyxy is not None:
