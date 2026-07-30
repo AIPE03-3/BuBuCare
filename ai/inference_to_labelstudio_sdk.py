@@ -344,7 +344,12 @@ def main() -> int:
             # 延遲載入：--pull-only 或全部都已標註時完全不必碰 Triton
             from mlops_paths import TRITON_HTTP_URL
             from triton_detr_client import TritonDetrModel
-            url = f"{TRITON_HTTP_URL}/rt_detr"
+            # 模型名不寫死：`rt_detr` 是 tensorrt_plan，在沒有 NVIDIA GPU 的機器上編不出
+            # 引擎也載不起來，那種環境改載同一份權重的 ONNX 版（模型名不同）。
+            # `TRITON_DETR_URL` 這個既有契約就是為此存在（見 .env.example 與
+            # inference_test.py:419 的同款寫法），這裡沿用同一個而不是自成一格。
+            # 沒設時 fallback 回原本的 /rt_detr —— 對已在跑的機器行為完全不變。
+            url = cfg("TRITON_DETR_URL") or f"{TRITON_HTTP_URL}/rt_detr"
             print(f"📦 推論走線上 Triton：{url}")
             model = TritonDetrModel(url)
 
