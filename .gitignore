@@ -80,6 +80,17 @@ ai/detection_dataset/
 # data.yaml 的絕對路徑展開版（mlops_paths.resolve_data_yaml() 執行時生成）
 ai/data.runtime.yaml
 
+# AcT 時序模型的訓練工作目錄（機器產物，2026-07-30 實測 207MB）。
+#   videos/        182M  200 支 mp4 原始素材
+#   labels_review/  23M  50 張 jpg 審查畫面（可從 videos 重抽）
+#   features/      2.1M  150 個 npz 特徵（可重跑特徵擷取重建）
+#   labels_draft/  200K  50 個 txt 標註
+# 擋這條的理由：這裡沒有任何一項是「不擋就會弄丟」的，但只要有人 git add . 就會把
+# 182M 的 mp4 推上去——大檔一旦進了歷史，之後要清得改寫歷史，會波及所有人的分支。
+# ⚠️ 若日後認定 labels_draft/ 的標註是人工成果、屬於「這批數字是拿什麼標的」的證據
+#    （理由同上面 ai/dataset_splits/ 那段），就在這行下面補 !ai/train/dataset/labels_draft/
+ai/train/dataset/
+
 # agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
 ai/agent_shadow.jsonl
 ai/agent_dlq.jsonl
