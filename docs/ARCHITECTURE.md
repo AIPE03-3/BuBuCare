@@ -100,7 +100,7 @@ VLM 讀事件快照 → 產生中文判讀 → 組成後端要的格式 → 送 
 |             | `ai/vlm_worker.py`                | `agent/`                                                |
 | ----------- | ----------------------------------- | --------------------------------------------------------- |
 | 狀態        | **正式服務中**                | **shadow 模式**（`AGENT_SHADOW=1`）               |
-| 架構        | 單檔流程 +`uncertainty_router.py` | LangGraph 圖，6 個節點                                    |
+| 架構        | 單檔流程 +`uncertainty_router.py` | LangGraph 圖，7 個節點                                    |
 | Kafka group | `vlm-brain-cluster`               | `agent-reviewer`（刻意不同，才能併行）                  |
 | 產出        | `vlm_summary`                     | 多帶`ai_verdict` / `ai_confidence` / `ai_reasoning` |
 
