@@ -1,0 +1,45 @@
+# Label Studio —— MLOps 迴路的人工標註端。
+#
+# 移植自 origin/albert_chiang:Fall/tools/docker-compose-label.yml，三處改動：
+#
+# 1. **拿掉他那個 webhook-receiver 容器**。上游是開一個 python:3.13-slim，每次啟動
+#    `pip install fastapi uvicorn requests clearml boto3 opencv-python-headless numpy`
+#    再跑 webhook_receiver.py —— 幾百 MB 的相依每次重開都重抓，而且跟 ai/.venv 是
+#    兩套不同的環境（版本會漂）。這台直接用 ai/.venv 在 host 上跑：
+#        ai/.venv/bin/python ai/webhook_receiver.py
+#    Label Studio 靠下面的 host-gateway 打得到它。
+# 2. **volume 名沿用既有的 `lsdata`**（compose 專案 `ai` → 實際名稱 `ai_lsdata`），
+#    才接得上這台先前標註過的資料；上游用的是同名 volume 但不同專案，會開出空的一套。
+# 3. 掛載路徑改成本 repo 的 `ai/active_learning_dataset`（上游是他 Mac 的相對位置）。
+#
+# ⚠️ **compose 專案名必須是 `ai`**（同 docker-compose-clearml.yml 的說明）。
+#
+# 起服務：
+#   docker compose -p ai -f ai/docker-compose-labelstudio.yml up -d
+# 網頁：http://localhost:8082
+#
+# ⚠️ 8082 不是 8080：8080 被 nh-kafka-ui 佔著。
+
+services:
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: label-studio-compose
+    restart: "no"
+    ports:
+      - "8082:8080"
+    volumes:
+      - lsdata:/label-studio/data
+      # 讓 Label Studio 直接讀得到邊緣端落地的快照，不必先上傳一次
+      - ./active_learning_dataset:/label-studio/data/active_learning_dataset
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_SERV_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/data/active_learning_dataset
+    extra_hosts:
+      # webhook_receiver.py 跑在 host 的 9001 埠（不是容器內）。Label Studio 的 webhook
+      # 要能打到它，所以在容器內把 host-gateway 取名成 host.docker.internal，
+      # webhook URL 就寫 http://host.docker.internal:9001/webhook
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  # 名字不要改：改了就接不上這台既有的 ai_lsdata（先前標註過的專案與任務都在裡面）
+  lsdata:

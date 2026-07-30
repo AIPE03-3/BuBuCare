@@ -1,5 +1,7 @@
 # backend/devices/router.py
 # 裝置（鏡頭）相關路由。前端「鏡頭清單」頁面的資料來源
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -7,7 +9,7 @@ from sqlalchemy.orm import Session
 from core import config  # import 模組而非常數：讓測試能用 monkeypatch 換掉 MEDIAMTX_BASE_URL
 from core.database import get_db
 from core.dependencies import get_current_user, require_admin
-from core.models import Device
+from core.models import Device, Location
 
 router = APIRouter()
 
@@ -57,6 +59,60 @@ def list_devices(
 ):
     devices = db.query(Device).order_by(Device.device_id).all()
     return [serialize_device(d) for d in devices]
+
+
+# ── POST /devices 收到的 JSON 格式 ──
+# 收的是「頻道名」（如 cam_in、phone_a），不是完整網址：主機位址由各消費端自己接
+# （瀏覽器組 WHEP、AI 端組 RTSP），存進資料庫的只有頻道名。長度上限貼齊 DB 的
+# String(255)：超長在這裡就回 422，不要讓它掉到資料庫變 500。
+# stream_channel_detect = AI 畫框後的頻道，沒接 AI 的鏡頭留空即可。
+# device_id 開放指定：邊緣 AI 端以「房號」當 device_id（Room_301_Bed -> 301，見
+# ai/inference_test.py 的解析），註冊真攝影機時要能對齊房號，不能只吃資料庫自動編號。
+# company_id 不收：目前單一機構，固定 1（模型 nullable=False 且無預設，一定要給值）。
+class DeviceCreateRequest(BaseModel):
+    device_name: str = Field(min_length=1, max_length=255)
+    stream_channel: str | None = Field(default=None, max_length=255)
+    stream_channel_detect: str | None = Field(default=None, max_length=255)
+    status: Literal["active", "inactive", "fault"] = "active"
+    location_id: int | None = None
+    device_id: int | None = None
+
+
+# ════════════════════════════════════════════════════════
+# POST /devices（需 admin）：新增鏡頭
+# ════════════════════════════════════════════════════════
+@router.post("/devices", status_code=201)
+def create_device(
+    body: DeviceCreateRequest,
+    current_user: dict = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if body.device_id is not None and \
+            db.query(Device).filter(Device.device_id == body.device_id).first():
+        raise HTTPException(status_code=400, detail="裝置編號已存在")
+
+    if body.location_id is not None and \
+            db.query(Location).filter(Location.location_id == body.location_id).first() is None:
+        raise HTTPException(status_code=400, detail="區域不存在")
+
+    # device_id 用「有給才放進 kwargs」，不直接傳 None：明確傳 None 會把 NULL 塞進 PK 欄位，
+    # PostgreSQL 的 SERIAL 不會補預設值，直接 IntegrityError 變成 500。
+    fields = {
+        "device_name": body.device_name,
+        "stream_channel": body.stream_channel,
+        "stream_channel_detect": body.stream_channel_detect,
+        "status": body.status,
+        "location_id": body.location_id,
+        "company_id": 1,
+    }
+    if body.device_id is not None:
+        fields["device_id"] = body.device_id
+
+    device = Device(**fields)
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    return serialize_device(device)
 
 
 # ── PATCH /devices/{device_id} 收到的 JSON 格式 ──

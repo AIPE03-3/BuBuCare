@@ -96,3 +96,27 @@ def test_serialize帶最新一筆通報單的階段與時間(db_session, make_ev
     data = serialize_event(event, device)
     assert data["report_stage"] == "follow_up"
     assert data["last_report_at"] == "2026-07-03T09:00:00"
+
+
+# ── agent P2：AI 建議判斷欄位 ──
+
+def test_serialize舊事件無ai欄位時全為None(db_session, make_event):
+    event = make_event()  # 不帶 ai_* kwargs，模擬既有事件（欄位補上前建立的）
+    device = db_session.query(Device).filter(Device.device_id == 1).first()
+    data = serialize_event(event, device)
+    assert data["ai_verdict"] is None
+    assert data["ai_confidence"] is None
+    assert data["ai_reasoning"] is None
+
+
+def test_serialize帶ai建議時原樣輸出(db_session, make_event):
+    event = make_event(
+        ai_verdict="false_alarm",
+        ai_confidence=0.8,
+        ai_reasoning="現場沒有任何人存在，因此可以確定並非真實的跌倒事件。",
+    )
+    device = db_session.query(Device).filter(Device.device_id == 1).first()
+    data = serialize_event(event, device)
+    assert data["ai_verdict"] == "false_alarm"
+    assert data["ai_confidence"] == 0.8
+    assert data["ai_reasoning"] == "現場沒有任何人存在，因此可以確定並非真實的跌倒事件。"

@@ -229,7 +229,6 @@ export interface Camera {
 
 export interface VlmResult {
   confidence: number;
-  severity: '高' | '中' | '低';
   description: string;
   suggestion: string;
 }
@@ -257,6 +256,11 @@ export interface CareEvent {
   escalated_to: string | null;   // 升級通知對象；待班表系統導入後帶入實際值班人員，demo 暫以當日值班組長代替
   alerted_at: string | null;     // 曾以全螢幕警示呈現的時間（ISO），用於「⚠ 曾全螢幕警示」持久徽章
   stage_latency_ms?: { capture: number; inference: number; emit: number }; // 預留，本期不顯示
+  // agent P2：LangGraph agent（目前 shadow 模式）對事件的建議判斷，僅供人工複判參考，
+  // 不是人工判定（見 verdict）。null＝AI 未給出建議（含舊事件）。
+  ai_verdict: EventVerdict;
+  ai_confidence: number | null;
+  ai_reasoning: string | null;
 }
 
 export interface EventHistoryQuery {

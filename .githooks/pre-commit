@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# 本機 pre-commit 護欄：commit 當下就擋掉「跨機器會炸」與「不該進 repo」的東西。
+#
+# ⚠️ git hooks 不會跟著 clone/pull 傳過去，所以每台機器要各做一次：
+#     git config core.hooksPath .githooks
+#   （這行只需跑一次，之後永久生效。沒跑也沒關係——GitHub Actions 那層擋得住，
+#     只是會等到 push 完才知道，回饋比較慢。）
+#
+# 這層可以用 `git commit --no-verify` 略過；CI 那層不行。
+set -uo pipefail
+
+# 只檢查這次 staged 的檔案（快），且排除已刪除的
+files=$(git diff --cached --name-only --diff-filter=ACMR)
+[[ -z "$files" ]] && exit 0
+
+python3 scripts/check_guardrails.py $files || {
+  echo
+  echo "commit 已中止。修好上面的問題再 commit。"
+  echo "（確定要硬上：git commit --no-verify，但 GitHub Actions 一樣會擋 PR）"
+  exit 1
+}
