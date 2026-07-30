@@ -1,0 +1,24 @@
+# 護欄豁免清單（scripts/check_guardrails.py 讀這個檔）
+#
+# 護欄要擋的是「新」的違規。這裡列的是**早於護欄就存在**的東西，一次性放行，
+# 不然所有人 commit 都會被陳年舊帳擋住。
+#
+# 格式：<檢查項>:<相對路徑>
+#   size:<path>     檔案大小檢查豁免
+#   abspath:<path>  家目錄絕對路徑檢查豁免
+#   secret:<path>   明文密碼檢查豁免
+#
+# ⚠️ 加新的一行前先想清楚：豁免是「這條規則對這個檔不適用」，不是「這次先過」。
+#    如果只是單一行的特例，改用行尾註解 `# guardrail: allow` 比較精準。
+
+# ── 既有已追蹤的大檔（在 .gitignore 補上前就進 repo 了，移除要另外處理）──
+size:ai/yolo11s.pt                                  # YOLO 官方權重 18MB
+size:ai/yolo11s-pose.pt                             # YOLO pose 官方權重 19MB
+size:gcp_vm_environment/jmx_prometheus_javaagent.jar # Kafka JMX exporter 10.7MB
+
+# ── 部署腳本：/home/ubuntu/ 是「目標 VM 上的路徑」，本來就該寫死，不是開發者家目錄 ──
+abspath:gcp_vm_environment/deploy_dev.sh
+
+# ── 測試/範例檔的假憑證（非真實機密）──
+secret:backend/tests/test_sse.py                          # token="bad-token" 測試 fixture
+secret:gcp_vm_environment/test_sample/kfk_remote_producer.py  # KAFKA_PASSWORD="XXXXX..." 佔位符

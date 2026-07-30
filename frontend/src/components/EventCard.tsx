@@ -1,9 +1,11 @@
 import { useNavigate } from 'react-router-dom';
 import type { CareEvent } from '../types';
 import { StatusTag } from './StatusTag';
+import { AiSuggestionBadge } from './AiSuggestionBadge';
 import { formatElapsedMinutes, formatTime } from '../utils/time';
 import { getEventTypeLabel, hasEscalatedFlag } from '../utils/eventFlags';
 import { FlagIcon } from './icons';
+import { useEvents } from '../hooks/eventsContext';
 
 function getNotificationNote(event: CareEvent): { text: string; className: string } | null {
   if (event.escalated_to) {
@@ -27,10 +29,13 @@ interface EventCardProps {
 
 export function EventCard({ event, now, highlighted, onAcknowledge }: EventCardProps) {
   const navigate = useNavigate();
+  const { handleConfirmAiFalseAlarm } = useEvents();
 
   const note = getNotificationNote(event);
   const escalated = hasEscalatedFlag(event);
   const canAcknowledge = event.status === 'pending';
+  // AI 建議可能為誤報，且事件還沒被人工判定過（pending）時才給一鍵確認，避免對已結案事件亂改狀態
+  const canConfirmAiFalseAlarm = event.status === 'pending' && event.ai_verdict === 'false_alarm';
 
   return (
     <div
@@ -58,18 +63,38 @@ export function EventCard({ event, now, highlighted, onAcknowledge }: EventCardP
         {note && <span className={note.className}>　{note.text}</span>}
       </p>
 
-      {canAcknowledge && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onAcknowledge(event);
-          }}
-          className="mt-2 rounded-md border border-[var(--brand)] bg-transparent px-3 py-1 text-xs text-[var(--brand)] transition-colors duration-150"
-        >
-          接手
-        </button>
+      {event.ai_verdict && (
+        <p className="mt-1">
+          <AiSuggestionBadge event={event} />
+        </p>
       )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {canAcknowledge && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAcknowledge(event);
+            }}
+            className="rounded-md border border-[var(--brand)] bg-transparent px-3 py-1 text-xs text-[var(--brand)] transition-colors duration-150"
+          >
+            接手
+          </button>
+        )}
+        {canConfirmAiFalseAlarm && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleConfirmAiFalseAlarm(event);
+            }}
+            className="rounded-md border border-[var(--offline)] bg-transparent px-3 py-1 text-xs text-[var(--offline)] transition-colors duration-150"
+          >
+            確認誤報
+          </button>
+        )}
+      </div>
     </div>
   );
 }

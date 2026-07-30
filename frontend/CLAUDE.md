@@ -113,16 +113,24 @@ export type EventVerdict = 'true_alarm' | 'false_alarm' | null;
 
 export type DeviceStatus = 'online' | 'offline' | 'disabled';
 // online=正常運作／offline=暫時離線（監控死角，需注意）／disabled=永久已停用（排除總覽查詢）
-// ⚠ 待後端確認 devices.status 是否已區分 offline/disabled（04檔#5），MVP前端先預留三態、mock資料模擬
+// 後端 devices.status 已確認為三態（active/inactive/fault），對照表在 api/cameras.ts 的 STATUS_MAP
 
 export interface Camera {
   id: number;
   name: string;              // 鏡頭5
   zone: string;              // 活動室A（區域分組，無樓層層）
   floor: string | null;      // demo 一律不顯示
-  stream_url: string | null; // 串流協定未定，先預留
+  // 兩條完整的 WHEP 網址，由後端把資料庫的頻道名接上 .env 的 MEDIAMTX_BASE_URL 組成。
+  // null＝這個環境沒有這條串流（後端沒設位址，或這台鏡頭沒填該頻道）。
+  stream_url: string | null;        // 即時（原味）
+  stream_url_detect: string | null; // 偵測（AI 畫框後），沒接 AI 的鏡頭為 null
+  // 頻道名（cam_in / phone_a…），與上面兩條網址一一對應、同時有值或同時為 null。
+  // 用途：向後端 POST /streams/{channel}/token 換 60 秒串流權杖再去連 MediaMTX。
+  stream_channel: string | null;
+  stream_channel_detect: string | null;
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷
 }
+// 已移除 StreamSource 型別：全站零讀取，且與 stream_url_detect 語意重疊。
 
 export type EnvSafetyGrade = '良好' | '注意' | '警示' | '危險';
 // 對照 02檔：total_score 90-100良好／70-89注意／40-69警示／0-39危險
@@ -138,7 +146,6 @@ export interface EnvSafetyScore {
 
 export interface VlmResult {
   confidence: number;
-  severity: '高' | '中' | '低';
   description: string;
   suggestion: string;
 }
@@ -193,7 +200,9 @@ export interface AuthSession {
   role: Role;
   display_name: string;
   must_change_password: boolean; // 新帳號首次登入／被 admin 重設密碼者為 true，觸發強制改密碼流程
-  // employee_code: string | null — 待凱莉確認後端欄位與 /me 端點後新增，未確認前不得實作
+  // 登入者本人的員編，取自 JWT payload 的 sub（後端登入時已包入，毋須打 /me）。
+  // null＝取不到（OTP mock 登入無員編，或舊的 localStorage session 尚未帶此欄）。
+  employee_code: string | null;
 }
 export interface AuthProvider {
   requestCode?(email: string): Promise<void>;
@@ -273,7 +282,8 @@ export interface FixedTestSet {
 
 - 事件有兩條產生路徑：YOLO 高信心直通（`vlm_result: null`）與 VLM 複判後產生。所有顯示 VLM 資訊的地方都必須處理 null。
 - 即時推播經 `useEventSocket` hook（demo 用計時器模擬），介面比照 WebSocket，日後直接替換連線實作。
-- 即時影像一律灰色占位框＋「鏡頭即時影像」文字，不接真串流；事件／偵測紀錄的截圖才用「事件快照（影像片段）」，兩者語意不同、不共用文字（`CAMERA_LABEL.LIVE_PLACEHOLDER` vs `SNAPSHOT_PLACEHOLDER`）。
+- 即時影像**已接真串流**（WebRTC/WHEP，見 `components/LiveStream.tsx`）：首頁四宮格與鏡頭彈窗皆播放實際畫面，網址由 `GET /devices` 提供（`stream_url`＝即時、`stream_url_detect`＝AI 偵測）。網址為 null 時才退回灰色占位框（`CAMERA_LABEL.LIVE_PLACEHOLDER`）。事件／偵測紀錄的截圖仍是「事件快照（影像片段）」（`SNAPSHOT_PLACEHOLDER`），兩者語意不同、不共用文字。
+- **串流已有身分驗證，光有網址看不到畫面**：`LiveStream` 連線前必須先以 `fetchStreamToken(channel)` 向後端換一張 60 秒串流權杖，帶 `Authorization: Bearer` 打 WHEP，MediaMTX 會回頭向後端驗票。故 `LiveStream` 的 `whepUrl` 與 `channel` 兩個 prop **必須是同一個模式的一組**（同為即時或同為偵測），配錯會 401。
 
 ## Definition of Done（每個任務完成前自查）
 

@@ -206,15 +206,8 @@ export interface AlertLogEntry {
   at: string;           // ISO；hazard_detected＝偵測到的時間，pending＝事件發生時間
 }
 
-// 鏡頭串流來源：目前 mock 資料僅有 null（無串流來源）這一種情境。
-// 'snapshot'／'hls' 為後續輪次接上真實影像來源時使用，本輪只定義型別、不實作渲染。
-export type StreamSource =
-  | { type: 'snapshot'; url: string }
-  | { type: 'hls'; url: string }
-  | null;
-
 // 裝置狀態：online=正常運作／offline=暫時離線（監控死角，需注意）／disabled=永久已停用（排除總覽查詢）。
-// ⚠ 待後端確認 devices.status 是否已區分 offline/disabled（04檔#5），MVP 前端先預留三態、mock 資料模擬。
+// 後端 devices.status 已區分三態（active/inactive/fault），對照在 api/cameras.ts 的 STATUS_MAP。
 export type DeviceStatus = 'online' | 'offline' | 'disabled';
 
 export interface Camera {
@@ -222,14 +215,20 @@ export interface Camera {
   name: string;              // 鏡頭5
   zone: string;              // 活動室A（區域分組，無樓層層）
   floor: string | null;      // demo 一律不顯示
-  stream_url: string | null; // 串流協定未定，先預留（既有欄位，勿動——FullScreenAlert/SuppressConfirmModal 仍依賴此欄位）
-  stream_source: StreamSource; // 畫面渲染來源；本輪 mock 資料一律為 null，見 CameraDetailModal 渲染分支
+  // 兩條完整的 WHEP 網址，由後端把資料庫的頻道名接上 .env 的 MediaMTX 位址組成。
+  // null＝這個環境沒有這條串流（後端沒設 MEDIAMTX_BASE_URL，或這台鏡頭沒填該頻道）。
+  stream_url: string | null;        // 即時（原味）
+  stream_url_detect: string | null; // 偵測（AI 畫框後），沒接 AI 的鏡頭為 null
+  // 頻道名（cam_in / phone_a…），與上面兩條網址一一對應、同時有值或同時為 null。
+  // 用途：向後端 POST /streams/{channel}/token 換取 60 秒串流權杖——
+  // MediaMTX 已開啟身分驗證，沒帶權杖一律回 401，光有網址看不到畫面。
+  stream_channel: string | null;
+  stream_channel_detect: string | null;
   status: DeviceStatus;      // 取代原本 online: boolean，支援離線/已停用分開判斷（online 布林可由 status==='online' 導出）
 }
 
 export interface VlmResult {
   confidence: number;
-  severity: '高' | '中' | '低';
   description: string;
   suggestion: string;
 }
@@ -257,6 +256,11 @@ export interface CareEvent {
   escalated_to: string | null;   // 升級通知對象；待班表系統導入後帶入實際值班人員，demo 暫以當日值班組長代替
   alerted_at: string | null;     // 曾以全螢幕警示呈現的時間（ISO），用於「⚠ 曾全螢幕警示」持久徽章
   stage_latency_ms?: { capture: number; inference: number; emit: number }; // 預留，本期不顯示
+  // agent P2：LangGraph agent（目前 shadow 模式）對事件的建議判斷，僅供人工複判參考，
+  // 不是人工判定（見 verdict）。null＝AI 未給出建議（含舊事件）。
+  ai_verdict: EventVerdict;
+  ai_confidence: number | null;
+  ai_reasoning: string | null;
 }
 
 export interface EventHistoryQuery {
@@ -325,7 +329,16 @@ export interface DownloadableMedia {
 }
 
 export type Role = 'admin' | 'staff';
-export interface AuthSession { token: string; role: Role; display_name: string; must_change_password: boolean; }
+export interface AuthSession {
+  token: string;
+  role: Role;
+  display_name: string;
+  must_change_password: boolean; // 新帳號首次登入／被 admin 重設密碼者為 true，觸發強制改密碼流程
+  // 登入者本人的員編，來源是 JWT payload 的 sub（後端登入時已包入，毋須打 /me）。
+  // null＝取不到（OTP mock 登入無員編，或舊的 localStorage session 尚未帶此欄）。
+  // 用途：判斷名單中哪一筆是自己，例如禁止改自己的角色。
+  employee_code: string | null;
+}
 export interface AuthProvider {
   requestCode?(email: string): Promise<void>;
   verifyCode?(email: string, code: string): Promise<AuthSession>;

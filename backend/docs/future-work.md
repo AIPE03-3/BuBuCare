@@ -7,10 +7,17 @@
 
 ### 1. Refresh token + 短效 access token（上正式環境前必做）
 
-- **現況**：單一 JWT，有效期 1 天（`backend/core/config.py` 的 `ACCESS_TOKEN_EXPIRE_DAYS`）。過期就要重新登入。
-- **問題**：token 有效期長 + `/stream` 的 token 放在網址上會進伺服器日誌，等於日誌裡的 token 有一整天的冒用窗口。
-- **做法**：改成兩張票——短效 access token（15~30 分鐘）+ 長效 refresh token（7~30 天，HttpOnly cookie 存放），前端在 access token 快過期時自動用 refresh token 換新的，使用者無感。
-- **為什麼現在不做**：作品集階段、日誌都在自己伺服器上，風險可接受；refresh 機制要多做端點、前端邏輯和撤銷管理。
+- **現況**：單一 JWT，有效期 **8 小時**（`backend/core/config.py` 的 `ACCESS_TOKEN_EXPIRE_HOURS`）。
+  2026-07-29 從 1 天縮短，理由是 JWT 無法撤銷——按登出只是前端丟掉 token，後端仍認得它，
+  所以有效期是外流後唯一的止血點。8 小時＝約一個班次，值班中不會被登出。
+- **問題**：仍有 8 小時的冒用窗口，且 `/stream` 的 token 放在網址上會進伺服器日誌。
+  token 存在 localStorage，任何一段 JavaScript（含被下毒的 npm 套件）都讀得到。
+- **做法**：改成兩張票——短效 access token（15~30 分鐘）+ 長效 refresh token（7~30 天，
+  HttpOnly cookie 存放，JavaScript 讀不到），前端在 access token 快過期時自動換新的，使用者無感。
+  兩張票才能同時要到「進門的票很短命」與「不用一直重新登入」。
+- **為什麼現在不做**：要動登入流程骨幹（新端點、cookie、前端攔截、撤銷管理），
+  出錯的症狀是「平常都好、某個時間點突然全體被登出」，很難在幾天內測出來，demo 前風險報酬比差。
+  縮短有效期是同方向的簡化版，之後做 refresh 時只是把數字再改小，不會白做。
 
 ### 2. Nginx 日誌遮蔽 /stream 的 query 參數（架 nginx 時順手做）
 

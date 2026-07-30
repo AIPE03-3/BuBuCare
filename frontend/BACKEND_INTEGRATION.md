@@ -66,9 +66,9 @@ fulilian-backend
 | `status` | string | 已對齊三態 `pending / in_progress / resolved`，不轉換 |
 | `verdict` | string \| null | 已對齊 `true_alarm / false_alarm / null` |
 | `detected_at` | ISO string | **若無時區標記自動補 `+08:00`**（後端曾漏帶時區；帶 Z 或 ±hh:mm 則原樣） |
-| `yolo_score` / `yolo_threshold` | number | → `confidence` |
+| `yolo_score` | number | → `confidence`（`yolo_threshold` 後端已無此欄，見下） |
 | `vlm_summary` | string、物件 或 null | null＝YOLO 高信心直通；字串當 description；物件取 confidence/description/suggestion |
-| `severity` | string \| null | 中英都吃（高/high、中/mid/medium、低/low），未知值 fallback「中」並 console.warn |
+| ~~`severity`~~ / ~~`yolo_threshold`~~ | — | **後端已於 2026-07-19（commit `1bbb585`）從 `detect_events` 與事件 API 整組移除**，嚴重度概念改用 `verdict_by` / `resolved_by` 取代。AI 端於 2026-07-27 補做同一次清理，不再送出。前端 `VlmResult.severity`（原本寫死「中」、無元件讀取）已一併刪除 |
 | `clip_path` / `snapshot_path` | string \| null | 原樣帶入，播放器／縮圖用 |
 | `staff_id` | number \| null | 暫以「員工 #<id>」顯示，待 staff 名單端點 |
 | `notified_at` / `company_id` | — | 前端目前未使用 |

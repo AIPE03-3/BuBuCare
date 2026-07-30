@@ -1,0 +1,22 @@
+# GitHub Actions：每次 push / 開 PR，雲端自動跑一遍護欄檢查。
+#
+# 為什麼要有這層（而不是只靠本機 pre-commit hook）：
+#   1. git hooks 不會跟著 clone/pull 傳到別台機器，別人不設定就等於沒有。
+#   2. 本機 hook 可以用 `git commit --no-verify` 略過，這層不行。
+# 所以本機 hook 是「快速回饋」，這層才是「說了算」。紅燈就是不能合。
+name: guardrails
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 要完整歷史才能查大檔是不是這次新加的
+
+      - name: 護欄檢查（絕對路徑 / 大檔 / 明文密碼 / 後端契約）
+        run: python3 scripts/check_guardrails.py

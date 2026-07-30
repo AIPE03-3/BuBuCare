@@ -4,6 +4,7 @@ import { BackButton } from '../components/BackButton';
 import { CountdownTimer } from '../components/CountdownTimer';
 import { DEMO_VIDEO_SRC } from '../components/FullScreenAlert';
 import { EventStatusBadge } from '../components/EventStatusBadge';
+import { AiSuggestionBadge } from '../components/AiSuggestionBadge';
 import { useEvents } from '../hooks/eventsContext';
 import { useEventClipUrl } from '../hooks/useEventClipUrl';
 import { getStoredReports } from '../api/reports';
@@ -23,7 +24,7 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
 export function EventDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { events, now, restoreEvent } = useEvents();
+  const { events, now, restoreEvent, handleConfirmAiFalseAlarm } = useEvents();
   const [videoError, setVideoError] = useState(false);
   const { clipUrl, loading: clipLoading } = useEventClipUrl(id);
   // 通報單紀錄走 async api（好換成後端 fetch），effect 載入；本頁進場時載一次即可。
@@ -52,6 +53,8 @@ export function EventDetail() {
   // 每次通報都獨立儲存：最新一筆（陣列尾）決定 PDF 預覽鈕標籤；續報筆數用於「已續報次數」。
   const savedReport = storedReports.length > 0 ? storedReports[storedReports.length - 1] : null;
   const followUpCount = storedReports.filter((r) => r.form.reportType === '續報').length;
+  // agent P2：AI 建議可能為誤報，且事件還沒被人工判定過（pending）時才給一鍵確認
+  const canConfirmAiFalseAlarm = event.status === 'pending' && event.ai_verdict === 'false_alarm';
 
   return (
     <div className="flex flex-col gap-4">
@@ -123,7 +126,19 @@ export function EventDetail() {
           />
           {followUpCount > 0 && <InfoRow label="已續報次數" value={`${followUpCount} 次`} />}
           {isFalseAlarm && <InfoRow label="備註" value={event.false_alarm_note ?? '—'} />}
+          {event.ai_verdict && <InfoRow label="AI 建議" value={<AiSuggestionBadge event={event} />} />}
+          {event.ai_reasoning && <InfoRow label="AI 判斷理由" value={event.ai_reasoning} />}
         </div>
+
+        {canConfirmAiFalseAlarm && (
+          <button
+            type="button"
+            onClick={() => handleConfirmAiFalseAlarm(event)}
+            className="w-full rounded-md border border-[var(--offline)] bg-transparent px-4 py-2 text-center text-sm font-medium text-[var(--offline)] transition-colors duration-150 hover:bg-[var(--bg-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--offline)] focus-visible:ring-offset-2"
+          >
+            確認誤報（採納 AI 建議）
+          </button>
+        )}
 
         {/* 已初報或已續報時出現後續通報動作（可反覆續報，或結報結案）；點擊帶通報別導向填寫頁，
             該頁會載入既有通報單並自動勾選對應通報別。 */}

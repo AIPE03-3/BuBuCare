@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { BackButton } from '../components/BackButton';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { useCurrentUser } from '../hooks/useCurrentUser';
 import { useEvents } from '../hooks/eventsContext';
 import { getLatestReport, saveReport } from '../api/reports';
 import { resolveEvent } from '../api/events';
@@ -205,6 +206,8 @@ export function ReportFormPage() {
   const [form, setForm] = useState<ReportFormData | null>(null);
   // 每個事件只載入一次初值：SSE 更新會讓 event 物件換身分，若跟著重載會洗掉使用者填到一半的內容。
   const loadedEventIdRef = useRef<string | null>(null);
+  // 通報者姓名自動帶入目前登入者（純前端，取 JWT 內的 full_name，不動資料庫）。
+  const { name: currentUserName } = useCurrentUser();
 
   useEffect(() => {
     if (!event || loadedEventIdRef.current === event.id) return;
@@ -213,9 +216,15 @@ export function ReportFormPage() {
       if (loadedEventIdRef.current === eventForLoad.id) return; // 併發載入（如 StrictMode 雙跑）已完成
       loadedEventIdRef.current = eventForLoad.id;
       const base = latest ? latest.form : buildInitialForm(eventForLoad);
-      setForm(requestedType ? { ...base, reportType: requestedType } : base);
+      // 只在空白時填，不覆蓋既有值：續報／結報沿用初報內容時，原填表人的姓名要保留，
+      // 不能被現在開啟頁面的人蓋掉（那是已送出的紀錄，不是這次要填的欄位）。
+      const withReporter =
+        base.reporterName || !currentUserName
+          ? base
+          : { ...base, reporterName: currentUserName };
+      setForm(requestedType ? { ...withReporter, reportType: requestedType } : withReporter);
     });
-  }, [event, requestedType]);
+  }, [event, requestedType, currentUserName]);
 
   if (!event) {
     return (
