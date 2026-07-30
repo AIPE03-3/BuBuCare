@@ -9,8 +9,14 @@ def _admin_headers(client):
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
-def test_admin_creates_device_with_stream_channel(client, db_session):
+def test_admin_creates_device_with_stream_channel(client, db_session, monkeypatch):
     # admin 新增一台指定房號的攝影機 → 201，回應是完整的裝置結構、DB 也存進去了
+    # 明確把 MediaMTX 位址關掉，不靠「這台電腦剛好沒設」的假設：
+    # 開發機的 .env 若有 MEDIAMTX_BASE_URL，whep_url() 會算出真網址，
+    # 這支就會變成「CI 綠、本機紅」（做法同 test_devices_stream_url.py）
+    from core import config
+    monkeypatch.setattr(config, "MEDIAMTX_BASE_URL", "")
+
     res = client.post("/devices", headers=_admin_headers(client), json={
         "device_id": 301,
         "device_name": "寢室-301",
