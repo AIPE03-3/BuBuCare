@@ -32,8 +32,8 @@
 ## 用法
 
 ```bash
-# 影片檔
-ai/.venv/bin/python ai/local_pipeline_eval.py ai/test_demo/test1.mp4
+# 影片檔（素材都不進版控，路徑換成你自己手上的）
+ai/.venv/bin/python ai/local_pipeline_eval.py ai/train/dataset/videos/FallForwardS2.mp4
 
 # 電腦攝影機（自己站起來坐下、假裝跌倒試試）
 ai/.venv/bin/python ai/local_pipeline_eval.py 0
@@ -43,6 +43,9 @@ ai/.venv/bin/python ai/local_pipeline_eval.py 0 --no-latch
 
 # 存一份標註影片
 ai/.venv/bin/python ai/local_pipeline_eval.py 影片路徑 --save
+
+# 公共區域多人畫面：每人各一個 30 幀視窗與身高基準
+ai/.venv/bin/python ai/local_pipeline_eval.py 影片路徑 --multi-person
 ```
 
 播放中按 **q** 離開、**空白鍵** 暫停／繼續。

@@ -49,13 +49,15 @@ gcp_vm_environment/.env
 ai/triton_repo/*/[0-9]*/
 *.onnx
 
-# 影片：預設全擋，只放行既有已追蹤的四支小檔（各 1.5~2.4MB）。
+# 影片：預設全擋，只放行前端的示範片。
 # test4.mp4 是 4.9 分鐘的 FPS 量測長片（344MB），要用請另外取得、不進版控。
 # 新增影片前先想清楚大小；要進 repo 就在這裡加一條 `!` 白名單。
+#
+# ai/test_demo/test1~3.mp4 曾在白名單裡，2026-07-30 隨檔案刪除一併移除：
+# 那三支是舊的剪接長片（一支混多段跌倒與正常），batch_eval.py 的
+# SKIP_PREFIXES=("test",) 本來就跳過它們，不適合用來評估。
+# 評估素材現在一律走 ai/train/dataset/videos/（CAUCAFall，同樣不進版控）。
 *.mp4
-!ai/test_demo/test1.mp4
-!ai/test_demo/test2.mp4
-!ai/test_demo/test3.mp4
 !frontend/public/videos/fall-demo.mp4
 
 # inference_test 觸發事件時寫入的證據快照（執行時產物）
