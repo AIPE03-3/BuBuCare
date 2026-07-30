@@ -87,7 +87,7 @@ if curl -sf -m 3 "http://127.0.0.1:${TRITON_HTTP_PORT}/v2/health/ready" >/dev/nu
   ok "T1-3 Triton server ready（HTTP ${TRITON_HTTP_PORT}）"
   for m in yolo_pose rt_detr_onnx action_transformer; do
     code="$(curl -s -o /dev/null -w '%{http_code}' -m 3 "http://127.0.0.1:${TRITON_HTTP_PORT}/v2/models/$m/ready" 2>/dev/null)"
-    [[ "$code" == "200" ]] && ok "T1-3 模型 $m 已載入" || bad "T1-3 模型 $m 未就緒（HTTP $code）" "docker logs nh-triton | tail -30"
+    [[ "$code" == "200" ]] && ok "T1-3 模型 $m 已載入" || bad "T1-3 模型 $m 未就緒（HTTP ${code}）" "docker logs nh-triton | tail -30"
   done
 else
   bad "T1-3 Triton 沒起來（HTTP ${TRITON_HTTP_PORT}）" \
@@ -111,7 +111,7 @@ for c in nh-kafka nh-backend nh-frontend; do
 done
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:${BACKEND_PORT}/docs" 2>/dev/null)"
-[[ "$code" == "200" ]] && ok "T2-1 backend /docs 200" || bad "T2-1 backend 打不到（HTTP $code）" "docker logs nh-backend | tail -30"
+[[ "$code" == "200" ]] && ok "T2-1 backend /docs 200" || bad "T2-1 backend 打不到（HTTP ${code}）" "docker logs nh-backend | tail -30"
 
 # ── P3 VLM ───────────────────────────────────────────────────
 section "P3 VLM 二審"
@@ -122,7 +122,7 @@ if curl -sf -m 3 "http://127.0.0.1:${OLLAMA_PORT}/api/version" >/dev/null 2>&1; 
   if ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$want"; then
     ok "T3-1 VLM 模型 $want 已下載"
   else
-    bad "T3-1 找不到 VLM 模型 $want" "ollama pull $want（本機現有：$(ollama list 2>/dev/null | awk 'NR>1{printf "%s ", $1}'))"
+    bad "T3-1 找不到 VLM 模型 $want" "ollama pull ${want}（本機現有：$(ollama list 2>/dev/null | awk 'NR>1{printf "%s ", $1}'))"
   fi
 else
   bad "T3 ollama 服務沒回應" "開 Ollama.app 或跑 ollama serve"
@@ -152,6 +152,43 @@ ENV_MEDIAMTX="$(env_val MEDIAMTX_BASE_URL)"
 [[ -n "$ENV_MEDIAMTX" ]] \
   && ok "T4-2 .env 的 MEDIAMTX_BASE_URL=${ENV_MEDIAMTX}" \
   || info "T4-2 .env 還沒設 MEDIAMTX_BASE_URL（後端組不出 WHEP 網址，前端畫面會是空的）"
+
+# ── P5 MLOps ─────────────────────────────────────────────────
+section "P5 MLOps（ClearML / Label Studio）"
+
+[[ -f ai/docker-compose-clearml.mac.yml ]] \
+  && ok "T5-1 ClearML 的 Mac override 檔在" \
+  || bad "T5-1 缺 ai/docker-compose-clearml.mac.yml" "見 MAC_SETUP_WBS.md T5-1"
+
+# ClearML 六個服務。這一套很重且只有跑重訓時才需要，沒開不算故障（用 info）。
+if curl -sf -m 5 "http://127.0.0.1:8008/debug.ping" >/dev/null 2>&1; then
+  ok "T5-2 ClearML apiserver（:8008 debug.ping）"
+  for p in 8085:web 8081:fileserver; do
+    port="${p%%:*}"; name="${p##*:}"
+    code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:${port}" 2>/dev/null)"
+    [[ "$code" == "200" ]] && ok "T5-2 ClearML ${name}（:${port}）" \
+      || bad "T5-2 ClearML ${name} 回 HTTP $code" "docker logs clearml-server-${name} | tail -30"
+  done
+else
+  info "T5-2 ClearML 沒開 —— 只有跑 MLOps 迴路時才需要，P1~P4 不受影響"
+  info "     起法：docker compose -p ai -f ai/docker-compose-clearml.yml -f ai/docker-compose-clearml.mac.yml up -d"
+fi
+
+# Label Studio：未登入時首頁回 302（導向 /user/login），不是 200 —— 用 302/200 都算活著。
+ls_code="$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:8082/" 2>/dev/null)"
+case "$ls_code" in
+  200|302) ok "T5-3 Label Studio（:8082，HTTP ${ls_code}）" ;;
+  *) info "T5-3 Label Studio 沒開（HTTP ${ls_code}）→ 先 mkdir -p ai/active_learning_dataset，再 docker compose -p ai -f ai/docker-compose-labelstudio.yml up -d" ;;
+esac
+
+# bind mount 來源。不存在時 Docker 會自作主張建一個 root 擁有的空目錄，容器內寫不進去。
+[[ -d ai/active_learning_dataset ]] \
+  && ok "T5-3 ai/active_learning_dataset 在（Label Studio 的 bind mount 來源）" \
+  || bad "T5-3 缺 ai/active_learning_dataset" "mkdir -p ai/active_learning_dataset（要在起容器之前）"
+
+[[ -f "$HOME/clearml.conf" ]] \
+  && ok "T5-4 ~/clearml.conf 已建立" \
+  || info "T5-4 還沒有 ~/clearml.conf → cp ai/clearml.conf.example ~/clearml.conf 並填 credentials"
 
 # ── 護欄（每階段結束都要綠燈）────────────────────────────────
 section "護欄"
