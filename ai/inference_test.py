@@ -451,18 +451,45 @@ TRITON_HOST = cfg("TRITON_HOST", "http://127.0.0.1:8010").rstrip("/")
 TRITON_POSE_URL = cfg("TRITON_POSE_URL") or f"{TRITON_HOST}/yolo_pose"
 TRITON_DETR_URL = cfg("TRITON_DETR_URL") or f"{TRITON_HOST}/rt_detr"
 TRITON_ACT_URL = cfg("TRITON_ACT_URL") or f"{TRITON_HOST}/action_transformer"
-yolo_pose_model = TritonPoseModel(TRITON_POSE_URL)   # 人體姿態打 Triton yolo_pose
-yolo_env_model = TritonDetrModel(TRITON_DETR_URL)    # 環境物件偵測打 Triton rt_detr
 
-# AcT 改打 Triton action_transformer。保留原本的降級語意：若 Triton 的 AcT 不可用
-# （client 建構失敗等），transformer_model 設 None，下游 len(frame_window)==30 的分支
-# 會退回「is_physically_lying 幾何模擬」機制，不讓整支 crash。實際的 Triton 連線是
-# thread-local 延遲建立（見 TritonActModel），這裡只是建 wrapper 物件、不會真的連線。
+# ── INFER_BACKEND：效能對照用的開關（生產一律 triton）─────────────────────────
+# triton（預設，未設也是這個）＝三顆模型架在 Triton 伺服器上，每幀打一趟過去。
+# local ＝權重直接載進本 process，不經任何伺服器。這是「不用 Triton」的 baseline，
+#         純粹為了量 Triton 這層的成本（見 ai/BENCHMARK_TRITON_VS_LOCAL.md）。
+#
+# ⚠️ 只換「建構哪個 client 物件」，下面所有推論呼叫點一行都不動 —— 兩邊的
+# __call__ 簽章與回傳型別刻意做成相同（Results / logits ndarray）。
+# ⚠️ local 模式**不是生產路徑**：沒有熱抽換（model_deployment_agent 換版靠 Triton）、
+# 每條 camera_worker 執行緒各載一份權重進顯存、多路會線性吃顯存。只用來跑對照。
+INFER_BACKEND = (cfg("INFER_BACKEND", "triton") or "triton").strip().lower()
+if INFER_BACKEND not in ("triton", "local"):
+    print(f"⚠️ 不認得的 INFER_BACKEND={INFER_BACKEND!r}，退回預設 triton")
+    INFER_BACKEND = "triton"
+
+if INFER_BACKEND == "local":
+    from local_detr_client import LocalDetrModel
+    from local_pose_client import LocalPoseModel
+    print("🧪 INFER_BACKEND=local：三顆模型直接載進本 process（效能對照用，非生產路徑）")
+    yolo_pose_model = LocalPoseModel()
+    yolo_env_model = LocalDetrModel()
+else:
+    yolo_pose_model = TritonPoseModel(TRITON_POSE_URL)   # 人體姿態打 Triton yolo_pose
+    yolo_env_model = TritonDetrModel(TRITON_DETR_URL)    # 環境物件偵測打 Triton rt_detr
+
+# AcT：Triton 打 action_transformer，local 則直接載 action_transformer.pth。
+# 保留原本的降級語意：client 建構失敗時 transformer_model 設 None，下游
+# len(frame_window)==30 的分支會退回「is_physically_lying 幾何模擬」機制，不讓整支 crash。
+# 實際的連線／權重載入都是 thread-local 延遲建立（見各 client），這裡只是建 wrapper 物件。
 try:
-    transformer_model = TritonActModel(TRITON_ACT_URL)
-    print("🔥 Triton 三顆 client 就緒，多任務平行化管線就緒！")
+    if INFER_BACKEND == "local":
+        from local_act_client import LocalActModel
+        transformer_model = LocalActModel()
+        print("🔥 本地三顆 client 就緒（INFER_BACKEND=local）")
+    else:
+        transformer_model = TritonActModel(TRITON_ACT_URL)
+        print("🔥 Triton 三顆 client 就緒，多任務平行化管線就緒！")
 except Exception as e:
-    print(f"⚠️ 建立 TritonActModel 失敗（{e}），將使用模擬機制運行時序推理。")
+    print(f"⚠️ 建立 AcT client 失敗（{e}），將使用模擬機制運行時序推理。")
     transformer_model = None
 
 output_frames = {}

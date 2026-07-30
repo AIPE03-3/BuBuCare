@@ -1,4 +1,11 @@
-"""Triton 單顆模型效能量測——GPU vs CPU 同機對照用。
+"""單顆模型效能量測——同機對照用。
+
+支援兩個對照軸：
+  · **GPU vs CPU**（`--base` 指到不同的 Triton）—— 見 ai/BENCHMARK_GPU_VS_CPU.md
+  · **有 Triton vs 沒 Triton**（`--backend triton|local`）—— 見 ai/BENCHMARK_TRITON_VS_LOCAL.md
+    `local` 把權重直接載進本 process，不經任何伺服器，是「不用 Triton」的 baseline。
+    此模式沒有 server 端 /metrics 可抓，只有 client 端指標（這是預期的）。
+
 
 為什麼不用官方 perf_analyzer：perf_analyzer 餵的是合成隨機張量，量的是「模型服務上限」。
 我們要的是「這條生產管線實際跑多快」，所以直接復用 inference_test.py 用的三支 client
@@ -33,9 +40,6 @@ from datetime import datetime
 import numpy as np
 
 from av_reader import open_source
-from triton_act_client import TritonActModel
-from triton_detr_client import TritonDetrModel
-from triton_pose_client import TritonPoseModel
 
 _AI_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -157,6 +161,39 @@ def bench(name, call, iters, warmup):
     return s
 
 
+def build_models(backend: str, base: str, args):
+    """依 backend 建三顆模型的 client。兩邊介面相同，回傳 (pose, detr, act)。
+
+    `triton` 走 triton_*_client（HTTP 或 gRPC，看 base 的 scheme）；
+    `local` 走 local_*_client（權重直接載進這個 process，不經任何伺服器）。
+    import 放在函式內：`--backend local` 時不必要求 Triton client 可 import，反之亦然。
+    """
+    if backend == "triton":
+        from triton_act_client import TritonActModel
+        from triton_detr_client import TritonDetrModel
+        from triton_pose_client import TritonPoseModel
+        return (TritonPoseModel(f"{base}/{args.pose_model}"),
+                TritonDetrModel(f"{base}/{args.detr_model}"),
+                TritonActModel(f"{base}/{args.act_model}"))
+    if backend == "local":
+        from local_act_client import LocalActModel
+        from local_detr_client import LocalDetrModel
+        from local_pose_client import LocalPoseModel
+        return LocalPoseModel(), LocalDetrModel(), LocalActModel()
+    raise SystemExit(f"❌ 不認得的 --backend：{backend}（只有 triton / local）")
+
+
+def gpu_mem_mb() -> float | None:
+    """目前這張 GPU 的已用顯存（MB）。量「本地各載一份權重 vs Triton 共用一份」的差別。"""
+    try:
+        out = subprocess.run(
+            "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits",
+            shell=True, capture_output=True, text=True, timeout=10).stdout.strip()
+        return float(out.split("\n")[0])
+    except Exception:
+        return None
+
+
 def env_snapshot() -> dict:
     def run(cmd):
         try:
@@ -177,7 +214,9 @@ def env_snapshot() -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--label", required=True, help="這一輪的名字，通常是 gpu 或 cpu")
+    ap.add_argument("--label", required=True, help="這一輪的名字，例：triton-http / local")
+    ap.add_argument("--backend", default="triton", choices=("triton", "local"),
+                    help="triton=模型架在 Triton 伺服器上；local=權重直接載進本 process")
     ap.add_argument("--base", default="http://127.0.0.1:8010", help="Triton HTTP base URL")
     ap.add_argument("--metrics", default="http://127.0.0.1:8002/metrics")
     ap.add_argument("--pose-model", default="yolo_pose")
@@ -193,24 +232,50 @@ def main():
 
     base = args.base.rstrip("/")
     frames = load_frames(args.video, args.frames)
-    print(f"🔬 量測 [{args.label}]  base={base}")
+    print(f"🔬 量測 [{args.label}]  backend={args.backend}  "
+          f"{'base=' + base if args.backend == 'triton' else '本地權重（不經伺服器）'}")
     print(f"   影片={os.path.basename(args.video)}  取 {len(frames)} 幀  "
           f"warmup={args.warmup} iters={args.iters}")
 
-    pose = TritonPoseModel(f"{base}/{args.pose_model}")
-    detr = TritonDetrModel(f"{base}/{args.detr_model}")
-    act = TritonActModel(f"{base}/{args.act_model}")
+    # 冷啟成本：從「建 client」到「第一次推論拿到結果」。
+    # Triton 是容器啟動時就把權重載進顯存，程式端幾乎即時；本地要現場把 .pt 讀進顯存，
+    # 會花數秒。只量穩態延遲會漏掉這項差異，所以在這裡記一筆。
+    mem_before = gpu_mem_mb()
+    t_build = time.perf_counter()
+    pose, detr, act = build_models(args.backend, base, args)
+    build_s = time.perf_counter() - t_build
 
     # AcT 的輸入是 30 幀 pose 特徵。用固定 seed 產生一份，兩側完全相同。
     # 內容不影響 Transformer 的計算量（形狀固定 (1,30,34)），只要兩邊一致即可。
     rng = np.random.default_rng(20260727)
     act_feats = rng.random((30, 34), dtype=np.float32)
 
-    results = {"label": args.label, "base": base, "env": env_snapshot(),
+    # 三顆各打第一發（thread-local 建連 / 權重載入都發生在這裡）
+    t_first = time.perf_counter()
+    pose(frames[0], conf=0.45)
+    detr(frames[0], conf=0.35)
+    act(act_feats)
+    first_infer_s = time.perf_counter() - t_first
+    mem_after = gpu_mem_mb()
+    print(f"   冷啟：建 client {build_s * 1000:.0f} ms + 首次三顆推論 "
+          f"{first_infer_s * 1000:.0f} ms = {(build_s + first_infer_s) * 1000:.0f} ms")
+    if mem_before is not None and mem_after is not None:
+        print(f"   GPU 顯存：{mem_before:.0f} → {mem_after:.0f} MB"
+              f"（本 process 增加 {mem_after - mem_before:+.0f} MB）")
+
+    results = {"label": args.label, "backend": args.backend,
+               "base": base if args.backend == "triton" else None,
+               "env": env_snapshot(),
                "config": {"pose": args.pose_model, "detr": args.detr_model,
                           "act": args.act_model, "iters": args.iters,
                           "warmup": args.warmup, "frames": len(frames),
                           "video": os.path.basename(args.video)},
+               "cold_start": {"build_client_ms": round(build_s * 1000, 1),
+                              "first_infer_3models_ms": round(first_infer_s * 1000, 1),
+                              "total_ms": round((build_s + first_infer_s) * 1000, 1)},
+               "gpu_mem": {"before_mb": mem_before, "after_mb": mem_after,
+                           "delta_mb": (None if mem_before is None or mem_after is None
+                                        else round(mem_after - mem_before, 1))},
                "models": {}}
 
     for key, model_name, fn in (
@@ -218,10 +283,12 @@ def main():
         ("detr", args.detr_model, lambda i: detr(frames[i % len(frames)], conf=0.35)),
         ("act", args.act_model, lambda i: act(act_feats)),
     ):
-        before = scrape(args.metrics)
+        # local backend 沒有 server 端指標可抓（scrape 會回空 dict 並印警告），
+        # 所以乾脆不抓：省掉兩次沒意義的 HTTP 與那行警告。client 端指標仍完整。
+        before = scrape(args.metrics) if args.backend == "triton" else {}
         s = bench(model_name, fn, args.iters, args.warmup)
-        after = scrape(args.metrics)
-        s.update(server_side(before, after, model_name))
+        if args.backend == "triton":
+            s.update(server_side(before, scrape(args.metrics), model_name))
         results["models"][key] = {"model": model_name, **s}
 
     os.makedirs(args.out_dir, exist_ok=True)
