@@ -79,9 +79,22 @@ CONTRACT_FUNC = "route_by_confidence"
 # 為什麼要機器擋：這種「模組自己送 Kafka」的破口靠 code review 抓不到——它跑得動、
 # 不噴錯，只是訊息在後端被靜默丟掉，要跑夠長的影片才會曝露。
 MODULES_DIR = "ai/modules"
-MODULES_ALLOW = {"__init__.py", "sanity_check.py"}
+# 2026-07-30 起放行 bed_exit（離床）與 chair_slip（座椅滑落）供研究，理由見 CLAUDE.md。
+# 白名單放寬的同時加了 check_module_no_kafka()：真正要擋的從來不是「哪個檔存在」，
+# 而是「模組自己組 payload 送 Kafka」——那才是當初被後端 422 靜默丟棄的原因。
+MODULES_ALLOW = {"__init__.py", "sanity_check.py", "bed_exit.py", "chair_slip.py"}
 # import 形式：`from modules.X import ...` / `import modules.X` / `from ai.modules.X import ...`
 MODULES_PREFIXES = ("modules.", "ai.modules.")
+
+# 快速道 topic：後端 consumer 直接吃它寫 PostgreSQL，欄位對不上就 422。
+# 模組往這裡送＝繞過 route_by_confidence() 的契約，這是 bed_exit 當初的實際罪狀，一律擋。
+MODULES_FAST_LANE_TOPICS = {"processed-reports"}
+# 慢速道（nursing-home-alerts）收件人是 vlm_worker / agent，都是 AI 內部，會重組 payload 才
+# 外發後端，所以不受契約欄位約束。但「模組只偵測、不外發」仍是原則，這裡列出唯一的例外：
+#   · sanity_check.py —— 模組 G 巡檢，設計上就是自己截圖 + 送慢速道給 VLM 榨閒置算力，
+#     主迴圈沒有對應的巡檢分支可以接手。實測有效（event_type=Routine_Environment_Sanity_Check）。
+# 要再加人進來先想清楚：能回主迴圈 route_by_confidence() 的就不該加。
+MODULES_SLOW_LANE_OK = {"sanity_check.py"}
 
 
 # 既有豁免清單：專案早於本護欄就存在的違規，一次性放行（護欄要擋的是「新」的違規，
@@ -277,6 +290,78 @@ def check_module_whitelist(root: str, files: list[str], problems: list[str]) -> 
                 )
 
 
+def check_module_no_kafka(root: str, files: list[str], problems: list[str]) -> None:
+    """擋 `ai/modules/` 底下的檔案自己送 Kafka。
+
+    這是白名單放寬之後真正的安全網。當初刪掉五個模組的**根本原因**不是「檔案存在」，
+    而是它們各自組一份 payload 直接 `producer.send('processed-reports', ...)`：欄位對不上
+    後端的 `EventCreateRequest`（多 alert_id/camera_id/status，少 clip_path/snapshot_path），
+    **每一則都被後端 422 退件**。
+
+    為什麼一定要機器擋：這種破口跑得動、不噴錯，訊息只是在後端被靜默丟掉，要跑夠長的
+    影片才會曝露（舊版用 7~9 秒的 test1/2/3 測很久都沒發現，換 4.9 分鐘的 test4.mp4
+    才炸出來）。code review 看不出來，因為那段程式碼本身「看起來很合理」。
+
+    正確做法：模組只偵測、只回傳訊號（True/False 或狀態值），外發一律回主迴圈的
+    `route_by_confidence()` 統一組 payload。chair_slip.py 就是這個範本。
+
+    分快慢兩道處理（`MODULES_FAST_LANE_TOPICS` / `MODULES_SLOW_LANE_OK`）：
+      · 送 `processed-reports`（快速道，後端直接吃）→ 一律擋，這就是 bed_exit 的實際罪狀。
+      · 送其他 topic（慢速道，收件人是 vlm_worker / agent）→ 預設也擋，但 sanity_check.py
+        是設計上就這樣做且實測有效的既有例外，列在 MODULES_SLOW_LANE_OK 放行。
+
+    只擋 producer 的外發呼叫，不擋 import kafka 之類的（模組可能只是型別註解需要）。
+    """
+    hint = (
+        "   → ai/modules/ 底下的模組不准自己送 Kafka。模組只負責偵測、回傳訊號；\n"
+        "     外發一律回 ai/inference_test.py 主迴圈的 route_by_confidence() 統一組 payload。\n"
+        "     自組 payload 的欄位對不上後端 EventCreateRequest，會被 422 靜默丟棄——\n"
+        "     跑得動、不噴錯、log 也不紅，只有事件永遠進不了資料庫。\n"
+        "     範本：chair_slip.py 的做法（只 return，不 send）。理由見根目錄 CLAUDE.md。"
+    )
+
+    for f in files:
+        norm = f.replace(os.sep, "/")
+        if not norm.startswith(MODULES_DIR + "/") or os.path.splitext(f)[1] != ".py":
+            continue
+        p = os.path.join(root, f)
+        if not os.path.isfile(p):
+            continue
+        try:
+            src = open(p, encoding="utf-8").read()
+            tree = ast.parse(src)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        lines = src.split("\n")
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            # 抓 <任何東西>.send(...) 與 <任何東西>.flush()：producer 變數名不一定叫 producer
+            # （可能是 self.producer、kafka_producer…），所以認方法名而不是認變數名。
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr == "send"):
+                continue
+            line_no = getattr(node, "lineno", 0)
+            src_line = lines[line_no - 1] if 0 < line_no <= len(lines) else ""
+            if ALLOW_MARK in src_line:
+                continue
+            # 第一個位置引數就是 topic。是字面值才判得出快慢道；變數/f-string 判不出來的
+            # 一律當快速道處理（寧可誤擋也不要放過——放過就是 422 靜默丟棄）。
+            topic = None
+            if node.args and isinstance(node.args[0], ast.Constant):
+                topic = node.args[0].value
+            is_fast_lane = topic is None or topic in MODULES_FAST_LANE_TOPICS
+            if not is_fast_lane and os.path.basename(f) in MODULES_SLOW_LANE_OK:
+                continue
+            lane = f"快速道 {topic}" if topic in MODULES_FAST_LANE_TOPICS else (
+                f"慢速道 {topic}" if topic else "topic 非字面值，當快速道處理"
+            )
+            problems.append(
+                f"❌ ai/modules/ 契約：{f}:{line_no} 模組自己送 Kafka（{lane}）\n"
+                f"   {src_line.strip()[:100]}\n" + hint
+            )
+
+
 def main() -> int:
     root = _repo_root()
     files = sys.argv[1:] or _tracked_files(root)
@@ -287,6 +372,7 @@ def main() -> int:
     check_text(root, files, problems, allow)
     check_contract(root, files, problems)
     check_module_whitelist(root, files, problems)
+    check_module_no_kafka(root, files, problems)
 
     if problems:
         print("\n" + "=" * 70)

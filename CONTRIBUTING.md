@@ -62,6 +62,8 @@ Mac 沒有 NVIDIA GPU 編不出來，走第四節的兩個選擇。
 | 單檔 > 10MB | 模型/影片/資料集塞進 repo，push 不上去還要改寫歷史 |
 | 明文密碼、AWS 金鑰 | 進了 git 就很難清乾淨 |
 | `route_by_confidence()` 的 payload 欄位 | 後端 consumer 靠這組欄位寫 PostgreSQL，少一個就 422 退件 |
+| `ai/modules/` 新增非白名單檔案、或 import 它們 | 哪些偵測模組在用是階段決策，見 `CLAUDE.md` |
+| `ai/modules/` 底下的檔案自己 `.send(...)` | 模組自組 payload 外發＝繞過契約，實測每則都被後端 422 靜默丟棄 |
 
 兩層執行：
 
@@ -125,13 +127,41 @@ FPS 數字不要跨機器比較，只在同一台上比前後差異。
 
 ## 五、分支流程
 
-demo 以 5060 Ti 那台為準，所以：
+demo 以 5060 Ti 那台為準，所以定案的流程是**兩段式**：
 
-- **不要直接 push 到 `test/main-integration`**
-- 開自己的分支 → 發 PR → 在 5060 Ti 上驗過 → 才合
+```
+從 test/main-integration 開自己的分支
+        ↓  做完，發 PR
+   test/main-integration          ← 在 5060 Ti 上實跑驗證
+        ↓  驗過沒問題，再發一個 PR
+        main                      ← 主幹，只收驗過的東西
+```
+
+規矩：
+
+- **不要直接 push 到 `test/main-integration`，也不要直接 push 到 `main`**
+- **新分支一律從 `test/main-integration` 開**，不要從 `main` 開
+  （`main` 可能落後於已驗證的整合狀態，從那裡開會少掉別人剛驗過的東西）
+- 功能 PR 一律先進 `test/main-integration`，**不要直接對 `main` 發 PR**
+- `test/main-integration` → `main` 是獨立的一段，累積一批驗過的成果再合
 
 PR 上 GitHub Actions 是綠燈才代表「沒踩到已知的雷」，不代表功能對；功能還是要在
 5060 Ti 上實跑過。
+
+### 合併時最容易踩的雷：「合乾淨」不等於「語意對」
+
+2026-07-28 實際踩到：合併 `main` 時 `backend/devices/router.py` 與 `backend/init_db.py`
+都是 **git 自動合併成功**的（兩邊改的是同一個檔的不同段落，diff 上完全看不出問題），
+但一執行就 `TypeError: 'stream_url' is an invalid keyword argument`
+——因為另一邊把那個欄位改名了。
+
+所以合併後**不能只看有沒有衝突標記**：
+
+1. 跑全套測試（`backend` pytest、`agent` pytest、`npx tsc -b`）
+2. 跑 `python3 scripts/check_guardrails.py`
+3. **實際起服務打 API** —— 上面那個 bug 三種測試都測不出來，是打 `POST /devices` 才炸的
+
+這類破口 code review 抓不到，因為程式碼本身看起來很合理。
 
 ---
 
@@ -142,10 +172,15 @@ PR 上 GitHub Actions 是綠燈才代表「沒踩到已知的雷」，不代表�
 
 這兩個是跟後端組講好的契約邊界。要改必須兩邊同時改，不是「我這邊跑得動」就算數。
 
-- **`ai/modules/` 白名單**：只准存在、也只准 import `__init__.py` 與 `sanity_check.py`
-  兩個檔（護欄會擋）。原本的 bed_exit / wandering / micro_motion / audio_fusion /
-  chair_slip 五個模組已於 2026-07-27 刪除，功能與邏輯一律不再套用。
-  理由與復活流程見 [`CLAUDE.md`](CLAUDE.md)。跌倒主邏輯在 `ai/inference_test.py`
-  主迴圈，不在 `modules/` 底下，不受這條規則影響。
+- **`ai/modules/` 的模組不准自組 payload 送 Kafka**（護欄 `check_module_no_kafka()` 會擋）。
+  模組只負責偵測、回傳訊號，外發統一交給主迴圈的 `route_by_confidence()`——範本是
+  `chair_slip.py`。這條**沒有階段性**，是契約邊界。
+
+至於「哪些檔可以存在」（`ai/modules/` 白名單）則是**會隨階段決策變動**的，目前放行四個：
+`__init__.py`、`sanity_check.py`、`bed_exit.py`、`chair_slip.py`。2026-07-30 起離床與座椅
+滑落收回研究，遊走 / 躁動 / 音訊融合維持封印。**檔案本身不在版控中**，要從歷史撈回來，
+指令與兩個檔的差異（`bed_exit.py` 復活後會被護欄擋，要先改）見 [`CLAUDE.md`](CLAUDE.md)。
+
+跌倒主邏輯在 `ai/inference_test.py` 主迴圈，不在 `modules/` 底下，不受這兩條規則影響。
 
 模型、reader、VLM 後端這些則可以自由換。

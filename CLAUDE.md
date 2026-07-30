@@ -13,17 +13,45 @@
 
 ## 一、`ai/modules/` 物件偵測模組白名單（硬規則）
 
-**`ai/modules/` 底下只准存在、也只准 import 這兩個檔：**
+**`ai/modules/` 底下只准存在、也只准 import 這四個檔：**
 
-| 檔案 | 用途 |
-|---|---|
-| `ai/modules/__init__.py` | 空檔，package marker |
-| `ai/modules/sanity_check.py` | 模組 G：VLM 閒置算力環境安全巡檢 |
+| 檔案 | 用途 | 狀態 |
+|---|---|---|
+| `ai/modules/__init__.py` | 空檔，package marker | — |
+| `ai/modules/sanity_check.py` | 模組 G：VLM 閒置算力環境安全巡檢 | 在用 |
+| `ai/modules/bed_exit.py` | 模組 A：離床偵測 | **2026-07-30 放行研究，需先修契約**（見下）|
+| `ai/modules/chair_slip.py` | 模組 I：座椅滑落 | **2026-07-30 放行研究**，契約本來就乾淨 |
 
-**除此之外一律不准**：不准新增檔案、不准把已刪的模組復活、不准 import、
-相關功能與邏輯一律不套用。做這項任務或任何相關任務時，只會用到這兩個檔。
+**除此之外一律不准**：不准新增其他檔案、不准把 `wandering.py`（E 遊走）、
+`micro_motion.py`（F 躁動）、`audio_fusion.py`（H 音訊融合）復活、不准 import 它們。
 
-### 為什麼
+### 2026-07-30：收回「離床」與「座椅滑落」的封印
+
+**決定**：這兩項功能要拿回來做，所以放行進白名單供研究與開發。
+其餘三個（遊走、躁動、音訊融合）維持封印。
+
+**檔案怎麼取回**（檔案本身不在版控中，要從歷史撈）：
+
+```bash
+git show 61c9f63^:ai/modules/bed_exit.py   > ai/modules/bed_exit.py
+git show 61c9f63^:ai/modules/chair_slip.py > ai/modules/chair_slip.py
+```
+
+`61c9f63` 是當初刪除那五個模組的 commit，`^` 表示它的前一顆（還有檔案的那個版本）。
+
+**⚠️ 兩個檔的狀況完全不同，動工前一定要知道**：
+
+| | `chair_slip.py`（座椅滑落）| `bed_exit.py`（離床）|
+|---|---|---|
+| 契約行為 | ✅ **乾淨**：只 `return True/False` | ❌ **違約**：第 52 行 `producer.send('processed-reports', ...)` |
+| 復活後 | 直接可用，護欄會過 | **護欄會擋下來**，必須先改 |
+| 說明 | 早期版本曾自組 payload，已於 `d20f68c` 修掉（檔內註解有記）| payload 多 `alert_id`/`camera_id`/`severity`/`status`，少 `clip_path`/`snapshot_path` → 後端 422 |
+
+**`bed_exit.py` 要怎麼改才能過**：把 `producer.send(...)` / `producer.flush()` 整段拿掉，
+改成只 `return is_leaving_bed`，讓主迴圈的 `route_by_confidence()` 統一組 payload 外發。
+**照 `chair_slip.py` 的樣子做就對了**，它就是這個範本。
+
+### 為什麼當初要封印（背景，仍然適用）
 
 2026-07-27 刪掉了原本的五個模組：`bed_exit.py`（A 離床）、`wandering.py`（E 遊走）、
 `micro_motion.py`（F 躁動）、`audio_fusion.py`（H 音訊融合）、`chair_slip.py`（I 座椅滑落）。
@@ -46,9 +74,31 @@ AcT 時序分類（30 幀視窗 → Triton `action_transformer`）。所以上�
 
 ### 這條規則是機器在擋，不是只寫在這裡
 
-[`scripts/check_guardrails.py`](scripts/check_guardrails.py) 的 `check_module_whitelist()`
-會擋下兩種違規：在 `ai/modules/` 新增非白名單檔案、以及任何 `.py` 去 import 非白名單模組。
-pre-commit 與 GitHub Actions 兩層都會紅燈。
+[`scripts/check_guardrails.py`](scripts/check_guardrails.py) 有兩道檢查，
+pre-commit 與 GitHub Actions 兩層都會紅燈：
+
+| 檢查 | 擋什麼 |
+|---|---|
+| `check_module_whitelist()` | 在 `ai/modules/` 新增**非白名單**檔案、以及任何 `.py` 去 import 非白名單模組 |
+| `check_module_no_kafka()` | `ai/modules/` 底下的檔案**自己送 Kafka**（任何 `.send(...)` 呼叫）；快速道 `processed-reports` 一律擋，慢速道只放行 `sanity_check.py` |
+
+**第二道是重點**。白名單管的是「哪些檔可以存在」，那是會隨階段決策變動的；
+真正不能退讓的是「模組不准自組 payload 外發」——那才是當初被後端 422 靜默丟棄的根因。
+所以 2026-07-30 放寬白名單時，同時補上了這道檢查：**白名單可以放，契約不能放。**
+
+它認的是方法名 `.send()` 而不是變數名，所以 `self.producer.send()`、
+`kafka_producer.send()` 這些改寫法都躲不掉。topic 寫成變數或 f-string 也躲不掉——
+判不出是哪一道就**當快速道處理**（寧可誤擋，放過就是 422 靜默丟棄）。
+
+**唯一的例外是 `sanity_check.py`**（列在 `MODULES_SLOW_LANE_OK`）。它送的是**慢速道**
+`nursing-home-alerts`，收件人是 `vlm_worker`／agent，都是 AI 內部；二審端會重組 payload
+才進 `processed-reports`，所以不受契約欄位約束，實測一直是好的
+（`event_type` = `Routine_Environment_Sanity_Check`）。它是設計上就要自己截圖外發榨 VLM
+閒置算力，主迴圈沒有對應的巡檢分支可以接手。
+
+**不要拿它當前例**。要再往 `MODULES_SLOW_LANE_OK` 加人，先問「這個能不能回主迴圈的
+`route_by_confidence()`」——能就不該加。真有單行要放行，該行尾加 `# guardrail: allow`
+（但先想清楚是「規則不適用」還是「這次先過」——後者不該豁免）。
 
 ### 真的要復活某個模組時
 
@@ -56,8 +106,10 @@ pre-commit 與 GitHub Actions 兩層都會紅燈。
 
 1. 改本檔的白名單表，寫清楚為什麼要收回這個決定
 2. 改 `scripts/check_guardrails.py` 的 `MODULES_ALLOW`
-3. **先補契約測試**：確認該模組不會自組 payload 外發，外發一律回主迴圈的
-   `route_by_confidence()`（範本是已刪除的 `chair_slip.py` 的做法：模組只偵測、回傳訊號）
+3. **確認該模組不會自組 payload 外發**，外發一律回主迴圈的 `route_by_confidence()`
+   （範本是 `chair_slip.py` 的做法：模組只偵測、回傳訊號）
+   —— 這項現在由 `check_module_no_kafka()` 機器強制，但**不要因為有機器擋就不看**：
+   護欄只擋 Kafka 外發，不會幫你檢查偵測邏輯對不對、或事件會不會誤報。
 
 ---
 
