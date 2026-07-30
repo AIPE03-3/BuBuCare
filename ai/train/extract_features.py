@@ -70,7 +70,7 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, featu
     features, is_lying, is_occluded, height_ratios, valids = [], [], [], [], []
     # 躺平判斷的兩個原始輸入也留下來。存了之後換躺平規則可以直接離線重算，
     # 不必為了試一個門檻就重跑 150 支影片的 YOLO（同 height_ratio 的理由）
-    body_angles, aspect_ratios = [], []
+    body_angles, aspect_ratios, body_cropped = [], [], []
     normal_height_reference = None
     frame_count = 0
     processed_count = 0
@@ -103,6 +103,7 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, featu
         height_ratios.append(np.nan if state["height_ratio"] is None else state["height_ratio"])
         body_angles.append(np.nan if state["body_angle"] is None else state["body_angle"])
         aspect_ratios.append(state["aspect_ratio"])
+        body_cropped.append(state.get("body_cropped", False))
         valids.append(state["valid"])
         processed_count += 1
 
@@ -118,6 +119,8 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, featu
         # NaN＝肩或臀沒抓到，軀幹角算不出來。不是 0——0 是「真的量到 0 度」
         "body_angle": np.asarray(body_angles, dtype=np.float32),
         "aspect_ratio": np.asarray(aspect_ratios, dtype=np.float32),
+        # 下半身在不在框裡。裁切防護要用（見 fall_chain.body_is_cropped）
+        "body_cropped": np.asarray(body_cropped, dtype=bool),
         "valid": np.asarray(valids, dtype=bool),
         "frame_skip": np.int32(FRAME_SKIP),
         # 特徵是哪種正規化算出來的，跟著特徵一起走。train_act.py 靠它擋混用，

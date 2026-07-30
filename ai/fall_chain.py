@@ -34,6 +34,40 @@ LYING_ANGLE_DEG_UPPER = 140.0
 # COCO 關鍵點索引
 LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
 LEFT_HIP, RIGHT_HIP = 11, 12
+LEFT_KNEE, RIGHT_KNEE = 13, 14
+LEFT_ANKLE, RIGHT_ANKLE = 15, 16
+
+
+def body_is_cropped(keypoints):
+    """下半身是不是不在框裡（膝與踝四點全數沒抓到）。
+
+    ## 為什麼需要這個判斷
+
+    `w/h > 1.25` 的前提是「框框住的是一整個人」。人走到畫面邊緣被切掉時，
+    框只框到看得見的那一截——上半身的框天生就是寬扁形，`w/h` 直接爆掉。
+    自錄 test6.mp4 的拍攝者站在右下角，腿被下緣切掉，`w/h` 1.25~1.52，
+    軀幹角 99°~117°（明確站著），仍被判躺平，連報 13 幀。
+
+    ## 為什麼用關鍵點而不是「框碰到畫面邊界」
+
+    站在鏡頭前的人腳踝本來就在畫面下緣，框碰到邊界是常態，不代表被切掉。
+    「膝踝四點全沒抓到」是下半身不在畫面裡的**直接證據**，不是位置的代理指標。
+
+    ## ⚠ 這個判斷目前**沒有任何資料驗證過**，預設關閉
+
+    寫它的動機是 test6.mp4 那 13 幀 `w/h` 誤報，當時判斷成「人走到畫面邊緣被
+    切掉」。**後來查證發現那個判斷是錯的**：那個人的框完全在畫面內、四個下半身
+    關鍵點也都抓到了。真正的成因是**高處鏡頭俯拍坐在桌前的人**——只有頭肩露在
+    螢幕上方，投影出來就是寬扁形。跟裁切無關。
+
+    量測結果：CAUCAFall test split 3062 幀有 0 幀觸發此判斷；test6 開關前後
+    觸發幀數完全相同（15 → 15）。**所以它既不會讓結果變差，也還沒證明有用。**
+
+    留著的理由：`features/*.npz` 已一併存下 `body_cropped`，等未來有真的含邊緣
+    裁切的素材時可以直接離線量測，不必重跑 YOLO。要驗證它有效再考慮打開。
+    """
+    return all(keypoints[index][0] == 0 and keypoints[index][1] == 0
+               for index in (LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE))
 
 # ────────────────────────────────────────────────────────────────────────
 # 躺平規則（防線 A）
@@ -68,13 +102,19 @@ def check_lying_rule(name):
     return text
 
 
-def decide_lying(body_angle, aspect_ratio, lying_rule=DEFAULT_LYING_RULE):
+def decide_lying(body_angle, aspect_ratio, lying_rule=DEFAULT_LYING_RULE,
+                 body_cropped=False, crop_guard=False):
     """依規則判斷躺平。`body_angle` 為 None 代表肩或臀沒抓到，角度那一條直接跳過。
 
-    刻意只吃「角度」與「寬高比」兩個純量，不吃關鍵點——這樣離線掃描可以直接
+    刻意只吃純量（角度、寬高比、是否裁切），不吃關鍵點——這樣離線掃描可以直接
     拿 features/*.npz 裡存的原始數值重算，不必為了試一個規則就重跑一遍 YOLO。
+
+    `crop_guard=True` 時，下半身不在框裡的人不採用 `w/h`（框不是完整人形，
+    比例沒有意義），只留軀幹角那一條。
     """
     wide = aspect_ratio > LYING_ASPECT_RATIO
+    if crop_guard and body_cropped:
+        wide = False
     if lying_rule == LYING_RULE_ASPECT:
         return wide
     if body_angle is None:
@@ -86,7 +126,7 @@ def decide_lying(body_angle, aspect_ratio, lying_rule=DEFAULT_LYING_RULE):
 
 def person_geometry(keypoints, box_xywh, box_xyxy=None, image_height=0,
                     height_reference=None, occluded_height_ratio=0.0,
-                    lying_rule=DEFAULT_LYING_RULE):
+                    lying_rule=DEFAULT_LYING_RULE, crop_guard=False):
     """單一人物的幾何判斷：躺平（防線 A）、遮擋（防線 B）、軀幹角、寬高比。
 
     keypoints: 這個人的 `xyn` 關鍵點（對整張畫面正規化）。
@@ -100,7 +140,8 @@ def person_geometry(keypoints, box_xywh, box_xyxy=None, image_height=0,
     回傳 dict，鍵名與正式管線的變數同名，對照時不必換腦袋。
     """
     result = {"is_lying": False, "is_occluded": False, "body_angle": None,
-              "aspect_ratio": 0.0, "height_ratio": None, "y2_ratio": 0.0}
+              "aspect_ratio": 0.0, "height_ratio": None, "y2_ratio": 0.0,
+              "body_cropped": body_is_cropped(keypoints)}
 
     _, _, box_width, box_height = box_xywh
     aspect_ratio = float(box_width / box_height) if box_height else 0.0
@@ -114,7 +155,8 @@ def person_geometry(keypoints, box_xywh, box_xyxy=None, image_height=0,
     if shoulder_x != 0 and hip_x != 0:  # xyn 為 0 代表該點沒抓到，不是「在畫面左上角」
         result["body_angle"] = float(np.abs(np.degrees(
             np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x))))
-    result["is_lying"] = decide_lying(result["body_angle"], aspect_ratio, lying_rule)
+    result["is_lying"] = decide_lying(result["body_angle"], aspect_ratio, lying_rule,
+                                      result["body_cropped"], crop_guard)
 
     # 防線 B：人突然「變矮」且位置偏下 → 可能倒在家具後面
     if height_reference is not None and box_xyxy is not None:

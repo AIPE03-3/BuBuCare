@@ -182,7 +182,7 @@ def evaluate_strategy(videos, fired_by_video):
 
 
 def load_test_videos(dataset_dir, split, feature_norm=DEFAULT_FEATURE_NORM,
-                     lying_rule=DEFAULT_LYING_RULE):
+                     lying_rule=DEFAULT_LYING_RULE, crop_guard=False):
     """載入該 split 的特徵與標註遮罩。回傳 (videos, features_by_stem, data_by_stem)。"""
     splits = du.load_splits(dataset_dir)
     features_dir = du.features_dir(dataset_dir, feature_norm)
@@ -226,17 +226,19 @@ def load_test_videos(dataset_dir, split, feature_norm=DEFAULT_FEATURE_NORM,
         data_by_stem[stem] = {key: data[key] for key in ("is_lying", "is_occluded", "valid")}
         # 換躺平規則時用 npz 存的原始角度／寬高比重算，不重跑 YOLO。
         # 舊 npz（2026-07-30 前抽的）沒有這兩個欄位，只能用當初存好的 is_lying。
-        if lying_rule != DEFAULT_LYING_RULE:
+        if lying_rule != DEFAULT_LYING_RULE or crop_guard:
             if "body_angle" not in data.files or "aspect_ratio" not in data.files:
                 raise ValueError(
                     f"{feature_path} 沒有 body_angle／aspect_ratio 欄位，無法重算躺平規則。"
                     f"請重抽特徵：extract_features.py --splits {split} --overwrite"
                 )
             angles, aspects = data["body_angle"], data["aspect_ratio"]
+            cropped = (data["body_cropped"] if "body_cropped" in data.files
+                       else np.zeros(len(angles), dtype=bool))
             data_by_stem[stem]["is_lying"] = np.array([
                 decide_lying(None if np.isnan(angle) else float(angle),
-                             float(aspect), lying_rule)
-                for angle, aspect in zip(angles, aspects)
+                             float(aspect), lying_rule, bool(crop), crop_guard)
+                for angle, aspect, crop in zip(angles, aspects, cropped)
             ], dtype=bool)
 
     return videos, features_by_stem, data_by_stem, skipped
@@ -311,6 +313,8 @@ def parse_args():
                         help="躺平規則（防線 A）：current=現況 angle<40 或 w/h>1.25／"
                              "aspect=只看 w/h／wide=補上 angle>140。"
                              "非 current 時用 npz 存的原始角度重算，不重跑 YOLO")
+    parser.add_argument("--crop-guard", action="store_true",
+                        help="下半身不在框裡的人不採用 w/h（框不是完整人形，比例沒意義）")
     return parser.parse_args()
 
 
@@ -340,7 +344,7 @@ def main():
         return 1
 
     videos, features_by_stem, data_by_stem, skipped = load_test_videos(
-        dataset_dir, args.split, args.feature_norm, args.lying_rule)
+        dataset_dir, args.split, args.feature_norm, args.lying_rule, args.crop_guard)
     if not videos:
         print("❌ 測試集沒有可用影片（先跑 extract_features.py）", file=sys.stderr)
         return 1
@@ -366,6 +370,7 @@ def main():
                    "act_threshold": args.act_threshold,
                    "feature_norm": args.feature_norm,
                    "lying_rule": args.lying_rule,
+                   "crop_guard": args.crop_guard,
                    "ai_thinking_conf": AI_THINKING_CONF,
                    "direct_trigger_conf": DIRECT_TRIGGER_CONF},
         "strategies": strategies,

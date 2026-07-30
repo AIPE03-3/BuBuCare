@@ -364,7 +364,7 @@ def select_main_person(boxes_conf, boxes_xywh):
 
 def extract_pose_state(result, normal_height_reference, image_height,
                        occluded_height_ratio=OCCLUDED_HEIGHT_RATIO,
-                       feature_norm=DEFAULT_FEATURE_NORM):
+                       feature_norm=DEFAULT_FEATURE_NORM, crop_guard=False):
     """從一幀 pose 結果抽出：34 維特徵、躺平旗標、遮擋旗標、身高參考值。
 
     回傳 dict。沒有可用的人時 `feature` 為全零向量（等同正式管線的無效幀）。
@@ -412,7 +412,7 @@ def extract_pose_state(result, normal_height_reference, image_height,
 
     state.update(person_geometry(keypoints, boxes_xywh[best_idx], boxes_xyxy[best_idx],
                                  image_height, normal_height_reference,
-                                 occluded_height_ratio))
+                                 occluded_height_ratio, crop_guard=crop_guard))
     return state
 
 
@@ -616,6 +616,9 @@ def main():
     parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
                         help="AcT 特徵正規化基準：image=整張畫面（預設、現行）／bbox=人物框。"
                              "⚠ 必須跟權重訓練時用的一致，否則輸出無意義")
+    parser.add_argument("--crop-guard", action="store_true",
+                        help="下半身不在框裡的人不採用 w/h 判躺平（人走到畫面邊緣被切掉時，"
+                             "框天生是寬扁形，比例沒有意義）")
     parser.add_argument("--multi-person", action="store_true",
                         help="追蹤畫面裡所有人，每人各一個 30 幀視窗與身高基準。"
                              "⚠ 正式管線目前是單人（只看最近最大的那個），這是對照組")
@@ -638,7 +641,7 @@ def main():
     matches_production = (args.trigger_mode == DEFAULT_TRIGGER_MODE
                           and args.occ_height == OCCLUDED_HEIGHT_RATIO
                           and args.feature_norm == DEFAULT_FEATURE_NORM
-                          and not args.multi_person)
+                          and not args.multi_person and not args.crop_guard)
     print(f"🚀 裝置：{device}")
     print(f"⚙️  策略 {args.trigger_mode}｜遮擋高度門檻 {args.occ_height}"
           f"｜特徵正規化 {args.feature_norm}"
@@ -757,7 +760,8 @@ def main():
                 evaluated = evaluate_tracks(
                     act_model,
                     observe_tracks(result, tracker, track_store, image_height,
-                                   args.occ_height, args.feature_norm, processed_count),
+                                   args.occ_height, args.feature_norm, processed_count,
+                                   args.crop_guard),
                     device, args.trigger_mode,
                 )
                 # 逐幀的彙總欄位取「最像跌倒的那個人」——CSV 與指標維持一列一幀，
@@ -784,7 +788,8 @@ def main():
             else:
                 driver_id = ""
                 pose_state = extract_pose_state(result, normal_height_reference, image_height,
-                                                args.occ_height, args.feature_norm)
+                                                args.occ_height, args.feature_norm,
+                                                args.crop_guard)
 
                 # 身高基準取前期幾幀，之後拿來判斷「突然變矮」（遮擋防線的分母）。
                 # 正式管線用 10<frame_count<40 的原始幀號（:689），跳幀後約等於第 5~20 個處理幀。
