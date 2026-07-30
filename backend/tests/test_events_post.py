@@ -42,7 +42,7 @@ def test_缺必填欄位_422(client):
 
 # ── agent P2：AI 建議判斷（ai_verdict/ai_confidence/ai_reasoning）三路徑 ──
 # 三欄皆選填，agent 目前仍是 shadow 模式，這裡只測後端「記錄」與「顯示」，
-# 不代表已經接上 agent 即時寫入（見 NEXT_STAGE.md 第 6 項）。
+# 不代表已經接上 agent 即時寫入（見 docs/CHANGELOG-STAGES.md 第 6 項）。
 
 def test_舊格式訊息無ai欄位_照常建檔且ai欄位為null(client):
     # VALID_BODY 本來就沒有 ai_* 三欄，模擬舊格式訊息（vlm_worker 送的巡檢/既有事件）

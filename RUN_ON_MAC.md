@@ -1,7 +1,7 @@
 # 在 macOS（Apple Silicon）上把系統跑起來
 
 **這份是操作手冊**：開機後照著跑就有東西看。
-想知道「為什麼這樣設定、還有什麼沒做完、踩過哪些坑」看 [`MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md)。
+想知道「為什麼這樣設定、還有什麼沒做完、踩過哪些坑」看 [`MAC_SETUP_WBS.md`](docs/MAC_SETUP_WBS.md)。
 
 **不確定現在做到哪、什麼服務活著** —— 不要猜，跑自檢：
 

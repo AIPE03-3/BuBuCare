@@ -109,7 +109,7 @@ TRITON_POSE_URL = os.environ.get("TRITON_POSE_URL", "http://127.0.0.1:8000/yolo_
 ## 四、macOS 上怎麼跑
 
 **完整的操作手冊在 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)**（每次開機的啟動順序、埠表、症狀→解法），
-做到哪裡與踩過的坑在 [`MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md)。這裡只講骨架。
+做到哪裡與踩過的坑在 [`MAC_SETUP_WBS.md`](docs/MAC_SETUP_WBS.md)。這裡只講骨架。
 
 `ai/inference_test.py` 本身支援 Mac，但**三顆模型都打 Triton**，所以要有一個 Triton server
 才跑得動。Mac 沒有 NVIDIA GPU，兩個選擇：

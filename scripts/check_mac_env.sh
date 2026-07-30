@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # macOS 本機環境自檢 —— 中斷之後用這支判斷「做到哪裡了」，不要靠記憶。
 #
-# 對照 MAC_SETUP_WBS.md 的 WBS 表：這裡每一行對應一個 T 編號，
+# 對照 docs/MAC_SETUP_WBS.md 的 WBS 表：這裡每一行對應一個 T 編號，
 # 看到第一個 ❌ 就從那項開始接手。
 #
 # 用法： bash scripts/check_mac_env.sh
@@ -158,7 +158,7 @@ section "P5 MLOps（ClearML / Label Studio）"
 
 [[ -f ai/docker-compose-clearml.mac.yml ]] \
   && ok "T5-1 ClearML 的 Mac override 檔在" \
-  || bad "T5-1 缺 ai/docker-compose-clearml.mac.yml" "見 MAC_SETUP_WBS.md T5-1"
+  || bad "T5-1 缺 ai/docker-compose-clearml.mac.yml" "見 docs/MAC_SETUP_WBS.md T5-1"
 
 # ClearML 六個服務。這一套很重且只有跑重訓時才需要，沒開不算故障（用 info）。
 if curl -sf -m 5 "http://127.0.0.1:8008/debug.ping" >/dev/null 2>&1; then
@@ -198,4 +198,4 @@ else
   bad "T0-7 護欄紅燈" "python3 scripts/check_guardrails.py 看詳細"
 fi
 
-printf '\n完整任務表與續接方式見 MAC_SETUP_WBS.md\n'
+printf '\n完整任務表與續接方式見 docs/MAC_SETUP_WBS.md\n'

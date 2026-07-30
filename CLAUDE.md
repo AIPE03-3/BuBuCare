@@ -7,11 +7,16 @@
 **先讀這兩份再動手**：
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — 兩台開發機（Linux/macOS）的協作規矩、護欄、分支流程
-- [`NEXT_STAGE.md`](NEXT_STAGE.md) — 目前的待辦與各項狀態
+- [`NEXT_STAGE.md`](NEXT_STAGE.md) — **還沒做完的**：待辦與各項狀態
 
 **不熟悉整個系統的話先看** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 架構全貌、
 資料怎麼流、為什麼這樣設計，以及**現況與規劃的差距**（第六節：哪些是已知未修的缺陷、
 哪些元件沒被驗證過、哪些文件已過時）。
+
+**要查「某件事當初為什麼那樣做」** → [`docs/CHANGELOG-STAGES.md`](docs/CHANGELOG-STAGES.md)。
+已完成階段的紀錄都在那裡（含各項踩過的坑、以及為什麼當時的測法測不出來）。
+Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](docs/MAC_SETUP_WBS.md)，
+操作手冊在 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)。
 
 ---
 
