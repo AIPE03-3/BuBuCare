@@ -223,7 +223,16 @@ def main():
     ap.add_argument("--detr-model", default="rt_detr",
                     help="CPU 側必須用 rt_detr_onnx：tensorrt_plan 不可能在 CPU 上跑")
     ap.add_argument("--act-model", default="action_transformer")
-    ap.add_argument("--video", default=os.path.join(_AI_DIR, "test_demo", "test1.mp4"))
+    # 預設 test8.mp4，理由：
+    #   · **不要用 test1.mp4** —— rt_detr v2 在它上面完全不觸發（300 個 query 最高信心
+    #     0.123 < conf 門檻 0.35，偵測 0 個框），Triton 側會因此少做後處理、對照不乾淨。
+    #   · test8 的內容最適合單顆模型量測：rt_detr v2 信心穩定 0.77–0.98（每幀都真的偵測到），
+    #     且人數由 1 人漸增到 3 人，pose 後處理負載有真實的變化範圍。
+    #   · 單顆模型只取前 30 幀，test8 的 248 幀綽綽有餘。
+    # ⚠️ **端到端 FPS 不要用 test8** —— 太短（248 幀），本地側還在冷啟爬升就結束了，
+    #    累計均是假象。端到端請用 test4.mp4（7086 幀）。
+    # 詳見 BENCHMARK_TRITON_VS_LOCAL.md 的「用哪支影片，為什麼分兩支」。
+    ap.add_argument("--video", default=os.path.join(_AI_DIR, "test_demo", "test8.mp4"))
     ap.add_argument("--frames", type=int, default=30, help="取幾幀輪流餵")
     ap.add_argument("--iters", type=int, default=100)
     ap.add_argument("--warmup", type=int, default=10)

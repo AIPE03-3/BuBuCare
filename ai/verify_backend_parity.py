@@ -94,7 +94,10 @@ def compare_pose(triton_res, local_res, report: dict) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--video", default=os.path.join(_AI_DIR, "test_demo", "test1.mp4"))
+    # 預設與 bench_triton.py 同一支（test8）：理由見該檔 --video 的註解。
+    # 注意 test1 仍是有價值的 parity 輸入（rt_detr v2 在它上面 0 偵測就是這支抓出來的），
+    # 要複驗那個現象就傳 --video test_demo/test1.mp4。
+    ap.add_argument("--video", default=os.path.join(_AI_DIR, "test_demo", "test8.mp4"))
     ap.add_argument("--frames", type=int, default=15)
     ap.add_argument("--base", default="http://127.0.0.1:8010", help="Triton HTTP base URL")
     ap.add_argument("--pose-model", default="yolo_pose")
