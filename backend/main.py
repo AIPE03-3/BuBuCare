@@ -13,6 +13,7 @@ from core.config import SKIP_DB_INIT
 from core.database import Base, engine, run_column_migrations
 from devices.router import router as device_router
 from events.router import router as event_router
+from observability.router import router as observability_router
 from reports.router import router as report_router
 from streams.router import router as stream_router
 from users.router import router as user_router
@@ -42,12 +43,5 @@ app.include_router(event_router)  # 事件：POST /events、SSE、判定 / 結�
 app.include_router(device_router)  # 裝置：鏡頭清單 / 改名
 app.include_router(report_router)  # 通報單：存 / 查
 app.include_router(stream_router)  # 串流：換權杖 / 供 MediaMTX 驗證
+app.include_router(observability_router)  # 監控：健康檢查 / 指標輸出
 
-
-
-# ── 健康檢查（雲端探針用）────────────────────────────────────
-# 打 GET /health 有回 {"status":"ok"} 就代表後端活著、能正常收請求。
-# 雲端的監控／nginx 會定期戳這條確認服務沒掛，不查資料庫、不需登入，回得越快越好。
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}

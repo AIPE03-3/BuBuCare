@@ -1,6 +1,6 @@
 import type { ComponentType, SVGProps } from 'react';
 import { useState } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useCurrentUser } from '../hooks/useCurrentUser';
 import {
@@ -10,7 +10,7 @@ import {
   BellIcon,
   SparklesIcon,
   ClockIcon,
-  GearIcon,
+  UsersIcon,
   LogoutIcon,
   SearchIcon,
   ChevronDownIcon,
@@ -65,28 +65,14 @@ interface UserMenuProps {
   onNavigate?: () => void;
 }
 
+// 「管理使用者」已移到側欄總覽的第六個節點，這裡只留登出，同一功能不放兩個入口。
 function UserMenu({ name, employeeCode, isAdmin, onLogout, onNavigate }: UserMenuProps) {
   const [open, setOpen] = useState(false);
-  const navigate = useNavigate();
 
   return (
     <div className="relative">
       {open && (
         <div className="absolute inset-x-0 bottom-full z-10 mb-2 flex flex-col gap-1 rounded-xl border border-[var(--border)] bg-[var(--bg-surface)] p-1.5 shadow-sm">
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onNavigate?.();
-                navigate('/users');
-              }}
-              className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
-            >
-              <GearIcon className="h-5 w-5 shrink-0" aria-hidden="true" />
-              管理使用者
-            </button>
-          )}
           <button
             type="button"
             onClick={() => {
@@ -203,6 +189,18 @@ export function AppLayout() {
                 active={isActive('/history')}
                 onNavigate={closeSidebar}
               />
+
+              {/* 管理使用者：admin 專屬，staff 登入時整個節點不渲染（同 MLOps／設定的處理）。
+                  路由 /users 本身也包了 RequireAdmin，選單只是別讓 staff 看到入口。 */}
+              {role === 'admin' && (
+                <NavItem
+                  to="/users"
+                  label="管理使用者"
+                  icon={UsersIcon}
+                  active={isActive('/users')}
+                  onNavigate={closeSidebar}
+                />
+              )}
             </nav>
           </div>
         </div>

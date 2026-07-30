@@ -59,6 +59,7 @@ export const employeePasswordProvider: AuthProvider = {
       role: normalizeRole(payload.role),
       display_name: payload.full_name ?? payload.sub ?? employeeId,
       must_change_password: data.must_change_password ?? false,
+      employee_code: payload.sub ?? employeeId, // sub 就是員編；萬一 JWT 缺這欄，退回登入時輸入的值
     };
     setStoredSession(session);
     return session;

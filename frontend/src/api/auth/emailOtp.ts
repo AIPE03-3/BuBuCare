@@ -31,6 +31,7 @@ export const emailOtpProvider: AuthProvider = {
         role: user.role,
         display_name: user.display_name,
         must_change_password: false, // OTP 登入無此概念，恆為 false
+        employee_code: null, // OTP 走 email 登入，本來就沒有員編
       };
       setStoredSession(session);
       resolve(session);
