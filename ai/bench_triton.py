@@ -56,7 +56,7 @@ def scrape(metrics_url: str) -> dict:
     所以這裡取兩者的 max，不能後蓋前（早期版本就是後蓋前，GPU 側的 server 數字
     全被 0 蓋掉、算出 n=0 而整組消失）。
 
-    順帶一提：這個端點就是之後接 Prometheus 時要 scrape 的同一個端點（見 NEXT_STAGE
+    順帶一提：這個端點就是之後接 Prometheus 時要 scrape 的同一個端點（見 docs/NEXT_STAGE.md
     的 Prometheus 設計），這裡只是先手動讀它。
     """
     import urllib.request

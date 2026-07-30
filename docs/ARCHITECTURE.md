@@ -7,9 +7,9 @@
 | 文件                                     | 用途                                                           |
 | ---------------------------------------- | -------------------------------------------------------------- |
 | [`CLAUDE.md`](../CLAUDE.md)             | 動工前必讀的**硬規則**（模組白名單、契約邊界、金鑰分工） |
-| [`CONTRIBUTING.md`](../CONTRIBUTING.md) | 兩台開發機的協作規矩、護欄、分支流程                           |
-| [`RUN_ON_MAC.md`](../RUN_ON_MAC.md)     | macOS 上把系統跑起來的操作手冊                                 |
-| [`NEXT_STAGE.md`](../NEXT_STAGE.md)     | **還沒做完的**：待辦與各項狀態                                 |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | 兩台開發機的協作規矩、護欄、分支流程                           |
+| [`RUN_ON_MAC.md`](RUN_ON_MAC.md)     | macOS 上把系統跑起來的操作手冊                                 |
+| [`NEXT_STAGE.md`](NEXT_STAGE.md)     | **還沒做完的**：待辦與各項狀態                                 |
 | [`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) | **已完成階段的紀錄**：做了什麼、為什麼、踩過哪些坑        |
 | [`MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md)  | macOS 本機環境的建置任務表與踩坑                               |
 | **本檔**                           | **架構全貌與設計理由**                                   |
@@ -207,7 +207,7 @@ Triton 熱載切版（服務不中斷）→ 可 --rollback
 | **體角判定的前提與實際佈署場景不符** | **未修，最需要正視**。正式環境是公共區域**俯視**鏡頭，而防線 A 的軀幹角條件在那個角度基本沒訊號，調門檻無效 |
 | `normal_h_reference` 換來源不重設        | 未修，已診斷                                                                                                            |
 
-兩項都還開著，追蹤在 [`NEXT_STAGE.md`](../NEXT_STAGE.md) 的 9-3 / 9-4；
+兩項都還開著，追蹤在 [`NEXT_STAGE.md`](NEXT_STAGE.md) 的 9-3 / 9-4；
 完整量測數據見 [`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項。
 **不要以為跌倒偵測在所有場景都可靠。**
 
@@ -261,8 +261,8 @@ Triton 熱載切版（服務不中斷）→ 可 --rollback
 
 理解架構最好的方式是把它跑起來看事件從頭走到尾。
 
-- macOS：照 [`RUN_ON_MAC.md`](../RUN_ON_MAC.md)
-- Linux + NVIDIA：照 [`CONTRIBUTING.md`](../CONTRIBUTING.md) 第一節
+- macOS：照 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)
+- Linux + NVIDIA：照 [`CONTRIBUTING.md`](CONTRIBUTING.md) 第一節
 
 建議的觀察順序：
 

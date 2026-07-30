@@ -3,7 +3,7 @@
 
 為什麼需要這支：模型本體（`.onnx` / `.plan`，合計約 240MB）**不進 repo**
 （見 `.gitignore` 與 `ai/triton_repo/README.md`），clone 下來只有 `config.pbtxt`。
-CONTRIBUTING.md、`ai/run_triton.sh`、`scripts/check_guardrails.py` 三處都叫人跑
+docs/CONTRIBUTING.md、`ai/run_triton.sh`、`scripts/check_guardrails.py` 三處都叫人跑
 `python ai/export_models.py` 重建 —— 但這支檔以前根本不存在，那條路徑是斷的。
 
 三顆模型與各自的來源權重（都在 `ai/` 底下，`.pt`/`.pth` 同樣不進 repo）：

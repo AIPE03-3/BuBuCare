@@ -178,7 +178,7 @@ _MULTI_TRACK = cfg("MULTI_PERSON_TRACK", "1").strip().lower() not in ("0", "fals
 # 所以 debounce 跟追蹤是同一件事的兩半。
 _FALL_CONSECUTIVE_FRAMES = int(cfg("FALL_CONSECUTIVE_FRAMES", "4"))
 # 已發過事件的人，連續幾個處理幀「不再是倒地」就把他的狀態重置、允許再次發報。
-# 沒有這個的話，同一個人第二次跌倒永遠不會再示警（現況就是這樣，見 NEXT_STAGE 第 5 項）。
+# 沒有這個的話，同一個人第二次跌倒永遠不會再示警（現況就是這樣，見 docs/NEXT_STAGE.md 第 5 項）。
 _FALL_RECOVERY_FRAMES = int(cfg("FALL_RECOVERY_FRAMES", "90"))
 # 一個人連續幾幀沒被看到才把他的狀態忘掉。刻意設得比 ByteTrack 自己的 track_buffer 寬鬆：
 # 忘太快＝忘了「他已經發過事件」，人被擋一下再出現就重複發報。
@@ -803,7 +803,7 @@ def camera_worker(camera_id, video_source, detect_url=None):
                         #   索引每幀都可能換人，照索引存參考值等於把 A 的身高記到 B 頭上，
                         #   比共用單一值更錯。本次範圍明確不引入 tracker。
                         #   代價（要知道）：離鏡頭遠、或本來就矮的人 h_box 天生小，比值可能
-                        #   直接低於 0.70 而誤判。這是 NEXT_STAGE.md 的 9-3「缺陷三」那個
+                        #   直接低於 0.70 而誤判。這是 docs/NEXT_STAGE.md 的 9-3「缺陷三」那個
                         #   既有問題的擴大版（參考值只校準一次、換來源不重設），不是新機制。
                         #   既有的 `y2 > img_h*0.5` 條件仍在，擋掉一部分「遠處站著的人」
                         #  （框底落在畫面上半）。真要修，要跟缺陷三一起改，不在本次範圍。

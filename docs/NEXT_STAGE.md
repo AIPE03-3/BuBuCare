@@ -1,10 +1,10 @@
 # 下一階段待辦
 
 **這份只放「還沒做完的」。** 已完成項目的完整紀錄搬到
-[`docs/CHANGELOG-STAGES.md`](docs/CHANGELOG-STAGES.md)（編號沿用，第 N 項還是第 N 項）。
+[`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md)（編號沿用，第 N 項還是第 N 項）。
 
-Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](docs/MAC_SETUP_WBS.md)。
-不知道系統現在長什麼樣、哪裡是壞的 → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md)。
+不知道系統現在長什麼樣、哪裡是壞的 → [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)。
 
 ---
 
@@ -17,7 +17,7 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](docs/MAC_SETUP_W
 | 9-3 | `normal_h_reference` 換來源不重設 | 📋 **已診斷，未修**（見下）|
 | 9-4 | 體角判定的前提與俯視佈署不符 | 📋 **已診斷，未修，最需要正視**（見下）|
 
-已完成並驗證過的（紀錄在 [`docs/CHANGELOG-STAGES.md`](docs/CHANGELOG-STAGES.md)）：
+已完成並驗證過的（紀錄在 [`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md)）：
 第 1 項 S3 上傳、第 2 項六大防線收斂 + 模組白名單、第 3 項 Triton GPU/CPU 對照、
 第 6 項 agent P2、第 7 項 `stream_channel` 改名、第 8 項偵測畫面推流、
 第 9 項真攝影機實測、第 10 項 MLOps 進版控。
@@ -38,7 +38,7 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](docs/MAC_SETUP_W
 被騙的是兩條手寫幾何規則。要調權重時這是依據。
 
 完整量測數據（含那組「髖部在影像上比肩膀還高」的座標）見
-[`docs/CHANGELOG-STAGES.md`](docs/CHANGELOG-STAGES.md) 第 9 項缺陷三、缺陷四。
+[`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項缺陷三、缺陷四。
 
 ### 還沒解的：事件一次性閂鎖讓測試很難做
 

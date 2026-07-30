@@ -10,7 +10,7 @@
 > 想知道系統現在長什麼樣、哪裡還是壞的，看 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
 
 **第 9 項有兩個缺陷至今未修**（缺陷三 `normal_h_reference`、缺陷四 體角與俯視佈署不符），
-雖然整項標【已完成】。未修的部分在 [`../NEXT_STAGE.md`](../NEXT_STAGE.md) 有指標。
+雖然整項標【已完成】。未修的部分在 [`NEXT_STAGE.md`](NEXT_STAGE.md) 有指標。
 
 ---
 
@@ -422,7 +422,7 @@ full_10_sec_frames = list(pre_video_buffer) + post_video_buffer   # ← 這裡
 
 - **根目錄新增 [`CLAUDE.md`](../CLAUDE.md)** —— 每次動工前必讀，寫明白名單、理由、
   跌倒主邏輯在哪、以及「真的要復活」的流程。
-- **[`CONTRIBUTING.md`](../CONTRIBUTING.md) 第六節**加一條紅線，與 Kafka topic、
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md) 第六節**加一條紅線，與 Kafka topic、
   `route_by_confidence()` payload 並列。
 - **[`scripts/check_guardrails.py`](../scripts/check_guardrails.py) 加 `check_module_whitelist()`**
   —— AST 靜態解析，擋兩種違規：在 `ai/modules/` 新增非白名單檔案、任何 `.py` import

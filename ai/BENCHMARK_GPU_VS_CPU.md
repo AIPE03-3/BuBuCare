@@ -125,7 +125,7 @@ HTTP_PORT=8010 GRPC_PORT=8011 METRICS_PORT=8002 ./ai/run_triton.sh
 
 ## 數字的可信度邊界
 
-- 依 [`CONTRIBUTING.md`](../CONTRIBUTING.md) 第四節與 `FPS_NOTES.md`：**只在同一台機器上比前後差異**，
+- 依 [`CONTRIBUTING.md`](../docs/CONTRIBUTING.md) 第四節與 `FPS_NOTES.md`：**只在同一台機器上比前後差異**，
   不要跨機器比較；端到端 FPS 的 ±0.5 fps 是噪音。
 - 單顆模型的 client mean 在兩輪之間會有 ~5% 浮動（GPU clock 狀態、其他容器的干擾）。
   跨表比較時請用**同一輪**的數字：表 A 用 `gpu-onnx` 那一輪，表 B 的 rt_detr 用 `gpu` 那一輪。

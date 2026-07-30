@@ -41,7 +41,7 @@ MAX_DET = 300  # RT-DETR decoder 固定 300 queries
 # 從本地權重讀一次完整 80 類 names（下游 yolo_env_model.names[cls_id] 需要）。
 # 只讀 metadata、不做推論，載入成本可忽略。
 #
-# 路徑以本檔位置為基準（照 CONTRIBUTING.md 第三節）：寫相對檔名 "rtdetr-l.pt" 的話
+# 路徑以本檔位置為基準（照 docs/CONTRIBUTING.md 第三節）：寫相對檔名 "rtdetr-l.pt" 的話
 # ultralytics 是按「當下工作目錄」找，從 repo 根執行就找不到 ai/ 底下那份，於是
 # 每次都重新下載 63MB 到 cwd —— 換個目錄啟動就多一份重複權重。
 _AI_DIR = os.path.dirname(os.path.abspath(__file__))

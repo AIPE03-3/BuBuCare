@@ -27,7 +27,7 @@ python ai/export_models.py --plan
 `.onnx`（約 165MB）、`.plan`、`.pt`、長片 `test4.mp4`（344MB）都**不進 repo**
 （GitHub 單檔上限 100MB）。`ai/triton_repo/` 裡只有 `config.pbtxt`，模型本體要自己在本機產。
 
-[`ai/export_models.py`](ai/export_models.py) 從 `ai/` 底下的來源權重重建三顆：
+[`ai/export_models.py`](../ai/export_models.py) 從 `ai/` 底下的來源權重重建三顆：
 
 | Triton 模型 | 來源權重 | 產出 |
 |---|---|---|
@@ -37,7 +37,7 @@ python ai/export_models.py --plan
 
 ⚠️ **`--plan` 不是選配**：這台的 `rt_detr` 是 `platform: tensorrt_plan`，只有 `model.onnx`
 **Triton 會整支起不來**（explicit 模式一顆載入失敗會把另外兩顆一起拖垮，事故記錄見
-[`ai/triton_repo/README.md`](ai/triton_repo/README.md)）。`--plan` 會另開一個 Triton 官方鏡像的
+[`ai/triton_repo/README.md`](../ai/triton_repo/README.md)）。`--plan` 會另開一個 Triton 官方鏡像的
 容器跑 `trtexec` 編出這台 GPU 專屬的引擎，**要 4 分鐘左右**，慢是正常的。
 
 TensorRT 引擎綁「GPU 架構 + TensorRT 版本」，**不能跨機器複製**，每台要自己編。
@@ -50,7 +50,7 @@ Mac 沒有 NVIDIA GPU 編不出來，走第四節的兩個選擇。
 
 ### 3. MLOps 迴路（標註 → 重訓 → 熱部署）
 
-那條迴路的服務、腳本與跑法另外寫在 [`ai/MLOPS.md`](ai/MLOPS.md)，日常開發不需要起那些服務。
+那條迴路的服務、腳本與跑法另外寫在 [`ai/MLOPS.md`](../ai/MLOPS.md)，日常開發不需要起那些服務。
 
 ---
 
@@ -109,7 +109,7 @@ TRITON_POSE_URL = os.environ.get("TRITON_POSE_URL", "http://127.0.0.1:8000/yolo_
 ## 四、macOS 上怎麼跑
 
 **完整的操作手冊在 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)**（每次開機的啟動順序、埠表、症狀→解法），
-做到哪裡與踩過的坑在 [`MAC_SETUP_WBS.md`](docs/MAC_SETUP_WBS.md)。這裡只講骨架。
+做到哪裡與踩過的坑在 [`MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md)。這裡只講骨架。
 
 `ai/inference_test.py` 本身支援 Mac，但**三顆模型都打 Triton**，所以要有一個 Triton server
 才跑得動。Mac 沒有 NVIDIA GPU，兩個選擇：
@@ -190,7 +190,7 @@ PR 上 GitHub Actions 是綠燈才代表「沒踩到已知的雷」，不代表�
 至於「哪些檔可以存在」（`ai/modules/` 白名單）則是**會隨階段決策變動**的，目前放行四個：
 `__init__.py`、`sanity_check.py`、`bed_exit.py`、`chair_slip.py`。2026-07-30 起離床與座椅
 滑落收回研究，遊走 / 躁動 / 音訊融合維持封印。**檔案本身不在版控中**，要從歷史撈回來，
-指令與兩個檔的差異（`bed_exit.py` 復活後會被護欄擋，要先改）見 [`CLAUDE.md`](CLAUDE.md)。
+指令與兩個檔的差異（`bed_exit.py` 復活後會被護欄擋，要先改）見 [`CLAUDE.md`](../CLAUDE.md)。
 
 跌倒主邏輯在 `ai/inference_test.py` 主迴圈，不在 `modules/` 底下，不受這兩條規則影響。
 
