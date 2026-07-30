@@ -46,6 +46,7 @@ from local_pipeline_eval import (  # noqa: E402
     decide_trigger, parse_label_file, pick_device,
 )
 from pose_features import DEFAULT_FEATURE_NORM, FEATURE_NORMS  # noqa: E402
+from fall_chain import DEFAULT_LYING_RULE, LYING_RULES, decide_lying  # noqa: E402
 import dataset_utils as du  # noqa: E402
 
 DEFAULT_DATASET = _AI_DIR / "train" / "dataset"
@@ -180,7 +181,8 @@ def evaluate_strategy(videos, fired_by_video):
     }
 
 
-def load_test_videos(dataset_dir, split, feature_norm=DEFAULT_FEATURE_NORM):
+def load_test_videos(dataset_dir, split, feature_norm=DEFAULT_FEATURE_NORM,
+                     lying_rule=DEFAULT_LYING_RULE):
     """載入該 split 的特徵與標註遮罩。回傳 (videos, features_by_stem, data_by_stem)。"""
     splits = du.load_splits(dataset_dir)
     features_dir = du.features_dir(dataset_dir, feature_norm)
@@ -222,6 +224,20 @@ def load_test_videos(dataset_dir, split, feature_norm=DEFAULT_FEATURE_NORM):
         videos.append((stem, is_fall, span_mask, total))
         features_by_stem[stem] = features
         data_by_stem[stem] = {key: data[key] for key in ("is_lying", "is_occluded", "valid")}
+        # 換躺平規則時用 npz 存的原始角度／寬高比重算，不重跑 YOLO。
+        # 舊 npz（2026-07-30 前抽的）沒有這兩個欄位，只能用當初存好的 is_lying。
+        if lying_rule != DEFAULT_LYING_RULE:
+            if "body_angle" not in data.files or "aspect_ratio" not in data.files:
+                raise ValueError(
+                    f"{feature_path} 沒有 body_angle／aspect_ratio 欄位，無法重算躺平規則。"
+                    f"請重抽特徵：extract_features.py --splits {split} --overwrite"
+                )
+            angles, aspects = data["body_angle"], data["aspect_ratio"]
+            data_by_stem[stem]["is_lying"] = np.array([
+                decide_lying(None if np.isnan(angle) else float(angle),
+                             float(aspect), lying_rule)
+                for angle, aspect in zip(angles, aspects)
+            ], dtype=bool)
 
     return videos, features_by_stem, data_by_stem, skipped
 
@@ -291,6 +307,10 @@ def parse_args():
     parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
                         help="用哪一份特徵評估。會跟每顆權重 run.json 記的模式核對，"
                              "不一致直接擋下")
+    parser.add_argument("--lying-rule", default=DEFAULT_LYING_RULE, choices=LYING_RULES,
+                        help="躺平規則（防線 A）：current=現況 angle<40 或 w/h>1.25／"
+                             "aspect=只看 w/h／wide=補上 angle>140。"
+                             "非 current 時用 npz 存的原始角度重算，不重跑 YOLO")
     return parser.parse_args()
 
 
@@ -320,7 +340,7 @@ def main():
         return 1
 
     videos, features_by_stem, data_by_stem, skipped = load_test_videos(
-        dataset_dir, args.split, args.feature_norm)
+        dataset_dir, args.split, args.feature_norm, args.lying_rule)
     if not videos:
         print("❌ 測試集沒有可用影片（先跑 extract_features.py）", file=sys.stderr)
         return 1
@@ -345,6 +365,7 @@ def main():
         "params": {"frame_skip": FRAME_SKIP, "window_size": WINDOW_SIZE,
                    "act_threshold": args.act_threshold,
                    "feature_norm": args.feature_norm,
+                   "lying_rule": args.lying_rule,
                    "ai_thinking_conf": AI_THINKING_CONF,
                    "direct_trigger_conf": DIRECT_TRIGGER_CONF},
         "strategies": strategies,

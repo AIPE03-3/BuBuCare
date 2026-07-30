@@ -68,6 +68,9 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, featu
         return None
 
     features, is_lying, is_occluded, height_ratios, valids = [], [], [], [], []
+    # 躺平判斷的兩個原始輸入也留下來。存了之後換躺平規則可以直接離線重算，
+    # 不必為了試一個門檻就重跑 150 支影片的 YOLO（同 height_ratio 的理由）
+    body_angles, aspect_ratios = [], []
     normal_height_reference = None
     frame_count = 0
     processed_count = 0
@@ -98,6 +101,8 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, featu
         is_lying.append(state["is_lying"])
         is_occluded.append(state["is_occluded"])
         height_ratios.append(np.nan if state["height_ratio"] is None else state["height_ratio"])
+        body_angles.append(np.nan if state["body_angle"] is None else state["body_angle"])
+        aspect_ratios.append(state["aspect_ratio"])
         valids.append(state["valid"])
         processed_count += 1
 
@@ -110,6 +115,9 @@ def extract_one_video(video_path, pose_model, conf, occluded_height_ratio, featu
         "is_lying": np.asarray(is_lying, dtype=bool),
         "is_occluded": np.asarray(is_occluded, dtype=bool),
         "height_ratio": np.asarray(height_ratios, dtype=np.float32),
+        # NaN＝肩或臀沒抓到，軀幹角算不出來。不是 0——0 是「真的量到 0 度」
+        "body_angle": np.asarray(body_angles, dtype=np.float32),
+        "aspect_ratio": np.asarray(aspect_ratios, dtype=np.float32),
         "valid": np.asarray(valids, dtype=bool),
         "frame_skip": np.int32(FRAME_SKIP),
         # 特徵是哪種正規化算出來的，跟著特徵一起走。train_act.py 靠它擋混用，
