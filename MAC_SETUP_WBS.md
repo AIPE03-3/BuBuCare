@@ -209,7 +209,8 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 | T5-6 | `clearml-agent daemon --queue default`（host 原生，**不帶 `--gpus`**）| agent 咬得到單 | ☐ | |
 | T5-7 | `TRAIN_DEVICE=cpu TRAIN_EPOCHS=1 python ai/submit_task.py` | ClearML 有任務、跑完出權重 | ☐ | 見 D8，只驗流程 |
 | T5-8 | `python ai/model_deployment_agent.py` 熱部署 | Triton 載到新版本、推論吃到 | ⚠ | **熱部署機制本身已在 Mac 驗通（走 AcT/`action_transformer`）**，但 `model_deployment_agent.py` 這支還不能用（4 個障礙見下）。實測全鏈：`act_s42_st1.pth` → ONNX（PyTorch 比對誤差 1.19e-06）→ 熱載 v1→v2（HTTP 200）→ **線上推論輸出與本地權重逐位吻合（4.77e-07）** → 回滾 v2→v1（HTTP 200）|
-| T5-8a | `model_deployment_agent.py` 要能在 Mac 跑，需改的 4 處 | — | ☐ | ①`build_plan()` [無條件呼叫](ai/model_deployment_agent.py#L277) `docker run --gpus all trtexec`，**沒有開關** → 應改成依 `config.pbtxt` 的 `platform` 決定（`tensorrt_plan` 才編 plan），兩台通用 ②`TRITON_REPO_DIR` [寫死](ai/mlops_paths.py#L37) `triton_repo`，但線上掛的是 `triton_repo_cpu` ③`export_onnx()` 寫死 `RTDETR().export()`，AcT 不適用 ④`action_transformer` / `rt_detr_onnx` 的 `config.pbtxt` 沒有 `version_policy` → `current_served_version()` 會 die |
+| T5-8a | `model_deployment_agent.py` 要能在 Mac 跑，需改的 4 處 | 這支在 Mac 上跑得完 | ☑ | **①②④ 已改並實測跑通全自動部署**：`build_plan` 改成依 `config.pbtxt` 的 `platform` 決定（`tensorrt_plan` 才編引擎）——**判斷依據是「這顆模型要什麼格式」不是「這台有沒有 GPU」，同一份 code 兩台都對**；`TRITON_REPO_DIR` 改可覆蓋（線上掛的是 `triton_repo_cpu`）；兩個 config 補 `version_policy`（鎖 v1＝現狀，安全）。`do_rollback` 也一併修（原本硬檢查 `model.plan`，ONNX 路線會被誤判成不能回滾）。③ 見 T5-8b |
+| T5-8b | 讓部署支援 AcT（`action_transformer`）| — | ☐ | `export_onnx()` 寫死 `RTDETR(pt_path).export()`，AcT 是自訂 PyTorch 模型不適用。**卡在架構定義的單一來源**：AcT 架構在 `inference_test.py:390`，要嘛 import 它（會連帶啟動 Triton client，有副作用）、要嘛再抄一份（違反單一來源）。乾淨解是把 `ActionTransformer` 抽成獨立模組讓兩邊 import —— 但那動到跌倒主鏈的核心檔案，要另外評估 |
 | T5-9 | 收尾：`python3 scripts/check_guardrails.py` + 更新 `RUN_ON_MAC.md` | 綠燈、文件與實況一致 | ☑ | 護欄綠燈（308 檔）。**新建 [`RUN_ON_MAC.md`](RUN_ON_MAC.md)** —— 定位是「每天開機的操作手冊」（啟動順序／埠表／症狀→解法），與本檔互補不重複。逐項驗過文件裡提到的檔案、`.env` 鍵、`run_triton.sh stop` 都真的存在。**順手更正 `CONTRIBUTING.md` 第四節**：原文說「把 `--gpus all` 拿掉自己起一份」已過時（`run_triton.sh` 本來就支援 `TRITON_GPUS=none`），且漏了 `KIND_GPU` 與 `tensorrt_plan` 兩個必撞的點；同時把 Mac 兩份文件接上入口（先前沒有任何地方連得到）|
 
 ---
@@ -218,6 +219,7 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 
 | 日期 | 做了什麼 | 結果 / 實際數字 |
 |---|---|---|
+| 2026-07-30 | **T5-8a 完成**：`model_deployment_agent.py` 在 Mac 上跑通全自動熱部署 | 實測 `--from-pt` 部署 T5-7 的權重 → 跳過 trtexec → v1→v3 熱載 READY → `--rollback` 兩次回到 v1，版控的 `config.pbtxt` 全程沒被動到。**踩到一個症狀極誤導的坑**：Triton 跑著時跑 `make_cpu_repo.sh`（`rm -rf` 重建）會讓容器的 bind mount 指向死 inode，`/models` 變空，但已載入的模型 `/ready` 照樣 200，只有 reload 失敗 → 已寫進 `RUN_ON_MAC.md` |
 | 2026-07-30 | **T5-9 收尾**：新建 `RUN_ON_MAC.md`、更正 `CONTRIBUTING.md` 第四節、停背景 agent | 護欄綠燈（308 檔）。文件入口鏈補起來：`CLAUDE.md` → `CONTRIBUTING.md` 第四節 → `RUN_ON_MAC.md` / `MAC_SETUP_WBS.md`（先前兩份 Mac 文件沒有任何地方連得到）|
 | 2026-07-30 | **T5-6 / T5-7 完成，T5-8 熱部署機制驗通**（改走 AcT 而非 rt_detr）| agent 咬單 → CPU 訓練 **32.2 秒/epoch** → mAP50 0.535 未過門檻 0.8 → 權重上 S3 並標 `below-gate`。熱部署：AcT `.pth` → ONNX → 熱載 v1→v2 → **線上輸出與本地權重逐位吻合（4.77e-07）** → 回滾成功。踩到 3 個坑：uv 建的 venv **沒有 pip**（agent 必掛）、torch 2.13 匯出**外部權重檔**、版控 `config.pbtxt` 不能鎖新版（會弄倒另一台）|
 | 2026-07-30 | **T5-3 / T5-4 完成**，T5-5 修掉一個寫死的模型名 | Label Studio 原生 arm64、`:8082` 302；`~/clearml.conf` 認證過（身分 `ychsieh`）。**`inference_to_labelstudio_sdk.py:347` 寫死 `/rt_detr`**，在無 GPU 機器上必 404 —— 改成沿用既有的 `TRITON_DETR_URL` 契約（同 `inference_test.py:419`），沒設時 fallback 回原值，對 5060 Ti 零影響。順手修掉 `check_mac_env.sh` **5 處** bash 3.2 `$VAR）` 地雷（全在失敗分支裡，最需要時才會炸）|

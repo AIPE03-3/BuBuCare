@@ -34,7 +34,14 @@ DATA_YAML = os.path.join(AI_DIR, "data.yaml")
 DATA_YAML_RUNTIME = os.path.join(AI_DIR, "data.runtime.yaml")
 
 # ── Triton ───────────────────────────────────────────────────────────────────
-TRITON_REPO_DIR = os.path.join(AI_DIR, "triton_repo")
+# model repository 的位置。預設是版控裡那份，但**線上 serve 的不一定是它**：
+# 沒有 NVIDIA GPU 的機器跑的是 `ai/triton_repo_cpu/`（make_cpu_repo.sh 把 KIND_GPU
+# 換成 KIND_CPU 的產物）。部署腳本要寫進「Triton 真正掛載的那個目錄」才有意義，
+# 寫進版控那份等於改了一個沒人在讀的地方。所以這裡可被環境變數覆蓋。
+#
+# ⚠️ 指到 triton_repo_cpu 時要知道：那是 make_cpu_repo.sh 的產物，重跑該腳本會
+#    `rm -rf` 重建，新部署的版本目錄會消失（權重可從 ClearML 重新拉，不是資料遺失）。
+TRITON_REPO_DIR = cfg("TRITON_REPO_DIR", os.path.join(AI_DIR, "triton_repo"))
 # ⚠️ 8010 不是 8000：8000 被 backend 的 uvicorn 佔著（見 CLAUDE.md 第四節）。
 # 上游那份 model_deployment_agent.py 寫死 8000，照抄會打到 FastAPI 拿 404。
 TRITON_HTTP_URL = cfg("TRITON_HTTP_URL", "http://127.0.0.1:8010").rstrip("/")

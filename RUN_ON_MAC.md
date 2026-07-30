@@ -130,6 +130,7 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 | 前端影片點不開 | `clip_path` 不是 `s3://` 開頭。`.env` 要有 `CLIP_S3_BUCKET`，否則存的是本地路徑 |
 | clearml-agent 秒掛 `No module named pip` | `ai/.venv` 是 uv 建的沒有 pip。加 `CLEARML_AGENT_SKIP_PYTHON_ENV_INSTALL=1`，**不要**去補裝 pip（它接著會重裝幾百 MB 相依）|
 | Triton 新版本 UNAVAILABLE，說少 `model.onnx.data` | torch 2.13 匯出的是外部權重檔。用 `onnx.save(..., save_as_external_data=False)` 併成單一檔 |
+| 熱載回 `failed to poll from model repository`，但三顆 `/ready` 都還是 200 | **Triton 跑著的時候跑了 `make_cpu_repo.sh`**。它會 `rm -rf` 重建目錄，容器的 bind mount 指向被刪掉的舊 inode → 容器內 `/models` 變成空的（`docker exec nh-triton ls /models` 一看就知道）。已載入記憶體的模型照樣服務，所以 `/ready` 還是 200，**只有 reload 會失敗** —— 症狀很誤導。**解法：重跑 `run_triton.sh`**；要重建 repo 就先停 Triton |
 | 推論說連不上後端 | `.env` 要有 `BACKEND_API_USER` / `BACKEND_API_PASSWORD`（推論靠它拿裝置清單）|
 
 ### ⚠️ 兩件會弄壞另一台的事
