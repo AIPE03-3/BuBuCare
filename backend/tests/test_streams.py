@@ -100,7 +100,7 @@ def test_auth_allows_valid_token(client, auth_headers):
 
 def test_auth_rejects_garbage_token(client):
     # 亂打一串字 → 連解都解不開
-    res = client.post("/streams/auth", json=mediamtx_body(token="not-a-jwt"))
+    res = client.post("/streams/auth", json=mediamtx_body(token="not-a-jwt"))  # guardrail: allow
 
     assert res.status_code == 401
 

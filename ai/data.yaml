@@ -1,0 +1,41 @@
+# RT-DETR 重訓用的資料集定義（ai/clearml_train_pipeline.py 讀它）。
+#
+# 移植自 origin/albert_chiang:Fall/tools/data.yaml，兩處改動：
+#
+# 1. train / val 不再指同一個 images/ 目錄。上游那樣寫等於拿念過的題目考自己，
+#    mAP 會虛高、拿來對門檻沒有意義。改成 ai/prepare_dataset.py 產出的兩份清單
+#    （固定 seed 切 80/20，切分名單另存 ai/dataset_splits/ 並進版控可重現）。
+# 2. path 指向 detection_dataset（清洗後的），不是 active_learning_dataset（原始素材）。
+#    原始標註裡混了中文註解行與寫死的假 pose 標註，直接餵訓練會炸或學到假資料，
+#    清洗規則見 ai/prepare_dataset.py 的檔頭。
+#
+# ⚠️ 路徑刻意保持「相對」：寫絕對路徑會被護欄擋（換機器就失效）。但 ultralytics 解析
+#    相對 path 是相對於它的全域 settings['datasets_dir']、不是相對於這個 yaml 的位置，
+#    所以訓練腳本會先呼叫 mlops_paths.resolve_data_yaml() 轉出一份含絕對路徑的
+#    ai/data.runtime.yaml 再餵進去。不要直接把這個檔交給 `yolo train`。
+
+path: detection_dataset
+train: train.txt
+val: val.txt
+
+# 類別映射表 —— **這裡是唯一真相**，ai/inference_to_labelstudio_sdk.py 會讀這份去對
+# Label Studio 的標籤名，不要在程式裡另外寫一份（上游就是寫死在腳本裡才會對不上）。
+#
+# ⚠️ 這五個名字**不是**上游 albert 那份 data.yaml 的 wheelchair/slipper/wire/obstacle/
+#    walker。照抄他那份會讓整個重訓的類別語意全錯。實際比對這台的資料：
+#
+#      | class id       |   0    |   1   |   2  |  3  |   4   |
+#      | Label Studio   | person | chair | sofa | bed |  tv   |  85 / 92 / 5 / 0 / 179
+#      | 本地標註檔統計 |   86   |  92   |   5  |  0  |  179  |
+#
+#    兩邊逐類對得上（person 差 1 是因為本地有 90 張可用圖、LS 只有 89 個 task），
+#    可以確定本地標註的 class id 是照這台 Label Studio 專案
+#    `Fall_Detection_Active_Learning` 的標籤順序編的，不是照上游那套危害物清單。
+#
+# ⚠️ class 3（bed）目前一個標註都沒有 —— 模型不會學到床。要它學會就得先去標。
+names:
+  0: person
+  1: chair
+  2: sofa
+  3: bed
+  4: tv
