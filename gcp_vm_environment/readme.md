@@ -65,7 +65,7 @@ source $HOME/.local/bin/env
 
 | `on-failure` | ✔️ 是 (僅限非正常退出) | ❌ 否 | 只有在 Exit Code 不為 0（即發生錯誤退出）時才會重啟。 |
 
-(3) 
+(4) 
 2026/7/31 add:Grafana, NetData, prometheus postgresql-exporter  
-prometheus.conf_netdata_go.d -> netdata go.d/prometheus.conf
+prometheus.conf_netdata_go.d -> netdata go.d/prometheus.conf  
 postgres.conf_netdata_go.d -> netdata go.d/postgres.conf
