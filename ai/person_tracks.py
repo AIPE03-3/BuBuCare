@@ -28,7 +28,10 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from pose_features import empty_feature
+from fall_chain import person_geometry
+from pose_features import (
+    empty_feature, is_feature_valid, pose_feature,
+)
 
 # BYTETracker 參數。沿用 ultralytics bytetrack.yaml 的預設值，只調 track_buffer：
 # 長照場景人會被家具、其他人短暫遮住，緩衝短了會頻繁換 ID，一換 ID 視窗就重來
@@ -146,3 +149,52 @@ class PersonTrackStore:
     def reset(self):
         """畫面切換時整批丟掉——新場景的 track_id 跟舊場景沒有對應關係。"""
         self.tracks.clear()
+
+
+def observe_tracks(result, tracker, store, image_height, occluded_height_ratio,
+                   feature_norm, frame_index):
+    """跑追蹤器、逐人抽特徵與幾何，更新每人狀態。
+
+    回傳 [(PersonTrack, 幾何 dict, box_xyxy), …]，只含這一幀有看到的人。
+    """
+    if result.boxes is None or len(result.boxes) == 0 or result.keypoints is None:
+        store.update({}, frame_index)
+        return []
+
+    tracked = tracker.update(result.boxes.cpu())
+    if len(tracked) == 0:
+        store.update({}, frame_index)
+        return []
+
+    keypoints_all = result.keypoints.xyn.cpu().numpy()
+    boxes_xywh = result.boxes.xywh.cpu().numpy()
+    boxes_xyxy = result.boxes.xyxy.cpu().numpy()
+    boxes_xyxyn = result.boxes.xyxyn.cpu().numpy()
+
+    observations, geometry_by_id, box_by_id = {}, {}, {}
+    for row in tracked:
+        # BYTETracker 回傳 [x1,y1,x2,y2, track_id, score, cls, det_idx]，
+        # 最後一欄是原始偵測索引——靠它把 track 對回同一個人的關鍵點
+        track_id, detection_index = int(row[4]), int(row[7])
+        if detection_index >= len(keypoints_all):
+            continue
+        keypoints = keypoints_all[detection_index]
+        feature = pose_feature(keypoints, boxes_xyxyn[detection_index], feature_norm)
+        existing = store.tracks.get(track_id)
+        geometry = person_geometry(
+            keypoints, boxes_xywh[detection_index], boxes_xyxy[detection_index],
+            image_height, existing.height_reference if existing else None,
+            occluded_height_ratio,
+        )
+        observations[track_id] = {
+            "feature": feature,
+            "box_height": float(boxes_xywh[detection_index][3]),
+            "is_lying": geometry["is_lying"],
+            "valid": is_feature_valid(feature),
+        }
+        geometry_by_id[track_id] = geometry
+        box_by_id[track_id] = boxes_xyxy[detection_index]
+
+    seen = store.update(observations, frame_index)
+    return [(track, geometry_by_id[track.track_id], box_by_id[track.track_id])
+            for track in seen]

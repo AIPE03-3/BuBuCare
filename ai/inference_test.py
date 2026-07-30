@@ -28,6 +28,8 @@ from triton_act_client import TritonActModel            # Triton 版 action_tran
 from pose_features import (                             # AcT 34 維輸入的唯一定義
     DEFAULT_FEATURE_NORM, check_feature_norm, empty_feature, is_feature_valid, pose_feature,
 )
+from fall_chain import FallAlarmGate, person_geometry   # 幾何防線 A/B 與告警閘門的唯一定義
+from person_tracks import PersonTrackStore, build_tracker, observe_tracks  # 多人追蹤
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
     build_camera_channels, BackendUnavailable, BACKEND_API_URL, cfg,
@@ -104,6 +106,23 @@ ACT_ALONE_CAN_TRIGGER = cfg("ACT_ALONE_CAN_TRIGGER", "false").strip().lower() ==
 # 但模型看到的是完全不同語意的向量，輸出全是垃圾。換模型時務必一起換。
 # 訓練端用的模式記在 <權重>.run.json 的 feature_norm，對照那裡設。
 ACT_FEATURE_NORM = check_feature_norm(cfg("ACT_FEATURE_NORM", DEFAULT_FEATURE_NORM))
+
+# 跌倒主鏈是否追蹤畫面裡所有人。預設 false＝維持既有單人行為（只看 conf×框面積 最大者）。
+#
+# 為什麼需要：公共區域（客廳、走廊、餐廳）本來就有好幾個人，而單人選法永遠挑
+# 「離鏡頭最近最大」的那個。實測自錄俯視影片 test6.mp4：系統全程追著站立的前景
+# 路人，真正跌倒在地的人從頭到尾沒被看過一眼；開多人後 0.2 秒內就抓到。
+#
+# ⚠ 只影響跌倒主鏈。六大防線（離床/躁動/座椅滑落/徘徊…）仍吃「主要人物」，
+#   因為那些是房間內的單人語意，公共區域本來就不該啟用。
+#
+# ⚠ 前提：ACT_ALONE_CAN_TRIGGER=false（現況）。此時 AcT 只在幾何已標記躺平/遮擋
+#   時才被詢問，所以每幀 AcT 呼叫次數通常是 0，Triton 的 batch=1 完全夠用。
+#   若哪天把 ACT_ALONE_CAN_TRIGGER 打開，就變成每個人每幀都要問 AcT，
+#   N 個人＝N 趟 Triton 來回，人多會掉幀——那時要先把 AcT 重匯出成動態 batch。
+ACT_MULTI_PERSON = cfg("ACT_MULTI_PERSON", "false").strip().lower() == "true"
+# 告警重新武裝前要連續看到幾個處理幀「畫面上沒人躺著」。見 FallAlarmGate 的說明。
+FALL_REARM_FRAMES = int(cfg("FALL_REARM_FRAMES", "15"))
 
 
 def camera_numeric_id(camera_id):
@@ -420,6 +439,13 @@ def camera_worker(camera_id, video_source):
     clip_s3_key = None
 
     frame_window = deque(maxlen=30)
+    # 多人追蹤：只在 ACT_MULTI_PERSON=true 時建立。false 時全為 None，舊路徑一行未動。
+    person_tracker = build_tracker() if ACT_MULTI_PERSON else None
+    person_store = PersonTrackStore(30) if ACT_MULTI_PERSON else None
+    # 多人版的重複抑制。取代 vlm_triggered 的永久閂鎖——公共區域必須能報第二個人，
+    # 但又不能因為追蹤 ID 換號就把同一次跌倒重複報（本專案不做身分辨識）。
+    fall_gate = FallAlarmGate(FALL_REARM_FRAMES) if ACT_MULTI_PERSON else None
+    processed_frame_index = 0   # 處理幀序號（給 track 的中斷偵測用，與 frame_count 解耦）
     vlm_triggered = False
     vlm_report = "Waiting for alert..."
     
@@ -499,6 +525,13 @@ def camera_worker(camera_id, video_source):
                 frame_window.clear()
                 last_pose_feat = empty_feature()
                 has_seen_person = False
+                # 多人模式：track 全部丟掉。斷線後 BYTETracker 的編號跟斷線前沒有
+                # 對應關係，留著等於把兩個不同的人接成同一條軌跡。閘門一併重新武裝，
+                # 理由同上面 frame_window.clear()——時序已斷，舊狀態不再可信。
+                if person_store is not None:
+                    person_store.reset()
+                    person_tracker = build_tracker()
+                    fall_gate.reset()
                 # 別讓中斷時間污染下一段區間 FPS（否則會印出荒謬的 <1 fps 像是退化）。
                 # normal_h_reference / frame_count / ever_detected_fall / 六個偵測器物件
                 # 一律保留：相機沒換人也沒移位，重設只會讓防線失效或對同一起事件重複發報。
@@ -672,13 +705,15 @@ def camera_worker(camera_id, video_source):
 
         current_pose_feat = empty_feature()
         is_current_frame_valid = False
-        is_physically_lying = False  
-        is_occluded_fall = False     
-        is_leaving_bed = False       
-        is_whitespace = False  
+        is_physically_lying = False
+        is_occluded_fall = False
+        is_leaving_bed = False
+        is_whitespace = False
         is_agitated = False
-        is_chair_slipped = False  
-        
+        is_chair_slipped = False
+        observed_persons = []   # 多人模式：這一幀看到的每個人（單人模式恆為空）
+        processed_frame_index += 1
+
         if results_pose and len(results_pose[0].keypoints) > 0:
             kpts_obj = results_pose[0].keypoints
             try:
@@ -689,8 +724,16 @@ def camera_worker(camera_id, video_source):
                 # xyxyn 與 xyn 同樣對整張畫面正規化，座標系一致，bbox 正規化才算得對
                 boxes_xyxyn = results_pose[0].boxes.xyxyn.cpu().numpy()
 
+                # 多人追蹤：跌倒主鏈用它，六大防線仍走下面的「主要人物」。
+                # 放在選人之前是因為它跟選人互不相干——追蹤要看所有偵測，選人只挑一個。
+                if person_tracker is not None:
+                    observed_persons = observe_tracks(
+                        results_pose[0], person_tracker, person_store, img_h,
+                        OCCLUDED_HEIGHT_RATIO, ACT_FEATURE_NORM, processed_frame_index,
+                    )
+
                 if kpts_data.ndim == 3 and kpts_data.shape[0] > 0:
-                    best_idx = -1; max_score = -1.0  
+                    best_idx = -1; max_score = -1.0
                     for idx in range(kpts_data.shape[0]):
                         if idx < len(conf_data) and conf_data[idx] < 0.45: continue
                         if idx < len(boxes_data):
@@ -708,20 +751,22 @@ def camera_worker(camera_id, video_source):
                         _, _, w_box, h_box = boxes_data[best_idx]
                         x1, y1, x2, y2 = boxes_xyxy[best_idx]
                         if normal_h_reference is None and frame_count > 10 and frame_count < 40: normal_h_reference = h_box
-                            
-                        # 跌倒防線 A
+
+                        # 跌倒防線 A（躺平）＋ B（幾何遮擋）。邏輯搬到 fall_chain.person_geometry，
+                        # 本機評估與多人路徑共用同一份——寫多份的話改了一邊漏另一邊，
+                        # 數字對不起來時查不出是哪邊（見 fall_chain 檔頭）。
+                        # try/except 沿用原本防線 A 的寫法：幾何算不出來時不能連帶讓
+                        # 下面六大防線一起被跳過（那是外層 except 的行為）。
                         try:
-                            shoulder_x = (kp[5][0] + kp[6][0]) / 2.0; shoulder_y = (kp[5][1] + kp[6][1]) / 2.0
-                            hip_x = (kp[11][0] + kp[12][0]) / 2.0; hip_y = (kp[11][1] + kp[12][1]) / 2.0
-                            if not (shoulder_x == 0 or hip_x == 0):
-                                body_angle = np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x)))
-                                if body_angle < 40.0 or (w_box / h_box) > 1.25: is_physically_lying = True
+                            main_geometry = person_geometry(
+                                kp, boxes_data[best_idx], boxes_xyxy[best_idx], img_h,
+                                normal_h_reference, OCCLUDED_HEIGHT_RATIO,
+                            )
+                            is_physically_lying = main_geometry["is_lying"]
+                            is_occluded_fall = main_geometry["is_occluded"]
                         except Exception: pass
-                            
-                        # 跌倒防線 B (幾何遮擋防禦)
-                        if normal_h_reference is not None:
-                            if (h_box / normal_h_reference) < OCCLUDED_HEIGHT_RATIO and y2 > (img_h * 0.5): is_occluded_fall = True
-                                
+
+
                         # 模組 A：離床預警呼叫
                         is_leaving_bed = bed_detector.process(kp, bed_box_xyxy, img_h, is_physically_lying, producer)
                         
@@ -764,7 +809,58 @@ def camera_worker(camera_id, video_source):
 
         is_ai_thinking_fall = (pred_class == 0 and act_confidence > 0.35) if len(frame_window) == 30 else False
         should_trigger_fall = False
-        if has_seen_person:
+        fall_person_count = 0   # 這一幀幾何判定「倒下」的人數（多人模式才會非 0）
+        if ACT_MULTI_PERSON:
+            # ── 多人：逐人判斷，任何一人成立就觸發 ──────────────────────────
+            # AcT 只問「幾何已經標記躺平/遮擋」的人。ACT_ALONE_CAN_TRIGGER=false 時
+            # 幾何正常者的 AcT 結果根本不會被採用（見下面的判斷式），問了純浪費一趟
+            # Triton 來回。實務上每幀通常 0 人需要問，比單人版的每幀 1 次還省。
+            for track, geometry, _ in observed_persons:
+                if not track.has_seen:
+                    continue
+                geometry_hit = geometry["is_lying"] or geometry["is_occluded"]
+                if geometry_hit:
+                    fall_person_count += 1
+                if not (geometry_hit or ACT_ALONE_CAN_TRIGGER):
+                    continue
+
+                window_ready = track.window_full
+                person_pred, person_conf = 1, 0.0
+                if window_ready and transformer_model is not None:
+                    try:
+                        person_logits = transformer_model(track.window_array()[0])
+                        person_prob = torch.softmax(
+                            torch.from_numpy(np.asarray(person_logits, dtype=np.float32)), dim=1)
+                        person_pred = torch.argmax(person_prob, dim=1).item()
+                        person_conf = person_prob[0][person_pred].item()
+                    except Exception as e:
+                        # 與單人版同樣的 Triton 斷線降級：退回幾何模擬，不讓 worker 崩
+                        if not triton_down_warned:
+                            print(f"⚠️ [{camera_id}] Triton AcT 推論失敗（降級：退回幾何模擬判斷）：{e}")
+                            triton_down_warned = True
+                        person_pred = 0 if geometry["is_lying"] else 1
+                        person_conf = 0.75 if geometry["is_lying"] else 0.0
+                elif window_ready:
+                    person_pred = 0 if geometry["is_lying"] else 1
+                    person_conf = 0.75 if geometry["is_lying"] else 0.0
+                person_thinks_fall = window_ready and person_pred == 0 and person_conf > 0.35
+
+                # 觸發條件與單人版逐項對齊（:769-771），只是把「那個人」換成「這個人」
+                person_trigger = False
+                if geometry_hit:
+                    if not window_ready or person_thinks_fall or geometry["is_occluded"]:
+                        person_trigger = True
+                elif ACT_ALONE_CAN_TRIGGER and window_ready and person_pred == 0 and person_conf > 0.55:
+                    person_trigger = True
+
+                if person_trigger:
+                    track.latched = True
+                    should_trigger_fall = True
+                    # 對外回報的信心值取「最像跌倒的那個人」——payload 只有一個欄位
+                    if person_conf > act_confidence:
+                        act_confidence = person_conf
+                        pred_class = person_pred
+        elif has_seen_person:
             if is_physically_lying or is_occluded_fall:
                 if len(frame_window) < 30 or is_ai_thinking_fall or is_occluded_fall: should_trigger_fall = True
             # 幾何正常時 AcT 單獨發動：預設關閉，理由見 ACT_ALONE_CAN_TRIGGER 的註解。
@@ -783,13 +879,22 @@ def camera_worker(camera_id, video_source):
         if check_status is not None:
             vlm_report = check_status
 
+        # 多人模式的發報閘門。**必須每個處理幀呼叫一次**，重新武裝靠連續計數。
+        # 單人模式不呼叫，維持原本的 vlm_triggered 永久閂鎖。
+        fall_alarm_allowed = (fall_gate.update(should_trigger_fall, fall_person_count > 0)
+                              if fall_gate is not None else False)
+
         # =========================================================================
         # 🚦 終極決策中樞
         # =========================================================================
-        if should_trigger_fall or ever_detected_fall or is_chair_slipped:
+        # 畫面狀態：單人模式沿用 ever_detected_fall（觸發後永久紅）。多人模式改看
+        # 「現在還有沒有人倒著」——公共區域 24 小時在跑，畫面永久停在紅色，
+        # 值班人員第二次跌倒時根本分不出是新事件還是舊的殘留。
+        fall_display_active = (fall_person_count > 0) if ACT_MULTI_PERSON else ever_detected_fall
+        if should_trigger_fall or fall_display_active or is_chair_slipped:
             status_text = "FALL / CHAIR SLIP DETECTED!" if is_chair_slipped else "FALL DETECTED!"
-            color = (0, 0, 255) 
-            ever_detected_fall = True 
+            color = (0, 0, 255)
+            ever_detected_fall = True
 
         elif is_leaving_bed:
             status_text = "BED EXIT PRE-ALERT"
@@ -812,7 +917,14 @@ def camera_worker(camera_id, video_source):
         # =========================================================================
         # ⚡ ⚡ ⚡ 業界商用規格修改：動態不重複相片命名與傳遞 ⚡ ⚡ ⚡
         # =========================================================================
-        if (should_trigger_fall or is_chair_slipped) and not vlm_triggered:
+        # 發報條件。單人模式：一次性閂鎖（報過就永遠不再報）。
+        # 多人模式：跌倒走邊緣觸發閘門（地上淨空後可再報下一個人），座椅滑落仍走
+        # 原本的閂鎖——那是單人語意的防線，不在本次多人化範圍內。
+        if ACT_MULTI_PERSON:
+            fall_alert_now = fall_alarm_allowed or (is_chair_slipped and not vlm_triggered)
+        else:
+            fall_alert_now = (should_trigger_fall or is_chair_slipped) and not vlm_triggered
+        if fall_alert_now:
             # 🧠 1. 解析並對齊 device_id 為 int
             numeric_id = camera_numeric_id(camera_id)
 
