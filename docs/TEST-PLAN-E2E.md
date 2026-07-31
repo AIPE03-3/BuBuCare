@@ -203,22 +203,105 @@ AGENT_SHADOW=1 .venv/bin/python -u -m agent.main
 
 | 指標                         | 實測 |
 | ---------------------------- | ---- |
-| VLM 二審耗時（收到 → 送出） |      |
-| agent 耗時                   |      |
-| 兩者判斷是否一致             |      |
-| 是否產生重複事件             |      |
+| VLM 二審耗時（收到 → 送出） | **50.6s**（7 則，46.9～56.7）|
+| agent 耗時                   | **35.1s**（7 則，34.3～36.3）|
+| 兩者判斷是否一致             | 描述大致一致，**但只有 agent 產出結構化 verdict** |
+| 是否產生重複事件             | **會**（shadow 期間沒有，但併行上線一定會，見下）|
 
-**判斷品質**（逐筆人工比對，填混淆矩陣）：
+**判斷品質**（同 7 張圖，人工看圖定 ground truth）：
 
 |                   | 實際跌倒 | 實際沒跌倒 |
 | ----------------- | -------: | ---------: |
-| 判`true_alarm`  |          |            |
-| 判`false_alarm` |          |            |
+| agent 判`true_alarm`  | 5 | **2** |
+| agent 判`false_alarm` | 0 | 0 |
+
+漏報 0（真跌倒全抓到），但**兩則誤報也全被確認成真警報**，`false_alarm` 一則都沒有。
+
+### 2026-07-31 輪 B 實測紀錄
+
+**怎麼做到跟輪 A 同一批事件**：`agent/main.py:87` 是 `auto_offset_reset="latest"`，
+直接啟動只看得到新訊息。所以先把 group 的位移倒回輪 A 那 7 則的起點再跑：
+
+```bash
+docker exec nh-kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --group agent-reviewer \
+  --topic nursing-home-alerts --reset-offsets --to-offset 59 --execute
+```
+
+offset 59–65 = `17:17:31`～`17:19:23`，正是輪 A 那 7 則。零程式碼改動。
+
+**shadow 確實乾淨**：DB 事件數 190 → **190**、DLQ **0** 筆、
+`processed-reports` 位移沒動。log 第一行就是「SHADOW 模式：不建立 Kafka producer」——
+那條路徑根本沒有 producer 物件可以誤送。
+
+**agent 比 vlm_worker 快 15 秒**，雖然它多跑兩次 LLM（VLM 判讀 → judge 判定 →
+al_curator 收樣，共 3 次 Ollama 呼叫，模型還要在 `qwen2.5vl:7b` / `qwen2.5:7b`
+之間換進換出）。差距來自 prompt 長度與輸出長度，不是架構。
+
+**逐則耗時極穩**：34.3 / 34.9 / 34.9 / 34.9 / 35.0 / 35.2 / 36.3 秒。
+
+### agent 帶來的東西：結構化 verdict
+
+vlm_worker 只吐**一段文字**塞進 `vlm_summary`。agent 多產出三個欄位：
+
+```json
+{"ai_verdict": "true_alarm", "ai_confidence": 0.95,
+ "ai_reasoning": "根據現場畫面顯示，有一個身體貼著地面的人…"}
+```
+
+**後端與前端早就接好了**：`backend/events/router.py:42-44` 有這三欄（選填，
+舊格式照常建檔）；前端有 `AiSuggestionBadge.tsx`、`EventCard.tsx:38` 的
+「AI 建議誤報 → 一鍵確認」流程。**目前那條路是空的，因為只有 agent 會產生這三欄，
+而 agent 還在 shadow。**
+
+對照組：輪 A 那 7 筆在 DB 裡 `ai_verdict` 全是 `null`，`verdict` 則是
+`true_alarm` 但 `verdict_by=A001`——那是**人**在前端按的，不是 AI 判的。
+
+### 這階段查出來的四件事
+
+1. **🔴 併行上線一定產生重複事件。** 兩個 consumer 用不同 group_id
+   （`vlm-brain-cluster` / `agent-reviewer`），各自收到**全部**訊息，各自送
+   `processed-reports`。agent 的 `SeenKeys`（`publish.py:59`）只記自己行程內送過的鍵，
+   擋不到另一個行程；後端 `handle_incoming_event()`（`service.py:125`）是無條件
+   `db.add()`，**沒有任何唯一性檢查**。→ 7 則告警會變 **14 筆** DB 事件。
+   cutover 只能二選一：關掉 vlm_worker，或後端補 `(device_id, detected_at, event_type)` 唯一索引。
+
+2. **🔴 agent 的 `snapshot_path` 會重蹈 7/31 剛修好的覆轍。**
+   `publish.py:45` 是 `snapshot_path=state["image_path"]` —— 那是 `image_store.resolve()`
+   回傳的**本機絕對路徑**，正是 `vlm_worker.py` 昨天才修掉的那個坑。
+   shadow log 實測七筆全是 `/Users/xieyuquan/.../ai/snapshots/...`。
+   agent 一旦上線，事件快照又會全部簽不出 presigned URL。
+   `AGENT_IMAGE_SOURCE=s3` 也救不了：那條路回的是暫存目錄，一樣是本機路徑。
+   → 該改成沿用 `alert` 帶進來的 `snapshot_path`（`AlertMessage` 目前把它
+   `extra="ignore"` 丟掉了，要先補成欄位）。
+
+3. **🟡 judge 的安全偏置把誤報全部吃掉了。**
+   `prompts.py:97` 寫死「**只要有合理可能是真的跌倒，就判 true_alarm**」，
+   結果 7/7 都是 `true_alarm`、信心一律 `0.95`。最露骨的是 `171851_p11`：
+
+   > 「相機捕捉到一位男性正在**行走**中…考慮安全優先原則，我們**假設**行走中的
+   > 男性有可能發生跌倒，因此判斷為 true_alarm。」
+
+   同一張圖 vlm_worker 判「未见明显跌倒迹象、風險評級低」是**對的**。
+   照護場景寧可誤報不可漏報是正確方向，但目前這個力道等於**永遠不會輸出
+   `false_alarm`** —— 而前端那條「AI 建議誤報 → 一鍵確認」的路正是靠它才會亮。
+   兩者互相抵銷。
+
+4. **🟡 主動學習收樣把「模型本來就判對的」也收進去。** 7/7 全收、全部
+   `priority=high`，理由還自相矛盾：
+
+   > 「YOLO 分數高**但**複判確認為**真跌倒**，屬於**誤觸發**的盲點。」
+
+   高分＋真跌倒＝模型判對了，不是盲點。最後一筆更直接打架：理由寫「複判確認為
+   **誤報**」，`agent_verdict` 欄位卻是 `true_alarm`。照這樣收下去，重訓資料集會被
+   一堆模型早就會的樣本稀釋。
 
 | 檢查                                                                        | 結果 |
 | --------------------------------------------------------------------------- | ---- |
-| `vlm_summary` 文字合理、無幻覺                                            | ☐   |
-| 前端全螢幕警示出現**「AI 影像分析判斷理由」區塊**（需`vlm_summary` 非空） | ☐   |
+| `vlm_summary` 文字合理、無幻覺                                            | 🟡 7 則中 1 則幻覺（把散落物講成「輪椅」）|
+| 前端全螢幕警示出現**「AI 影像分析判斷理由」區塊**（需`vlm_summary` 非空） | ☐ 待前端目視 |
+| shadow 模式不污染 DB                                                       | ✅ 190 → 190 |
+| agent 產出結構化`ai_verdict`，後端收得下                                 | ✅ 契約已就緒 |
 
 ---
 
