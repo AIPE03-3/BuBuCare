@@ -32,10 +32,10 @@ from triton_act_client import TritonActModel            # Triton 版 action_tran
 
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
-    build_camera_channels, build_detect_channels, fetch_devices, login,
+    build_camera_channels, fetch_devices, login,
     BackendUnavailable, BACKEND_API_URL, cfg,
 )
-from detect_publisher import make_publisher               # 把畫好框的畫面推回 MediaMTX 偵測頻道
+from detection_broadcaster import build_persons, make_broadcaster  # 把骨架座標轉播給前端 canvas
 
 # =========================================================================
 # 🛠️ MLOps 基礎建設：Kafka 初始化
@@ -438,7 +438,7 @@ frames_lock = threading.Lock()
 # =========================================================================
 # 📹 核心：多鏡頭平行巡邏的 Edge Worker
 # =========================================================================
-def camera_worker(camera_id, video_source, detect_url=None):
+def camera_worker(camera_id, video_source):
     global producer, device, yolo_pose_model, yolo_env_model, transformer_model, output_frames, frames_lock
 
     print(f"🚀 鏡頭頻道 [{camera_id}] 啟動拉流：{video_source}")
@@ -484,12 +484,13 @@ def camera_worker(camera_id, video_source, detect_url=None):
     source_fps = _fps_of(cap)
     frame_delay = 1.0 / source_fps
 
-    # ── 📤 偵測畫面推流（前端「即時／偵測」切換鈕的「偵測」那一半）────────
-    # 推的是下面 Step D 畫好的 annotated_frame。沒設 DETECT_STREAM=1、該相機沒有
-    # stream_channel_detect、或機器上沒有 ffmpeg 時一律回 None，迴圈內就不會推。
+    # ── 📤 偵測座標轉播（前端「即時／偵測」切換鈕的「偵測」那一半）──────────
+    # 送的是**座標**，不是畫面：前端拿乾淨影像 + canvas 自己疊骨架。
+    # 2026-07-31 取代原本的 detect_publisher（AI 端燒框再編一次 H.264 推 cam_out），
+    # 理由見 ai/detection_broadcaster.py 的檔頭。沒設 DETECT_BROADCAST=1 就回 None。
     # ⚠ 這條出口與事件片段/快照完全無關：那兩者刻意維持無框的原始畫面（組長決策：
-    #    彈窗當下有框會干擾人工確認），別把 annotated_frame 接進 write_event_clip。
-    detect_pub = make_publisher(camera_id, detect_url, fps=source_fps)
+    #    彈窗當下有框會干擾人工確認）。
+    detect_pub = make_broadcaster(camera_id)
 
     # ── 📼 事件片段緩衝（觸發前 PRE 秒 / 後 POST 秒）──────────────────────
     # 緩衝塞在 `frame_count % 2` 跳幀之前，存的是原始幀：存已處理幀的話同樣的秒數
@@ -537,13 +538,9 @@ def camera_worker(camera_id, video_source, detect_url=None):
     # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/mask 疊圖/putText/copy），
     # 這些只為 GUI 顯示，HEADLESS 壓測根本不看畫面卻每幀白燒 CPU。快照存檔仍保留（事件證據）。
     _no_render = bool(os.environ.get("NO_RENDER"))
-    if _no_render and detect_pub is not None:
-        # 偵測推流推的就是 Step D 畫出來的那張圖，NO_RENDER 等於把來源整個關掉。
-        # 這兩個開關同時設一定是誤會，講明白比默默推出一片空白好。
-        print(f"⚠️ [{camera_id}] NO_RENDER=1 會跳過畫框渲染，偵測推流沒有畫面可推 → 停用推流"
-              f"（要推流請拿掉 NO_RENDER）")
-        detect_pub.close()
-        detect_pub = None
+    # ⚠ 這裡以前要在 NO_RENDER=1 時把偵測推流關掉：舊做法推的就是 Step D 畫出來的那張圖，
+    #   不渲染就沒東西可推。改成轉播座標之後**沒有這個牽連了**——座標來自幾何判定，
+    #   跟畫不畫圖無關，所以 HEADLESS 壓測時前端照樣看得到骨架。
     # 提速：DETR_EVERY_N=N（N>1）把 rt_detr 環境物件偵測降頻成「每 N 個處理幀才跑一次」，
     # 其餘幀復用上次結果。detr 佔 ~30% 幀時間，但它偵測的全是靜態家具（bed/chair/couch…），
     # results_env 三個下游用途（bed_box 離床、chair_box 座椅滑落、mask 疊圖）都只是
@@ -743,6 +740,12 @@ def camera_worker(camera_id, video_source, detect_url=None):
         # 這一幀「連續倒地幀數剛達門檻、且還沒發過事件」的人，等 AcT 算完再決定要不要外發。
         # 元素是 (track_id, is_occluded_i)。沒有追蹤器時恆為空，走原本的單筆事件路徑。
         fall_candidates = []
+        # Step E 的座標轉播要用這四個。跟上面三個一樣在這裡先給空值：
+        # 沒偵測到人、或下面 try 落到 except 時，轉播才不會拿到未定義的名字。
+        boxes_xyxy = []
+        conf_data = []
+        kpts_data = None
+        idx_to_track = {}
 
         if results_pose and len(results_pose[0].keypoints) > 0:
             kpts_obj = results_pose[0].keypoints
@@ -1151,10 +1154,16 @@ def camera_worker(camera_id, video_source, detect_url=None):
             if is_current_frame_valid: last_valid_annotated_frame = annotated_frame.copy()
             with frames_lock: output_frames[camera_id] = annotated_frame.copy()
 
-            # 同一張畫好框的畫面，多送一份到 MediaMTX 的偵測頻道給前端看。
-            # publish() 保證不阻塞也不拋例外：滿了就丟幀，優先保住推論的節奏。
-            if detect_pub is not None:
-                detect_pub.publish(annotated_frame)
+        # === Step E: 偵測座標轉播（前端 canvas 疊圖的資料來源）===
+        # 刻意放在 Step D 的 `if not _no_render` **外面**：座標來自上面的幾何判定，
+        # 不是從畫好的圖反推，所以 NO_RENDER=1 時照樣要送。
+        # publish() 保證不阻塞也不拋例外：滿了就丟幀，優先保住推論的節奏。
+        if detect_pub is not None:
+            detect_pub.publish(build_persons(
+                boxes_xyxy=boxes_xyxy, conf_data=conf_data, kpts_xyn=kpts_data,
+                fall_flags=person_fall_flags, idx_to_track=idx_to_track,
+                img_w=img_w, img_h=img_h,
+            ))
 
         # FPS_NO_THROTTLE=1：量純 GPU 吞吐上限時，略過貼齊 source fps 的節流睡眠。
         if not _fps_no_throttle:
@@ -1192,18 +1201,12 @@ if __name__ == "__main__":
     _overrides_replace_all = bool(os.environ.get("SINGLE_SOURCE") or
                                   os.environ.get("STRESS_CAM_COUNT"))
 
-    # 偵測頻道（AI 畫框後要推回去的地方）。只有 CAMERA_SOURCE=backend 這條路拿得到，
-    # 因為它是資料庫欄位；離線 demo / 壓測沒有後端可問，維持不推流。
-    detect_channels = {}
-
     if _CAMERA_SOURCE == "hardcoded" or _overrides_replace_all:
         camera_channels = dict(_HARDCODED_CHANNELS)
     else:
         try:
-            # 一次登入 + 一次 GET /devices，原味與偵測兩份清單共用，不重複問後端。
             _devices = fetch_devices(login())
             camera_channels = build_camera_channels(devices=_devices)
-            detect_channels = build_detect_channels(devices=_devices)
         except BackendUnavailable as e:
             print("=" * 70)
             print(f"❌ [CAMERA_SOURCE=backend] 無法從後端取得相機清單：{e}")
@@ -1217,8 +1220,6 @@ if __name__ == "__main__":
             print("=" * 70)
             raise SystemExit(1)
         print(f"📡 [CAMERA_SOURCE=backend] 由後端取得 {len(camera_channels)} 路鏡頭：{camera_channels}")
-        if detect_channels:
-            print(f"📤 其中 {len(detect_channels)} 路有偵測頻道（畫框後推回）：{detect_channels}")
     # 單源量測開關（比照其他開關：未設 = 原三路行為，不留死改動）：
     # SINGLE_SOURCE=<檔案路徑或 rtsp URL> 時，改成「只掛一路」指向該來源，量單路乾淨 FPS
     #（避免三/四路併發共享 GPU 稀釋數字）。相機名固定 Room_301_Bed（device_id=301，已在後端註冊）。
@@ -1256,9 +1257,7 @@ if __name__ == "__main__":
     
     threads = []
     for cam_id, stream_src in camera_channels.items():
-        # detect_channels 對不到就是 None＝這路不推流（沒設偵測頻道，或走離線 demo）。
-        t = threading.Thread(target=camera_worker,
-                             args=(cam_id, stream_src, detect_channels.get(cam_id)))
+        t = threading.Thread(target=camera_worker, args=(cam_id, stream_src))
         t.daemon = True; threads.append(t); t.start()
 
     # Headless 壓測開關（未設 = 原本 GUI 行為，不留死改動）：HEADLESS=1 時主執行緒不畫

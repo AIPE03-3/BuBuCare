@@ -35,24 +35,20 @@
     python ai/inference_to_labelstudio_sdk.py --sync-storage
 """
 import argparse
-import base64
 import os
 import sys
 
 import numpy as np
 import requests
 
-from mlops_paths import AI_DIR, DATA_YAML, RAW_DATASET_DIR, cfg, export_aws_rw_env
+from labelstudio_client import (LABELS_DIR, ensure_local_image, fail, get_project,
+                                get_task, list_tasks, local_image_path, login,
+                                parse_label_config, replace_prediction,
+                                resolve_image_url, sync_storage)
+from mlops_paths import AI_DIR, DATA_YAML, cfg
 
-LS_URL = cfg("LS_URL", "http://localhost:8082").rstrip("/")
 LS_PROJECT_ID = int(cfg("LS_PROJECT_ID", "1"))
-LS_USERNAME = cfg("LABEL_STUDIO_USERNAME")
-LS_PASSWORD = cfg("LABEL_STUDIO_PASSWORD")
 CONF_THRES = float(cfg("LS_CONF_THRES", "0.35"))
-HTTP_TIMEOUT = float(cfg("LS_HTTP_TIMEOUT", "30"))
-
-IMAGES_DIR = os.path.join(RAW_DATASET_DIR, "images")
-LABELS_DIR = os.path.join(RAW_DATASET_DIR, "labels")
 
 # 線上 rt_detr 目前是 COCO 80 類的 rtdetr-l，而專案標籤是 person/chair/sofa/bed/tv。
 # 這張表把 COCO 名字轉成專案標籤名（couch→sofa 是唯一需要改名的）。
@@ -62,140 +58,12 @@ COCO_TO_PROJECT = {"person": "person", "chair": "chair", "couch": "sofa",
 PREDICT_SOURCE = cfg("LS_PREDICT_SOURCE", "coco")
 
 
-def fail(msg: str):
-    sys.exit(f"\n❌ {msg}")
-
-
 def load_class_map() -> dict[str, int]:
     """從 ai/data.yaml 讀 names，回傳 {標籤名: class_id}。"""
     import yaml
     with open(DATA_YAML, encoding="utf-8") as f:
         names = yaml.safe_load(f)["names"]
     return {v: int(k) for k, v in names.items()}
-
-
-# ── Label Studio session ─────────────────────────────────────────────────────
-def login() -> requests.Session:
-    """模擬瀏覽器登入拿 session cookie。
-
-    為什麼不用 API token：這台的 Label Studio 是 1.23，**legacy token 認證預設關閉**
-    （組織設定 legacy_api_tokens_enabled=0，實測打 /api/projects 回 401
-    "legacy token authentication has been disabled for this organization"）。
-    session 登入是目前唯一不必去改組織設定就能用的路。
-    """
-    if not LS_USERNAME or not LS_PASSWORD:
-        fail("未設定 LABEL_STUDIO_USERNAME / LABEL_STUDIO_PASSWORD"
-             "（環境變數或 repo 根目錄 .env 都沒有）")
-
-    s = requests.Session()
-    login_url = f"{LS_URL}/user/login/"
-    try:
-        s.get(login_url, timeout=HTTP_TIMEOUT)
-    except requests.RequestException as e:
-        fail(f"連不上 Label Studio（{LS_URL}）：{e}\n"
-             f"   起服務：docker compose -p ai -f ai/docker-compose-labelstudio.yml up -d")
-
-    s.headers.update({"Referer": login_url})
-    r = s.post(login_url, data={
-        "email": LS_USERNAME, "password": LS_PASSWORD,
-        "csrfmiddlewaretoken": s.cookies.get("csrftoken", ""),
-    }, allow_redirects=True, timeout=HTTP_TIMEOUT)
-    if "login" in r.url:
-        fail("Label Studio 登入失敗，檢查 LABEL_STUDIO_USERNAME / LABEL_STUDIO_PASSWORD")
-    print(f"✅ 已登入 Label Studio：{LS_URL}（{LS_USERNAME}）")
-    return s
-
-
-def _csrf(s: requests.Session) -> None:
-    s.headers.update({"X-CSRFToken": s.cookies.get("csrftoken", "")})
-
-
-def get_project(s: requests.Session) -> dict:
-    _csrf(s)
-    r = s.get(f"{LS_URL}/api/projects/{LS_PROJECT_ID}/", timeout=HTTP_TIMEOUT)
-    if r.status_code != 200:
-        fail(f"讀不到專案 {LS_PROJECT_ID}（HTTP {r.status_code}）")
-    return r.json()
-
-
-def parse_label_config(label_config: str) -> tuple[str, str, set[str]]:
-    """從專案的標註介面設定抽出 from_name / to_name 與可用標籤集合。
-
-    寫死 label/image 會在別人改過介面之後靜默對不上（prediction 注進去但畫面上不顯示），
-    所以照上游的做法動態探查，但多回傳一份標籤集合供對帳。
-    """
-    import re
-    from_name = (re.search(r'name="([^"]+)"\s+toName=', label_config) or [None, "label"])[1]
-    to_name = (re.search(r'toName="([^"]+)"', label_config) or [None, "image"])[1]
-    labels = set(re.findall(r'<Label\s+value="([^"]+)"', label_config))
-    return from_name, to_name, labels
-
-
-def list_tasks(s: requests.Session) -> list[dict]:
-    _csrf(s)
-    r = s.get(f"{LS_URL}/api/tasks/", params={"project": LS_PROJECT_ID, "page_size": 1000},
-              timeout=HTTP_TIMEOUT)
-    if r.status_code != 200:
-        fail(f"讀不到 task 清單（HTTP {r.status_code}）")
-    data = r.json()
-    return data["tasks"] if isinstance(data, dict) and "tasks" in data else \
-        (data.get("results", []) if isinstance(data, dict) else data)
-
-
-def sync_storage(s: requests.Session) -> None:
-    """要求 Label Studio 重新同步 S3 來源（有新快照上傳到 S3 時才需要）。"""
-    _csrf(s)
-    r = s.get(f"{LS_URL}/api/storages/s3", params={"project": LS_PROJECT_ID},
-              timeout=HTTP_TIMEOUT)
-    storages = r.json() if r.status_code == 200 else []
-    storages = storages.get("results", storages) if isinstance(storages, dict) else storages
-    if not storages:
-        print("ℹ️ 這個專案沒有設定 S3 來源，略過同步")
-        return
-    for st in storages:
-        rr = s.post(f"{LS_URL}/api/storages/s3/{st['id']}/sync", timeout=HTTP_TIMEOUT)
-        print(f"🔄 S3 storage #{st['id']}（{st.get('title')}）sync → HTTP {rr.status_code}")
-
-
-# ── 影像取得 ─────────────────────────────────────────────────────────────────
-def resolve_image_url(task: dict) -> str:
-    """Label Studio 的 data.image 可能是 `/tasks/N/resolve/?fileuri=<base64 的 s3:// 網址>`。"""
-    url = (task.get("data") or {}).get("image", "")
-    if "fileuri=" in url:
-        b64 = url.split("fileuri=")[-1]
-        b64 += "=" * ((4 - len(b64) % 4) % 4)
-        try:
-            return base64.b64decode(b64).decode("utf-8", errors="ignore")
-        except Exception:
-            return url
-    return url
-
-
-def local_image_path(image_url: str, task_id: int) -> str:
-    name = image_url.rstrip("/").split("/")[-1] or f"task_{task_id}.jpg"
-    return os.path.join(IMAGES_DIR, name)
-
-
-def ensure_local_image(image_url: str, path: str) -> "np.ndarray | None":
-    """本地沒有就從 S3 抓下來；回傳 BGR 影像。"""
-    import cv2
-    if os.path.exists(path):
-        return cv2.imread(path)
-    if not image_url.startswith("s3://"):
-        return None
-    import boto3
-    export_aws_rw_env()
-    bucket, key = image_url[len("s3://"):].split("/", 1)
-    try:
-        body = boto3.client("s3").get_object(Bucket=bucket, Key=key)["Body"].read()
-    except Exception as e:
-        print(f"  ⚠️ S3 取檔失敗 {image_url}：{e}")
-        return None
-    img = cv2.imdecode(np.frombuffer(body, np.uint8), cv2.IMREAD_COLOR)
-    if img is not None:
-        os.makedirs(IMAGES_DIR, exist_ok=True)
-        cv2.imwrite(path, img)
-    return img
 
 
 # ── 兩個方向 ─────────────────────────────────────────────────────────────────
@@ -263,24 +131,15 @@ def push_prediction(s: requests.Session, task_id: int, img, cls_map, model,
             "score": float(box.conf[0].item()),
         })
 
-    # 先清掉這個 task 的舊預測，不然每跑一次就疊一層，審核畫面會一團亂
-    _csrf(s)
-    detail = s.get(f"{LS_URL}/api/tasks/{task_id}/", timeout=HTTP_TIMEOUT).json()
-    for old in detail.get("predictions", []):
-        if old.get("id"):
-            s.delete(f"{LS_URL}/api/predictions/{old['id']}/", timeout=HTTP_TIMEOUT)
-
-    r = s.post(f"{LS_URL}/api/predictions/", json={
-        "task": task_id, "model_version": f"rt_detr@triton({PREDICT_SOURCE})",
-        "result": ls_result,
-        "score": float(np.mean([i["score"] for i in ls_result])) if ls_result else 0.0,
-    }, timeout=HTTP_TIMEOUT)
-    if r.status_code in (200, 201):
+    ok, err = replace_prediction(
+        s, task_id, f"rt_detr@triton({PREDICT_SOURCE})", ls_result,
+        float(np.mean([i["score"] for i in ls_result])) if ls_result else 0.0)
+    if ok:
         stats["推入・AI 預標註"] += 1
         stats["推入・框數"] += len(ls_result)
     else:
         stats["推入・失敗"] += 1
-        print(f"  ❌ 預標註注入失敗 HTTP {r.status_code}：{r.text[:160]}")
+        print(f"  ❌ 預標註注入失敗 {err}")
 
 
 def main() -> int:
@@ -294,7 +153,7 @@ def main() -> int:
     print(f"類別對照（來自 {os.path.relpath(DATA_YAML, AI_DIR)}）：{cls_map}")
 
     s = login()
-    project = get_project(s)
+    project = get_project(s, LS_PROJECT_ID)
     from_name, to_name, ui_labels = parse_label_config(project.get("label_config", ""))
     print(f"專案：{project.get('title')}（task {project.get('task_number')}，"
           f"已標註 {project.get('num_tasks_with_annotations')}）")
@@ -308,9 +167,9 @@ def main() -> int:
              f"   改 ai/data.yaml 的 names，或改 Label Studio 的標註介面設定。")
 
     if args.sync_storage:
-        sync_storage(s)
+        sync_storage(s, LS_PROJECT_ID)
 
-    tasks = list_tasks(s)
+    tasks = list_tasks(s, LS_PROJECT_ID)
     if args.limit:
         tasks = tasks[:args.limit]
     print(f"共 {len(tasks)} 個 task 要處理\n")
@@ -324,8 +183,7 @@ def main() -> int:
         path = local_image_path(image_url, task["id"])
         stem = os.path.splitext(os.path.basename(path))[0]
 
-        _csrf(s)
-        detail = s.get(f"{LS_URL}/api/tasks/{task['id']}/", timeout=HTTP_TIMEOUT).json()
+        detail = get_task(s, task['id'])
 
         if pull_annotation(detail, stem, cls_map, stats):
             print(f"[{i}/{len(tasks)}] ⬅️  {stem}：已有人工標註，拉回本地")

@@ -77,8 +77,11 @@ ai/active_learning_dataset/
 # ⚠️ train/val 的切分名單 ai/dataset_splits/ 刻意**要**進版控——那是「這次的 mAP 是拿
 #    哪 18 張圖量的」的唯一證據，沒有它下一輪重訓的數字就沒得比。
 ai/detection_dataset/
-# data.yaml 的絕對路徑展開版（mlops_paths.resolve_data_yaml() 執行時生成）
-ai/data.runtime.yaml
+# 同上，YOLO-Pose 那條線的清洗產物（prepare_dataset.py --task pose）。
+# 切分名單 ai/dataset_splits/pose_{train,val}.txt 一樣**要**進版控，理由同上。
+ai/pose_dataset/
+# data.yaml / pose_data.yaml 的絕對路徑展開版（resolve_data_yaml() 執行時生成）
+ai/*.runtime.yaml
 
 # AcT 時序模型的訓練工作目錄（機器產物，2026-07-30 實測 207MB）。
 #   videos/        182M  200 支 mp4 原始素材

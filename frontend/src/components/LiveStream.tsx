@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchStreamToken, negotiateWhep } from '../api/streams';
 import { CAMERA_LABEL } from '../types';
+import { SkeletonOverlay } from './SkeletonOverlay';
 
 type ConnectionState = 'connecting' | 'connected' | 'failed';
 
@@ -15,6 +16,15 @@ interface LiveStreamProps {
   channel: string | null;
   /** 占位框文字。預設「鏡頭即時影像」；偵測模式下沒有 AI 的鏡頭傳「此鏡頭無 AI 偵測」 */
   emptyLabel?: string;
+  /**
+   * 給值就在影像上疊 AI 骨架（＝「偵測」模式），值是那台鏡頭的 `Camera.id`。
+   * null／不給＝純影像。
+   *
+   * ⚠ 這個 prop **不影響 WebRTC 連線**（不在下面 effect 的相依陣列裡），
+   *   所以切換即時／偵測時影像不會斷、不必重新協商。2026-07-31 之前偵測模式是
+   *   換一條串流網址，每次切換都要重連、畫面會黑一下。
+   */
+  overlayDeviceId?: number | null;
 }
 
 /**
@@ -37,6 +47,7 @@ export function LiveStream({
   whepUrl,
   channel,
   emptyLabel = CAMERA_LABEL.LIVE_PLACEHOLDER,
+  overlayDeviceId = null,
 }: LiveStreamProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<ConnectionState>('connecting');
@@ -106,6 +117,9 @@ export function LiveStream({
   return (
     <div className="relative h-full w-full bg-black">
       <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-contain" />
+      {overlayDeviceId !== null && state === 'connected' && (
+        <SkeletonOverlay deviceId={overlayDeviceId} />
+      )}
       {state !== 'connected' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[var(--bg-surface-2)] text-sm text-[var(--text-muted)]">
           <span>{state === 'failed' ? '連線失敗' : '連線中…'}</span>
