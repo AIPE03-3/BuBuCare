@@ -102,8 +102,16 @@ HEADLESS=1 SINGLE_SOURCE=ai/test_demo/test_e2e_20260731.mp4 DETR_EVERY_N=5 \
 
 ## 階段 2：串流與前端畫面 —— 【項目 1】
 
-⚠️ **不能用 `SINGLE_SOURCE`**：前端播的是 MediaMTX 的 `cam_in`，推論若直接讀 mp4 檔，
-兩邊時間軸不同步，**骨架會對不上畫面**。兩邊必須吃同一條流。
+⚠️ **不能用 `SINGLE_SOURCE` 指向 mp4 檔**：前端播的是 MediaMTX 的 `cam_in`，推論若直接
+讀檔，兩邊播放進度完全無關，骨架會畫在毫無關係的畫面上。兩邊要吃同一條流。
+（`SINGLE_SOURCE` 可以指 rtsp URL —— `SINGLE_SOURCE=rtsp://127.0.0.1:8554/cam_in`
+會只掛一路、且固定對到 `Room_301_Bed`／device 301，正是這裡要的。）
+
+> ⚠️ **但「同一條流」不等於「同步」。** 2026-07-31 實測發現骨架會**超前**影像：
+> MediaMTX 為了照顧慢讀取端會主動丟舊幀（log 實見 `reader is too slow, discarding
+> 630~1103 frames`），推論因此拿到**最新**的畫面；而瀏覽器那條 WebRTC 路徑有 jitter
+> buffer + 解碼 + 合成，延遲比推論路徑長。兩條管線各自的延遲不同，骨架就跑到前面去了。
+> 詳見下方「已知落差」。
 
 ```bash
 # 終端 1：推 mp4 進 cam_in
