@@ -22,7 +22,7 @@ bash scripts/check_mac_env.sh
 | Triton CPU repo | `./ai/make_cpu_repo.sh` |
 | MediaMTX 設定 | `cp streaming/mediamtx.yml.example streaming/mediamtx.yml` 後改 4 處（見 WBS T4-1）|
 | ClearML 憑證 | `cp ai/clearml.conf.example ~/clearml.conf`，填 credentials（`chmod 600`）|
-| `.env` | Triton URL、`MEDIAMTX_BASE_URL`、`DETECT_STREAM_FFMPEG`、`S3_RW_*`、`LABEL_STUDIO_*` |
+| `.env` | Triton URL、`MEDIAMTX_BASE_URL`、`EVENT_API_KEY`、`S3_RW_*`、`LABEL_STUDIO_*` |
 
 > **這台沒有 Homebrew**。ffmpeg 走 `imageio-ffmpeg` 附的靜態版（`.env` 指路），
 > mediamtx 走 docker image。兩者都不在 `PATH` 上，自檢腳本三種來源都認。
@@ -57,7 +57,9 @@ docker run -d --name nh-mediamtx --restart unless-stopped \
   bluenviron/mediamtx:latest
 
 # 推 mp4 當 cam_in（沒有實體攝影機時的畫面來源）
-FF=$(grep '^DETECT_STREAM_FFMPEG=' .env | cut -d= -f2-)
+# ⚠️ 這台沒有 Homebrew，PATH 上**沒有** ffmpeg，用的是 ai/.venv 裡 imageio-ffmpeg
+#    附的靜態版（arm64，含 libx264）。路徑帶版號、升版會變，所以現查不要寫死：
+FF=$(ai/.venv/bin/python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())")
 "$FF" -re -stream_loop -1 -i ai/test_demo/test6.mp4 \
   -an -c:v copy -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam_in
 ```
@@ -92,12 +94,22 @@ HEADLESS=1 SINGLE_SOURCE=ai/test_demo/test6.mp4 DETR_EVERY_N=5 \
   ai/.venv/bin/python -u ai/inference_test.py
 ```
 
-**要同時推偵測畫面到前端**（`cam_out`）就**不能用 `SINGLE_SOURCE`**，改讓它走預設的
+**要同時讓前端看到骨架**就**不能用 `SINGLE_SOURCE`**，改讓它走預設的
 `CAMERA_SOURCE=backend` 從 `cam_in` 拉流：
 
 ```bash
-HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
+HEADLESS=1 DETECT_BROADCAST=1 ai/.venv/bin/python -u ai/inference_test.py
 ```
+
+> **2026-07-31 換了做法。** 以前是 `DETECT_STREAM=1`，AI 端把框燒進畫面、再編一次
+> H.264 推回 MediaMTX 的 `cam_out`（`ai/detect_publisher.py`，已移除）。現在是
+> `DETECT_BROADCAST=1`，AI 只送座標給後端、瀏覽器 canvas 疊在乾淨的 `cam_in` 上。
+> 代價是框不在影像裡，用 VLC 之類的外部播放器看 MediaMTX 就沒有框。
+> 理由與完整對照見 [`../backend/streams/detections.py`](../backend/streams/detections.py) 檔頭。
+>
+> **為什麼仍然不能用 `SINGLE_SOURCE`**（理由跟以前不一樣了）：前端播的是 MediaMTX 的
+> `cam_in`，推論若直接讀 mp4 檔，兩邊時間軸不同步，**骨架會對不上畫面**。
+> 兩邊必須吃同一條流。
 
 > `-u` 不要省：stdout 在非終端機時是整塊緩衝，沒有它會讓你以為程式卡住了。
 
@@ -125,7 +137,7 @@ HEADLESS=1 DETECT_STREAM=1 ai/.venv/bin/python -u ai/inference_test.py
 | `nh-triton` 不見了 | `--rm` 容器，`docker stop` 等於刪掉。重跑第二節的 `run_triton.sh` |
 | Triton 三顆全 UNAVAILABLE | 用到 `ai/triton_repo/`（寫死 `KIND_GPU`）。要用 `ai/triton_repo_cpu/`，重跑 `./ai/make_cpu_repo.sh` |
 | 前端監控頁一直轉圈 | 換過 Wi-Fi。區網 IP 變了要**同時**改 `streaming/mediamtx.yml` 的 `webrtcAdditionalHosts` 與 `.env` 的 `MEDIAMTX_BASE_URL`（`ipconfig getifaddr en0`）|
-| 設了 `DETECT_STREAM=1` 但 `cam_out` 沒畫面 | 同時設了 `SINGLE_SOURCE`。兩者互斥且**靜默失敗**，見第三節 |
+| 設了 `DETECT_BROADCAST=1` 但前端沒骨架 | ①`EVENT_API_KEY` 沒設或與後端不同（推論 log 會印轉播失敗）②前端不是切在「偵測」模式 ③後端沒開。**與 `SINGLE_SOURCE` 不再互斥**，但那樣骨架會對不上畫面，見第三節 |
 | VLM 二審沒反應 | 先起 worker 再跑推論。已經積壓的用 `kafka-consumer-groups.sh --describe --group vlm-brain-cluster` 查，要丟掉加 `--reset-offsets --to-latest --execute` |
 | 前端影片點不開 | `clip_path` 不是 `s3://` 開頭。`.env` 要有 `CLIP_S3_BUCKET`，否則存的是本地路徑 |
 | clearml-agent 秒掛 `No module named pip` | `ai/.venv` 是 uv 建的沒有 pip。加 `CLEARML_AGENT_SKIP_PYTHON_ENV_INSTALL=1`，**不要**去補裝 pip（它接著會重裝幾百 MB 相依）|
