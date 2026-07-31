@@ -66,7 +66,12 @@ for message in consumer:
         "event_type": result["alert_type"],                             # 對齊 event_type 字串
         "clip_path": event_data.get("clip_path", "/vids/fallback.mp4"), # 後端必填影片路徑
         "detected_at": iso_detected_at,                                 # timestamp -> detected_at (ISO)
-        "snapshot_path": result["img_path"],                            # saved_image_path -> snapshot_path
+        # ⚠️ 沿用主迴圈原本帶的 snapshot_path（2026-07-31 起是 s3:// URI），**不要**改成
+        # result["img_path"]。那是 Router 為了讀圖餵 VLM 而重組的**本機絕對路徑**，
+        # 寫進後端會讓 core/s3.py 簽不出 presigned URL（它只認 s3://），
+        # 前端的事件快照就永遠是空的。實測：走慢速道的事件全部中招。
+        # 主迴圈沒帶時才退回本機路徑（沒設 CLIP_S3_BUCKET 的機器，行為與改動前相同）。
+        "snapshot_path": event_data.get("snapshot_path") or result["img_path"],
         "yolo_score": clean_yolo_score,                                 # confidence(字串) -> yolo_score (float)
         "vlm_summary": result["vlm_summary"],                           # Router 回填的 VLM 判讀文字
     }

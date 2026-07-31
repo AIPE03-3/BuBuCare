@@ -252,6 +252,10 @@ _CLIP_DIR = cfg("CLIP_DIR") or os.path.join(
 # 機器照樣跑得動、不會在跌倒當下噴錯，只是前端暫時拿不到影片。
 _CLIP_S3_BUCKET = cfg("CLIP_S3_BUCKET").strip()
 _CLIP_S3_PREFIX = cfg("CLIP_S3_PREFIX", "videos").strip("/")
+# 快照走同一個 bucket、不同前綴。2026-07-31 端到端測試才發現：片段一直有上傳，
+# **快照從來沒有**——DB 裡 179 筆事件的 snapshot_path 全是本機絕對路徑，而後端
+# `core/s3.py` 只對 `s3://` 簽 presigned URL，所以前端的事件快照永遠是空的。
+_SNAPSHOT_S3_PREFIX = cfg("SNAPSHOT_S3_PREFIX", "snapshots").strip("/")
 # AWS 憑證：本檔只做一件 S3 動作——把事件片段 upload_file 上去，需要 PutObject（寫）。
 # 後端 backend/core/s3.py 只做 presigned GET（讀），兩邊刻意用不同金鑰＝最小權限，
 # 不是重複設定：
@@ -383,6 +387,35 @@ def write_event_clip(frames, out_path, fps, camera_id, s3_key=None):
         print(f"📦 [{camera_id}] 片段已上傳：s3://{_CLIP_S3_BUCKET}/{s3_key}")
     except Exception as e:
         print(f"❌ [{camera_id}] 事件片段處理失敗（警報已發出，不受影響）：{e}")
+
+
+def upload_event_snapshot(local_path, s3_key, camera_id):
+    """把已經寫在本機的事件快照傳一份上 S3。
+
+    給背景 daemon thread 跑，理由與 write_event_clip 相同：上傳是網路 I/O，
+    卡在推論迴圈裡會讓該路相機掉幀。整支包在 try 內——快照上傳失敗不該影響
+    已經發出去的警報（前端頂多看不到縮圖，事件本身照常）。
+
+    ⚠️ **本機那份不能刪**：`ai/uncertainty_router.py` 二審時要從
+    `ai/snapshots/` 讀圖餵給 VLM（它用 payload 的 `image_filename` 欄位重組本機
+    路徑，不是用 `snapshot_path`），主動學習資料集也是從那裡複製。
+    這裡只是「多傳一份上雲」，不是「搬過去」。
+    """
+    if not s3_key:
+        return
+    try:
+        import boto3  # lazy import：沒設 bucket 的機器不必裝 boto3
+        boto3.client(
+            "s3",
+            region_name=_S3_REGION or None,
+            aws_access_key_id=_S3_ACCESS_KEY or None,
+            aws_secret_access_key=_S3_SECRET_KEY or None,
+        ).upload_file(
+            local_path, _CLIP_S3_BUCKET, s3_key, ExtraArgs={"ContentType": "image/jpeg"}
+        )
+        print(f"🖼️ [{camera_id}] 快照已上傳：s3://{_CLIP_S3_BUCKET}/{s3_key}")
+    except Exception as e:
+        print(f"❌ [{camera_id}] 快照上傳失敗（警報已發出，不受影響）：{e}")
 
 # =========================================================================
 # 🌟 Action Transformer 模型架構
@@ -1069,6 +1102,22 @@ def camera_worker(camera_id, video_source):
             snapshot_full_path = os.path.join(snapshot_dir, snapshot_name)
             cv2.imwrite(snapshot_full_path, frame)  # 實體不重複存檔留存
 
+            # 快照多傳一份上 S3，讓 payload 帶 s3:// —— 後端 core/s3.py 只對 s3:// 簽
+            # presigned URL，帶本機絕對路徑的話前端永遠拿不到圖（2026-07-31 實測 179 筆
+            # 事件全中）。**本機那份保留**：二審要從 ai/snapshots/ 讀圖（router 用
+            # image_filename 欄位重組本機路徑），主動學習也從那裡複製。
+            # 沒設 CLIP_S3_BUCKET 就退回本機路徑，行為與加這段之前完全相同。
+            snapshot_s3_key = (f"{_SNAPSHOT_S3_PREFIX}/{snapshot_name}"
+                               if _CLIP_S3_BUCKET else None)
+            snapshot_ref = (f"s3://{_CLIP_S3_BUCKET}/{snapshot_s3_key}"
+                            if snapshot_s3_key else snapshot_full_path)
+            if snapshot_s3_key:
+                threading.Thread(
+                    target=upload_event_snapshot,
+                    args=(snapshot_full_path, snapshot_s3_key, camera_id),
+                    daemon=True,
+                ).start()
+
             if producer is not None:
                 vlm_triggered = True
                 if _p_state is not None:
@@ -1104,7 +1153,9 @@ def camera_worker(camera_id, video_source):
                     numeric_id=numeric_id,
                     clip_path=clip_path,
                     detected_at=datetime.now().isoformat(),  # 符合後端解析的 ISO 時間字串
-                    snapshot_full_path=snapshot_full_path,
+                    # 帶 s3:// 給後端（沒設 bucket 時是本機路徑）。二審端不受影響：
+                    # 它讀圖是用底下的 snapshot_name 欄位重組 ai/snapshots/ 的本機路徑。
+                    snapshot_full_path=snapshot_ref,
                     snapshot_name=snapshot_name,
                     final_score=final_score,
                     yolo_thresh=yolo_thresh,
