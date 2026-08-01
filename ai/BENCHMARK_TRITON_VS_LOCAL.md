@@ -371,7 +371,7 @@ HEADLESS=1 FPS_LOG_EVERY=60 INFER_BACKEND=triton ai/.venv/bin/python -u ai/infer
 ### 一般性限制
 
 - **只能在同一台機器比前後差異**，不要跨機器比（依
-  [`CONTRIBUTING.md`](../CONTRIBUTING.md) 第四節與 [`FPS_NOTES.md`](FPS_NOTES.md)）。
+  [`docs/CONTRIBUTING.md`](../docs/CONTRIBUTING.md) 第四節與 [`FPS_NOTES.md`](FPS_NOTES.md)）。
   端到端 fps ±0.5 是噪音。
 - **單顆模型的平均值兩輪之間有 5~15% 浮動**。本文所有單顆數字都是兩輪平均，
   且結論只建立在兩輪都重現的方向上。
