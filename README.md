@@ -42,6 +42,7 @@
 | 協作規矩、分支流程 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) |
 | 還有什麼沒做完 | [`docs/NEXT_STAGE.md`](docs/NEXT_STAGE.md) |
 | 某件事當初為什麼那樣做 | [`docs/CHANGELOG-STAGES.md`](docs/CHANGELOG-STAGES.md) |
+| 推論跑多快、瓶頸在哪 | [`ai/FPS_NOTES.md`](ai/FPS_NOTES.md) —— FPS 量測與提速實驗；效能對照見 [`ai/BENCHMARK_GPU_VS_CPU.md`](ai/BENCHMARK_GPU_VS_CPU.md)（有沒有 GPU）與 [`ai/BENCHMARK_TRITON_VS_LOCAL.md`](ai/BENCHMARK_TRITON_VS_LOCAL.md)（Triton 這層值不值得）|
 
 `backend/` `frontend/` `agent/` 各自的 `docs/` 有該層更細的設計文件。
 

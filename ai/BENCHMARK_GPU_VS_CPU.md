@@ -3,6 +3,11 @@
 **2026-07-28 實測**。同一台機器、同一個 Triton 映像檔、同一批輸入畫面，只差
 「模型跑在 GPU 還是 CPU」。目的是回答一個問題：**這套管線沒有 GPU 撐不撐得住。**
 
+> **這份與 [`BENCHMARK_TRITON_VS_LOCAL.md`](BENCHMARK_TRITON_VS_LOCAL.md) 量的是不同的軸。**
+> 這份的兩側**都經過 Triton**，只差模型跑在 GPU 還是 CPU；那份問的是
+> 「Triton 這層 serving 值不值得」（同一顆 GPU 上，有 Triton vs 直接載進 process）。
+> 兩份不要混著讀。
+
 ## 環境
 
 | 項目 | 值 |
