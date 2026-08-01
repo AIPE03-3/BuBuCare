@@ -14,6 +14,13 @@ fulilian.db
 
 # Environment variables (contains secrets)
 .env
+# 備份檔也一起擋。上面那條是**精確比對**，擋不到 `.env.bak.170502` 這種名字——
+# 2026-07-31 就是這樣讓一份 .env 完整備份（含 JWT 簽章金鑰、兩組 AWS 憑證、DB 密碼）
+# 被 `git add -A` 掃進 commit 468286f，事後只能改寫歷史。改 .env 前先備份是好習慣，
+# 但備份檔跟本尊一樣裝著全部憑證，忽略規則要一起涵蓋。
+.env.bak*
+.env.*.bak
+.env.backup*
 
 # 忽略所有官方與時序的模型權重檔（防止大檔案弄爆 GitHub）
 *.pt
