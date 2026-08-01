@@ -132,7 +132,7 @@ DETECT_STREAM=1 python ai/inference_test.py
 
 推的是真正的 AI 輸出（`person` 框、姿態骨架、物件輪廓、狀態列），不是固定紅框。
 頻道名由後端資料庫的 `stream_channel_detect` 決定，**前端、後端、資料庫都不用改**，
-換的只是 MediaMTX 的上游。細節見 `NEXT_STAGE.md` 第 8 項。
+換的只是 MediaMTX 的上游。細節見 `docs/CHANGELOG-STAGES.md` 第 8 項。
 
 需要機器上有 ffmpeg；裝在非標準位置時用 `DETECT_STREAM_FFMPEG` 指定完整路徑。
 未設 `DETECT_STREAM=1` 時完全不推流，行為與加這功能之前相同。
@@ -242,14 +242,14 @@ cam_in:
 
 `normal_h_reference`（防線 B 用的參考身高）只在 worker 開頭校正一次，之後不會更新。
 換來源後不重啟的話會拿舊的參考值判斷，症狀是**畫面永遠紅燈**，而且看不出原因。
-細節與修法方向見 `NEXT_STAGE.md` 第 9 項缺陷三。
+細節與修法方向見 `docs/NEXT_STAGE.md` 的 9-3。
 
 ### ⚠ 攝影機不要陡角俯視
 
 實測發現：架高、陡角往下拍時，**站著的人在影像上的軀幹會被壓縮成接近水平**
 （髖部投影得比肩膀還高），跟臥倒的幾何特徵完全一樣，防線 A 會持續誤報。
 
-建議「牆面約 2 公尺高、微微下傾」。詳細數據見 `NEXT_STAGE.md` 第 9 項缺陷四。
+建議「牆面約 2 公尺高、微微下傾」。詳細數據見 `docs/CHANGELOG-STAGES.md` 第 9 項缺陷四。
 
 ## 手機當鏡頭（2026-07-28 三支手機實測通過）
 

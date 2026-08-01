@@ -65,6 +65,7 @@ TRITON_IMAGE = os.environ.get("TRITON_IMAGE", "nvcr.io/nvidia/tritonserver:25.10
 IMGSZ = 640
 
 VERSION_RE = re.compile(r"version_policy\s*:\s*\{\s*specific\s*\{\s*versions\s*:\s*\[\s*(\d+)\s*\]")
+PLATFORM_RE = re.compile(r'^\s*platform\s*:\s*"([^"]+)"', re.MULTILINE)
 
 
 def die(msg: str):
@@ -89,6 +90,21 @@ def set_served_version(version: int) -> None:
     with open(CONFIG_PBTXT, "w", encoding="utf-8") as f:
         f.write(new)
     print(f"📝 config.pbtxt 的 serving 版本改為 v{version}")
+
+
+def served_platform() -> str:
+    """這顆模型的 config.pbtxt 宣告的 platform（決定要不要編 TensorRT 引擎）。
+
+    **判斷依據刻意是「這顆模型要什麼格式」，不是「這台機器有沒有 GPU」。**
+    同一份程式碼在兩台都對：5060 Ti 部署 `rt_detr`（tensorrt_plan）照樣編引擎，
+    沒有 N 卡的機器部署 `rt_detr_onnx` / `action_transformer`（onnxruntime_onnx）
+    就只放 model.onnx —— 那兩顆本來就不吃 .plan，硬編也用不上。
+    """
+    with open(CONFIG_PBTXT, encoding="utf-8") as f:
+        m = PLATFORM_RE.search(f.read())
+    if not m:
+        die(f"{CONFIG_PBTXT} 讀不到 platform —— 不猜，先確認這個模型要的是哪種格式")
+    return m.group(1)
 
 
 def existing_versions() -> list[int]:
@@ -225,9 +241,12 @@ def do_rollback() -> int:
     if not older:
         die(f"沒有比 v{cur} 更舊、可回滾的版本目錄")
     target = older[-1]
-    plan = os.path.join(MODEL_DIR, str(target), "model.plan")
-    if not os.path.exists(plan):
-        die(f"v{target} 沒有 model.plan，不能回滾到一個載不起來的版本")
+    # 要檢查的權重檔名同樣看 platform：tensorrt_plan 要 .plan、onnxruntime_onnx 要 .onnx。
+    # 一律檢查 .plan 的話，ONNX 那條路會被誤判成「不能回滾」——而那正是回滾最需要能走的時候。
+    weight_name = "model.plan" if served_platform() == "tensorrt_plan" else "model.onnx"
+    weight = os.path.join(MODEL_DIR, str(target), weight_name)
+    if not os.path.exists(weight):
+        die(f"v{target} 沒有 {weight_name}，不能回滾到一個載不起來的版本")
     print(f"⏪ 回滾 {MODEL_NAME}：v{cur} → v{target}")
     set_served_version(target)
     return 0 if reload_model(target) else 1
@@ -272,7 +291,14 @@ def main() -> int:
 
     onnx_path = os.path.join(MODEL_DIR, str(version), "model.onnx")
     export_onnx(pt_path, onnx_path)
-    build_plan(version)
+
+    # 只有 tensorrt_plan 才需要編引擎。onnxruntime_onnx 上面那步就已經備妥了，
+    # 硬去跑 trtexec 只會在沒有 N 卡的機器上失敗（而且產出的 .plan 也沒人載）。
+    platform = served_platform()
+    if platform == "tensorrt_plan":
+        build_plan(version)
+    else:
+        print(f"ℹ️ platform={platform} —— 不需要 TensorRT 引擎，跳過 trtexec")
 
     set_served_version(version)
     if not reload_model(version):

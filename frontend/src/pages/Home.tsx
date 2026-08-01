@@ -103,16 +103,15 @@ export function Home() {
   // 依 device_id 取前四台會挑到四台沒有畫面的。
   const gridCameras = cameras.filter((c) => c.stream_url !== null).slice(0, 4);
 
-  // 偵測模式取 stream_url_detect，即時模式取 stream_url
-  const urlOf = (camera: Camera) =>
-    streamMode === 'detect' ? camera.stream_url_detect : camera.stream_url;
+  // 兩種模式播的是**同一條**乾淨串流；「偵測」只是多疊一層 canvas 骨架。
+  // 2026-07-31 之前偵測模式是換另一條 AI 畫好框的串流（stream_url_detect），
+  // 那條已停用（見 backend/streams/detections.py 的檔頭）。
+  // 好處：切換模式不必重新協商 WebRTC，畫面不會黑一下。
+  const overlayIdOf = (camera: Camera) => (streamMode === 'detect' ? camera.id : null);
 
-  // 頻道名（給 LiveStream 換串流權杖用）。務必與 urlOf 取同一個模式，
-  // 一個給即時、一個給偵測的話，換來的票對不上要看的頻道，MediaMTX 會回 401。
-  const channelOf = (camera: Camera) =>
-    streamMode === 'detect' ? camera.stream_channel_detect : camera.stream_channel;
-
-  // 四台都沒有偵測頻道就不顯示切換鈕（按了也只會看到四格空白）
+  // 四台都沒接 AI 就不顯示切換鈕（按了也只是看到沒有骨架的同一個畫面）。
+  // ⚠ 仍然看 stream_url_detect：那個欄位現在**不再拿來當播放網址**，但它的語意
+  //   「這台鏡頭有接 AI」還在，是目前唯一能判斷這件事的欄位。
   const hasAnyDetect = gridCameras.some((c) => c.stream_url_detect !== null);
 
   return (
@@ -143,13 +142,9 @@ export function Home() {
                   }`}
                 >
                   <LiveStream
-                    whepUrl={urlOf(camera)}
-                    channel={channelOf(camera)}
-                    emptyLabel={
-                      streamMode === 'detect' && camera.stream_url_detect === null
-                        ? '此鏡頭無 AI 偵測'
-                        : undefined
-                    }
+                    whepUrl={camera.stream_url}
+                    channel={camera.stream_channel}
+                    overlayDeviceId={overlayIdOf(camera)}
                   />
                   <span className="absolute left-3 top-3 rounded-md border border-[var(--border)] bg-[var(--bg-surface)] px-2 py-0.5 text-xs text-[var(--text-secondary)]">
                     {camera.zone}（{camera.name}）

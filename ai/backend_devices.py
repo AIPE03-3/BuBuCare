@@ -150,22 +150,6 @@ def build_camera_channels(base_url: str = None, username: str = None,
     return channels
 
 
-def build_detect_channels(base_url: str = None, username: str = None,
-                          password: str = None, timeout: float = None,
-                          devices: list = None) -> dict:
-    """偵測頻道 {camera_id: rtsp_url}：AI 畫框後要**推回去**的地方（cam_out 等）。
-
-    與 build_camera_channels 的方向相反 —— 那個是「去哪裡拉」，這個是「推到哪裡」。
-
-    刻意不 raise：偵測推流是選配功能。沒有任何一台設定 stream_channel_detect 時回空 dict，
-    讓 AI 照常跑（只是前端切到「偵測」會沒畫面），不該因為沒設這個就讓跌倒偵測起不來。
-    """
-    if devices is None:
-        devices = fetch_devices(login(base_url, username, password, timeout),
-                                base_url, timeout)
-    return _channels_from(devices, "stream_channel_detect")
-
-
 def camera_id_of(device_id: int) -> str:
     """device_id -> camera_id（房號命名）。
 

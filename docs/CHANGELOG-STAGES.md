@@ -1,43 +1,22 @@
-# 下一階段待辦
+# 已完成階段的紀錄
 
-各項標題前的【】標記目前狀態，一眼掃過去就知道要不要動：
-【已完成】＝驗證過了，不用重做；【待辦】＝還沒做；
-【本輪不執行】＝已決定這輪不做（理由見該項）；【只出設計】＝方案已定、實作留給後續。
+這份是**歷史檔案**：`NEXT_STAGE.md` 裡標【已完成】的項目搬到這裡，讓那份回歸「待辦」的本義。
 
-**2026-07-28 這一輪做了什麼**：S3 上傳接通（前端終於看得到影片）、六大防線收斂成
-「跌倒 + 巡檢」並把規則寫成護欄擋得住的硬規定、產出 Triton GPU vs CPU 對照數據、
-出了 Prometheus 導入設計、**agent P2 後端記錄 + 前端顯示已完成並合併**（PR #14），
-過程中順手修了 VLM（`llava:latest`）同張圖同提示會隨機拒答的問題。
+**項目編號刻意沿用原本的**（第 1、2、3、6、7、8、9、10 項）—— 程式碼註解與其他文件
+有 6 處引用「第 N 項」「缺陷三」，改號會把它們全部打斷。
 
-**同日稍晚**：接回 main 的 `stream_channel` 改名（後端原本三個端點全 500，事件卡在
-Kafka 進不了資料庫）、補上偵測畫面推流讓前端「偵測」真的看得到姿態框，
-並確立「**事件片段與快照刻意不畫框**」為組長決策（見第 8 項，不要修好它）。
-最後接手機當真攝影機實測，**十分鐘抓出兩個 demo 影片測不出來的缺陷並修掉**（第 9 項）。
+> **讀這份的心法**：這裡記的是「當時做了什麼、為什麼那樣做、踩過哪些坑」。
+> 有價值的多半不是結論本身，而是**「為什麼用當時的測法測不出來」**那幾段。
+> 想知道系統現在長什麼樣、哪裡還是壞的，看 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
 
----
-
-## 待辦總覽
-
-| # | 項目 | 狀態 |
-|---|---|---|
-| 1 | S3 上傳接通 | ✅ 已完成並實測 |
-| 2 | 六大防線收斂 + `ai/modules/` 白名單 | ✅ 已完成 |
-| 3 | Triton GPU vs CPU 對照 | ✅ 已完成，報告見 `ai/BENCHMARK_GPU_VS_CPU.md` |
-| 4 | Prometheus 導入 | 📐 只出設計，未接線 |
-| 5 | 事件冷卻計時器 | ⏸ 本輪不執行（卡多人追蹤）|
-| 6 | agent P2（後端記錄 + 前端顯示 AI 判斷）| ✅ 已完成並合併（PR #14） |
-| 7 | 接回 main 的 `stream_channel` 改名（解後端全面 500）| ✅ 已完成並實測 |
-| 8 | 偵測畫面推流 `cam_out`（前端「偵測」畫面）| ✅ 已完成並實測 |
-| 9 | 接真攝影機（手機）實測，修掉兩個被掩蓋的缺陷 | ✅ 已完成 |
-| 10 | MLOps 進版控 + 跑通標註→重訓→熱部署完整迴路 | ✅ 已完成並實測 |
-
-第 5、6 兩項互不依賴，可分頭進行。
+**第 9 項有兩個缺陷至今未修**（缺陷三 `normal_h_reference`、缺陷四 體角與俯視佈署不符），
+雖然整項標【已完成】。未修的部分在 [`NEXT_STAGE.md`](NEXT_STAGE.md) 有指標。
 
 ---
 
 ## 10.【已完成】MLOps 進版控 —— 換一台機器整條不再消失
 
-分支 `feat/mlops-into-vcs`。完整 runbook 見 **[`ai/MLOPS.md`](ai/MLOPS.md)**。
+分支 `feat/mlops-into-vcs`。完整 runbook 見 **[`ai/MLOPS.md`](../ai/MLOPS.md)**。
 
 ### 原本壞在哪
 
@@ -91,7 +70,7 @@ volume 名沿用既有的，接得上這台先前的實驗與標註資料。
 
 **這個數字證明的是「重訓管線是通的」，不是「模型在新病房也有 99%」。**
 要回答後者得補資料、並改成**按場景/相機/日期分組切分**。這是下一步最該做的事，
-不是再調參數。理由與細節見 [`ai/MLOPS.md`](ai/MLOPS.md) 第三節。
+不是再調參數。理由與細節見 [`ai/MLOPS.md`](../ai/MLOPS.md) 第三節。
 
 ### 順手修好的兩件事
 
@@ -135,7 +114,7 @@ kelly 已經做好前端「即時／偵測」切換鈕、後端 `stream_channel_
 `cam_out` 頻道，但 `cam_out` 是 `source: publisher`（開著門等人推），**沒有任何程式在推**，
 所以切到「偵測」永遠是空的。設定檔註解原本寫「正式來源是 albert 的推論程式，尚未實作」。
 
-新增 [`ai/detect_publisher.py`](ai/detect_publisher.py)，把 `inference_test.py` 早就畫好的
+新增 [`ai/detect_publisher.py`](../ai/detect_publisher.py)，把 `inference_test.py` 早就畫好的
 `annotated_frame` 多開一條出口推回 MediaMTX：開一支 **ffmpeg 子程序**，stdin 收 BGR 原始幀，
 編成 H.264 推進去。與 kelly 的 `start-fake-detect.ps1` 走同一條路（ffmpeg → rtsp），
 差別只在畫面來源從「ffmpeg 自己畫的固定紅框」換成「AI 真正畫的骨架與框」。
@@ -364,6 +343,40 @@ GET → HTTP 200  Content-Type=video/mp4  bytes=995737
 - 片段每個 worker 生命週期只錄一次（掛在 `vlm_triggered` 一次性閂鎖下），要等第 5 項的
   冷卻計時器才會解開。
 
+### 片段錄製本身的設計理由（原 `HANDOVER.md`，2026-07-30 併入）
+
+原本有一份 272 行的 `HANDOVER.md` 專門記這件事，但它寫於「S3 權限還沒確認」的時期，
+大半內容已被上面幾節取代，其中「上傳憑證沿用後端那三個名字」那句**現在是錯的**
+（正確做法見 [`../CLAUDE.md`](../CLAUDE.md) 第三節：AI 端用 `S3_RW_*`，兩組刻意分開）。
+故整份刪除，只留下這幾條**至今仍成立、且別處沒記**的設計理由：
+
+| # | 決定 | 理由 |
+|---|---|---|
+| 1 | 緩衝存**原始幀**，位置在**跳幀之前** | worker 有 `frame_count % 2` 隔幀跳過。緩衝擺在跳幀之後的話，5 秒只會收到 2.5 秒份量，片段的時間軸整個對不上 |
+| 2 | 片段**不畫** AI 標註框 | 不受 `NO_RENDER=1` 影響、不必為每個緩衝幀多跑一次 `.plot()`；而且被跳過的幀根本沒有推論結果可畫，硬要畫會錄出一閃一閃的框。**這點後來升格成組長決策**，見第 8 項 |
+| 3 | 警報**立刻發**，片段稍後落地 | 跌倒是急救場景，為了等影片讓警報延遲 5 秒以上不划算。護理師從收到警報到點開影片本來就不只 5 秒 |
+| 4 | 用 `cv2.VideoWriter`，不用 ffmpeg pipe | 跟著 `opencv-python` 走，不需要外部 ffmpeg 執行檔，三個平台都能跑 |
+| 5 | 緩衝**獨立降寬**到 `CLIP_WIDTH` | 1080p 全解析度下前後 10 秒每台相機約 1.8GB，多路併發直接 OOM。推論吃的仍是原圖，完全不受影響 |
+
+**最值得留的一段 —— 上游那個「拼出來是後 5 秒 ×2」的 bug**：
+
+上游的 `pre_video_buffer` 每幀都在滾動，但**收工當下才去取它**：
+
+```python
+full_10_sec_frames = list(pre_video_buffer) + post_video_buffer   # ← 這裡
+```
+
+等後段錄滿 5 秒，那個環形緩衝裡裝的已經正好是**後段那批幀**，前 5 秒整段遺失。
+本實作改成**觸發當下就對前段緩衝拍快照**，收工時用快照拼接。模擬驗證
+（30fps、第 400 幀觸發、前後各 5 秒）：
+
+```
+[本實作] 幀數=300 範圍=251..550 ✅ 時間軸正確
+[上游]   幀數=300 範圍=401..550 ❌ 重複 150 幀
+```
+
+**這個 bug 錄出來的檔案長度正確、播得動、不報錯**，只有把畫面調出來看才知道前半段是假的。
+
 ---
 
 ## 2.【已完成】六大防線收斂為「跌倒 + 巡檢」，並立了 `ai/modules/` 白名單
@@ -407,11 +420,11 @@ GET → HTTP 200  Content-Type=video/mp4  bytes=995737
 
 ### 規則落地：文件 + 機器都擋
 
-- **根目錄新增 [`CLAUDE.md`](CLAUDE.md)** —— 每次動工前必讀，寫明白名單、理由、
+- **根目錄新增 [`CLAUDE.md`](../CLAUDE.md)** —— 每次動工前必讀，寫明白名單、理由、
   跌倒主邏輯在哪、以及「真的要復活」的流程。
 - **[`CONTRIBUTING.md`](CONTRIBUTING.md) 第六節**加一條紅線，與 Kafka topic、
   `route_by_confidence()` payload 並列。
-- **[`scripts/check_guardrails.py`](scripts/check_guardrails.py) 加 `check_module_whitelist()`**
+- **[`scripts/check_guardrails.py`](../scripts/check_guardrails.py) 加 `check_module_whitelist()`**
   —— AST 靜態解析，擋兩種違規：在 `ai/modules/` 新增非白名單檔案、任何 `.py` import
   非白名單模組。pre-commit 與 GitHub Actions 兩層都會紅燈。
 
@@ -431,7 +444,7 @@ GET → HTTP 200  Content-Type=video/mp4  bytes=995737
 
 ## 3.【已完成】Triton GPU vs CPU 同機對照
 
-完整報告：**[`ai/BENCHMARK_GPU_VS_CPU.md`](ai/BENCHMARK_GPU_VS_CPU.md)**。摘要：
+完整報告：**[`ai/BENCHMARK_GPU_VS_CPU.md`](../ai/BENCHMARK_GPU_VS_CPU.md)**。摘要：
 
 | | GPU | CPU | 倍數 |
 |---|---:|---:|---:|
@@ -460,71 +473,6 @@ GET → HTTP 200  Content-Type=video/mp4  bytes=995737
 模型替換的事。
 
 ---
-
-## 4.【只出設計】Prometheus 導入
-
-### 對「照架構圖五個底色各包一顆 Docker」的評估：**分層很好用，但不能拿來當容器邊界**
-
-四個具體會出錯的地方：
-
-1. **綠色（儲存與資料服務）根本沒有 process 可以包**。PostgreSQL 是 AWS RDS、S3 是真 AWS、
-   模型儲存庫也在 S3。這一層只能用 exporter 從外面看，「包一顆 docker」不成立。
-2. **藍色（邊緣／運算層）內部生命週期差太多**。Triton 是常駐 GPU 服務、已經是官方容器且
-   自帶 `:8002/metrics`；AI worker 是每台相機一條 thread 的 Python 行程，改邏輯就要重啟。
-   綁成一顆等於「改推論程式要重啟 Triton」，會破壞已經打通的模型熱載
-   （`model_control_mode=explicit` + `POST /v2/repository/models/*/load`）。至少切成兩顆。
-3. **黃色（事件匯流）跟藍色裡的「訊息發佈 Kafka」是同一個 broker**。圖上兩個 Kafka 是
-   兩條資料流不是兩套 broker，現況 `docker-compose.yml` 就只有一個 `nh-kafka`。
-   照底色打包會做出兩個 broker。
-4. **橘色把線上與離線混在一起**。「事件處理（uncertainty_router / vlm_worker，線上要低延遲）」
-   跟「MLOps 迴路（Label Studio / ClearML 重訓，離線吃 GPU 很久）」同色。包成一顆的話，
-   重訓一跑就排擠二審延遲。
-
-### 建議：底色 → Prometheus label 與 Grafana 分頁，不 → 容器邊界
-
-容器邊界照「行程生命週期 + 資源型態」切，每個 job 打上
-`layer="edge|event|app|storage|mlops|control"`。分層在監控畫面上完整呈現，部署不被綁死。
-
-可落地順序（由現成到要動工）：
-
-| target | 端點 | 現況 | layer |
-|---|---|---|---|
-| Triton | `:8002/metrics` | **已經開著，零成本，最先接**（`bench_triton.py` 已經在讀它）| edge |
-| backend FastAPI | `/metrics` | 要加 `prometheus-fastapi-instrumentator`；`gcp_vm_environment/test_sample/test_prometheus_fastapi.py` 有現成範例 | app |
-| Kafka | JMX exporter `:5556` | `gcp_vm_environment/` 已有 jar 與 `jmx_prometheus_kafka.yml`，掛 javaagent 進 `nh-kafka` 即可 | event |
-| AI worker | 自建 `prometheus_client.start_http_server` | 目前只 print（`inference_test.py` 的 FPS log），要改成 Gauge(fps) / Counter(事件數) / Histogram(各段延遲)| edge |
-| GPU | dcgm-exporter | Triton metrics 已含 GPU 使用率/記憶體，要溫度功率才需要 | edge |
-| RDS / S3 | CloudWatch exporter | 外部託管，無容器 | storage |
-
-**動手前要先講清楚的一件事**：`gcp_vm_environment/` 那套已經有 Prometheus + JMX exporter +
-FastAPI instrumentator，但它跟主 stack 是**兩套不同架構**（nginx + 空殼 python 容器 +
-rsync 部署）。導入時是「把零件搬進主 `docker-compose.yml`」，不是兩套並存，
-否則會養出第三套環境。
-
----
-
-## 5.【本輪不執行】跌倒事件只發一次：改成冷卻幾分鐘後可再發
-
-**現況**：`ai/inference_test.py` 的 `vlm_triggered` 是 per-worker 的一次性旗標。
-同一路相機的 worker，**整個行程生命週期只會發出一次跌倒事件**；`ever_detected_fall`
-也會讓畫面永遠停在 "FALL DETECTED!"。**片段錄製掛在同一個閂鎖下**，所以也只錄一支。
-
-**為什麼以前沒事**：影片檔 worker 播完就結束。接上真攝影機後 worker 會跑好幾天——
-等於第一次跌倒之後，那台相機就再也不會示警了。
-
-**為什麼這輪不做**：卡在多人追蹤缺口——系統分不出同一人或另一人，加冷卻會永久漏接
-冷卻期間發生的**別人**的跌倒。需要多人追蹤才能真正解決，範圍不小。
-
-**真的要做時要想清楚的**：
-- 冷卻長度用環境變數調，未設給保守預設。
-- 冷卻粒度：每台相機一個，還是每種事件類型一個。
-- 斷線重連時**不要**重設冷卻（現在重連刻意保留 `ever_detected_fall` / `vlm_triggered`，
-  就是為了避免網路抖動導致同一起事件重複發報）。
-- 不能動 `route_by_confidence()` 的 payload 欄位（護欄 AST 檢查監看）。
-- 冷卻放行後，片段錄製要跟著能再錄一次（同一段程式碼，一起做比較省事）。
-
----
-
 ## 6.【已完成】agent P2：後端記錄 AI 判斷 + 前端顯示建議
 
 分支 `feat/agent-p2-ai-verdict`，PR #14，已合併進 `test/main-integration`

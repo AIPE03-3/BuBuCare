@@ -32,7 +32,8 @@ def test_admin_creates_device_with_stream_channel(client, db_session, monkeypatc
         "floor": None,
         "stream_channel": "cam301",
         "stream_channel_detect": "cam301_out",
-        # 測試環境沒設 MEDIAMTX_BASE_URL → 兩條 WHEP 網址都組不出來，回 None
+        # conftest 的 isolate_mediamtx_base_url 把 MEDIAMTX_BASE_URL 釘成空字串
+        # → 兩條 WHEP 網址都組不出來，回 None（不管本機 .env 有沒有設）
         "stream_url": None,
         "stream_url_detect": None,
         "status": "active",     # 沒給 status → 預設 active

@@ -1,0 +1,40 @@
+# YOLO-Pose 重訓用的資料集定義（ai/clearml_pose_train_pipeline.py 讀它）。
+#
+# 與 ai/data.yaml（RT-DETR 那份）是兩份、不共用，因為兩邊的任務型別不同：
+# 這份是單類別的姿態估計（nc: 1 + kpt_shape），那份是五類別的物件偵測。
+# 資料來源是同一批原始標註，由 ai/prepare_dataset.py 清成兩種格式：
+#
+#     ai/active_learning_dataset/          原始（人工在 Label Studio 標的）
+#         │
+#         ├── --task detect ──> ai/detection_dataset/   5 欄，餵 RT-DETR
+#         └── --task pose   ──> ai/pose_dataset/        56 欄，餵 YOLO-Pose
+#
+# ⚠️ 路徑刻意保持「相對」：寫絕對路徑會被護欄擋（換機器就失效）。ultralytics 解析
+#    相對 path 是相對於它的全域 settings['datasets_dir']、不是相對於這個 yaml 的位置，
+#    所以訓練腳本會先呼叫 mlops_paths.resolve_data_yaml(POSE_DATA_YAML) 轉出一份含
+#    絕對路徑的 ai/pose_data.runtime.yaml 再餵進去。不要直接把這個檔交給 `yolo train`。
+
+path: pose_dataset
+train: train.txt
+val: val.txt
+
+# ⚠️ 單類別，不是 ai/data.yaml 那五類。YOLO-Pose 的關節點是掛在「人」身上的屬性，
+#    chair/sofa/bed/tv 沒有骨架可言，收進來只會讓 class id 語意錯位。
+#    ai/prepare_dataset.py --task pose 會強制只收 class 0（person）。
+nc: 1
+names:
+  0: person
+
+# COCO 17 點骨架，每點 3 個值 (x, y, visibility)。
+# ⚠️ 這個數字是三邊契約：
+#   · ai/prepare_dataset.py 的 NUM_KEYPOINTS（清洗時檢查每行剛好 17 組）
+#   · ai/inference_test.py 的姿態特徵（34 維 = 17 點 × (x, y)）
+#   · 上線的 yolo11s-pose 本身就是 COCO 17 點
+# 改成別的點數，重訓出來的模型會與 inference_test.py 的特徵維度對不上，
+# 而且 Triton 的 config.pbtxt 輸出形狀也要跟著改。
+kpt_shape: [17, 3]
+
+# 左右翻轉增強時的關節點對應（左眼↔右眼、左肩↔右肩…）。
+# 沒有這張表時 ultralytics 做 fliplr 增強會把左右關節點標錯邊——不會報錯，
+# 只是模型學到「左肩在右邊」，實測會讓姿態預測左右反覆跳動。
+flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]

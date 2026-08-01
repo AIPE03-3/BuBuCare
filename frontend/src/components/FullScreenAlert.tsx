@@ -135,6 +135,24 @@ export function FullScreenAlert({ alerts, now, onAcknowledge, onSuppress, onDism
           )}
         </div>
 
+        {/* VLM 判斷理由：只有走過二審的事件才有（YOLO 高信心直通的 vlm_result 是 null，
+            標頭那顆「YOLO 高信心直通」小字已經說明過，這裡就整塊不渲染）。
+            放在影片與操作列之間，是因為值班人員的閱讀順序是「看畫面 → 看理由 → 決定接手或誤報」；
+            擠進底列會把「信心分數／已經過／兩顆按鈕」那排壓成三欄，反而讓要按的鈕變難找。
+            description 來自後端的 vlm_summary（api/events.ts 的轉換），是純文字、可能很長，
+            所以限高可捲——不讓它把下面的操作按鈕推出畫面外。 */}
+        {activeAlert.vlm_result?.description && (
+          <section
+            aria-label="AI 影像分析判斷理由"
+            className="mt-4 rounded-md border border-[var(--border)] bg-[var(--bg-surface-2)] p-3"
+          >
+            <h3 className="text-xs font-semibold text-[var(--text-primary)]">AI 影像分析判斷理由</h3>
+            <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">
+              {activeAlert.vlm_result.description}
+            </p>
+          </section>
+        )}
+
         {/* 底列：AI 信心分數＋已經過（左）／誤報＋接手處理（右） */}
         <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="flex gap-8 text-sm text-[var(--text-primary)]">

@@ -24,34 +24,63 @@ from backend_devices import cfg  # noqa: E402  （上面那行 sys.path 要先�
 # ── 資料集 ───────────────────────────────────────────────────────────────────
 # 原始素材：邊緣端與 agent 落地的快照 + 標註（機器產物，.gitignore 排除）
 RAW_DATASET_DIR = os.path.join(AI_DIR, "active_learning_dataset")
+# 人工標註落地的兩個目錄。圖片共用一份，標註分開放：
+#
+#   active_learning_dataset/images/        ← 兩邊共用
+#                          /labels/        ← 偵測框，inference_to_labelstudio_sdk.py 寫
+#                          /pose_labels/   ← 骨架點，pose_to_labelstudio_sdk.py 寫
+#
+# **刻意不共用同一個 labels/**：同一張圖可能同時在兩個 Label Studio 專案裡被標，
+# 兩支腳本都寫 `{stem}.txt` 的話後跑的會蓋掉先跑的——而且是靜默蓋掉。
+# pose 標註（56 欄）雖然是偵測標註（5 欄）的超集，但反過來不成立，
+# 被偵測那支蓋掉就等於關節點全丟。分開放就沒有這個特殊情況要處理。
+RAW_LABELS_DIR = os.path.join(RAW_DATASET_DIR, "labels")
+RAW_POSE_LABELS_DIR = os.path.join(RAW_DATASET_DIR, "pose_labels")
 # 清洗後真正拿去訓練的資料集（prepare_dataset.py 產生，同樣不進 repo）
 DATASET_DIR = os.path.join(AI_DIR, "detection_dataset")
+# YOLO-Pose 重訓吃的（同樣是 prepare_dataset.py 的產物，不進 repo）。
+# 為什麼要分成兩個目錄而不是共用一份：RT-DETR 看不懂關節點、YOLO-Pose 沒有關節點就
+# 訓練不了，同一份原始標註要清成兩種格式。共用會讓其中一邊拿到不能用的標註檔。
+POSE_DATASET_DIR = os.path.join(AI_DIR, "pose_dataset")
 # 切分名單（**這個進版控**）：只放檔名，不放路徑，換機器照樣可重現同一組 train/val
 SPLITS_DIR = os.path.join(AI_DIR, "dataset_splits")
 
 DATA_YAML = os.path.join(AI_DIR, "data.yaml")
+POSE_DATA_YAML = os.path.join(AI_DIR, "pose_data.yaml")
 # 交給 ultralytics 的那份（含絕對路徑，執行時生成，不進 repo）
 DATA_YAML_RUNTIME = os.path.join(AI_DIR, "data.runtime.yaml")
 
 # ── Triton ───────────────────────────────────────────────────────────────────
-TRITON_REPO_DIR = os.path.join(AI_DIR, "triton_repo")
+# model repository 的位置。預設是版控裡那份，但**線上 serve 的不一定是它**：
+# 沒有 NVIDIA GPU 的機器跑的是 `ai/triton_repo_cpu/`（make_cpu_repo.sh 把 KIND_GPU
+# 換成 KIND_CPU 的產物）。部署腳本要寫進「Triton 真正掛載的那個目錄」才有意義，
+# 寫進版控那份等於改了一個沒人在讀的地方。所以這裡可被環境變數覆蓋。
+#
+# ⚠️ 指到 triton_repo_cpu 時要知道：那是 make_cpu_repo.sh 的產物，重跑該腳本會
+#    `rm -rf` 重建，新部署的版本目錄會消失（權重可從 ClearML 重新拉，不是資料遺失）。
+TRITON_REPO_DIR = cfg("TRITON_REPO_DIR", os.path.join(AI_DIR, "triton_repo"))
 # ⚠️ 8010 不是 8000：8000 被 backend 的 uvicorn 佔著（見 CLAUDE.md 第四節）。
 # 上游那份 model_deployment_agent.py 寫死 8000，照抄會打到 FastAPI 拿 404。
 TRITON_HTTP_URL = cfg("TRITON_HTTP_URL", "http://127.0.0.1:8010").rstrip("/")
 
 
-def resolve_data_yaml() -> str:
-    """把 `ai/data.yaml` 的相對路徑展開成絕對路徑，寫成 `ai/data.runtime.yaml` 回傳。
+def resolve_data_yaml(src: str = DATA_YAML) -> str:
+    """把資料集 yaml 的相對路徑展開成絕對路徑，另存一份 `*.runtime.yaml` 回傳。
 
     為什麼要多這一手：ultralytics 解析 data.yaml 裡的相對 `path:` 是相對於
     `settings['datasets_dir']`（使用者層級的全域設定），**不是相對於 yaml 自己的位置**。
     ClearML agent 是在它自己的工作目錄底下跑訓練腳本，直接餵相對路徑的 data.yaml 會
     找不到資料；而改動全域 settings 是會影響整台機器其他專案的副作用。
     所以進版控的 data.yaml 維持相對（可攜、護欄不會擋），執行時轉一份絕對的出來用。
+
+    `src` 預設是 RT-DETR 那份；YOLO-Pose 重訓傳 `POSE_DATA_YAML` 進來。產出檔名跟著
+    來源走（`data.yaml` → `data.runtime.yaml`、`pose_data.yaml` → `pose_data.runtime.yaml`），
+    兩條線各寫各的，不會互相蓋掉——共用一個固定檔名的話，兩支訓練同時在跑時後寫的那份
+    會讓先啟動的那邊讀到別人的資料集，而且不會報錯。
     """
     import yaml
 
-    with open(DATA_YAML, encoding="utf-8") as f:
+    with open(src, encoding="utf-8") as f:
         spec = yaml.safe_load(f)
 
     base = spec.get("path", ".")
@@ -61,11 +90,13 @@ def resolve_data_yaml() -> str:
         if spec.get(key) and not os.path.isabs(spec[key]):
             spec[key] = os.path.normpath(os.path.join(base, spec[key]))
 
-    with open(DATA_YAML_RUNTIME, "w", encoding="utf-8") as f:
+    stem = os.path.splitext(os.path.basename(src))[0]
+    dst = os.path.join(AI_DIR, f"{stem}.runtime.yaml")
+    with open(dst, "w", encoding="utf-8") as f:
         f.write("# 由 ai/mlops_paths.resolve_data_yaml() 自動生成，不要手改、不進版控。\n")
-        f.write(f"# 來源：{os.path.relpath(DATA_YAML, AI_DIR)}\n")
+        f.write(f"# 來源：{os.path.relpath(src, AI_DIR)}\n")
         yaml.safe_dump(spec, f, allow_unicode=True, sort_keys=False)
-    return DATA_YAML_RUNTIME
+    return dst
 
 
 def export_env(*keys: str) -> list[str]:

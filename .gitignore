@@ -14,6 +14,13 @@ fulilian.db
 
 # Environment variables (contains secrets)
 .env
+# 備份檔也一起擋。上面那條是**精確比對**，擋不到 `.env.bak.170502` 這種名字——
+# 2026-07-31 就是這樣讓一份 .env 完整備份（含 JWT 簽章金鑰、兩組 AWS 憑證、DB 密碼）
+# 被 `git add -A` 掃進 commit 468286f，事後只能改寫歷史。改 .env 前先備份是好習慣，
+# 但備份檔跟本尊一樣裝著全部憑證，忽略規則要一起涵蓋。
+.env.bak*
+.env.*.bak
+.env.backup*
 
 # 忽略所有官方與時序的模型權重檔（防止大檔案弄爆 GitHub）
 *.pt
@@ -77,8 +84,22 @@ ai/active_learning_dataset/
 # ⚠️ train/val 的切分名單 ai/dataset_splits/ 刻意**要**進版控——那是「這次的 mAP 是拿
 #    哪 18 張圖量的」的唯一證據，沒有它下一輪重訓的數字就沒得比。
 ai/detection_dataset/
-# data.yaml 的絕對路徑展開版（mlops_paths.resolve_data_yaml() 執行時生成）
-ai/data.runtime.yaml
+# 同上，YOLO-Pose 那條線的清洗產物（prepare_dataset.py --task pose）。
+# 切分名單 ai/dataset_splits/pose_{train,val}.txt 一樣**要**進版控，理由同上。
+ai/pose_dataset/
+# data.yaml / pose_data.yaml 的絕對路徑展開版（resolve_data_yaml() 執行時生成）
+ai/*.runtime.yaml
+
+# AcT 時序模型的訓練工作目錄（機器產物，2026-07-30 實測 207MB）。
+#   videos/        182M  200 支 mp4 原始素材
+#   labels_review/  23M  50 張 jpg 審查畫面（可從 videos 重抽）
+#   features/      2.1M  150 個 npz 特徵（可重跑特徵擷取重建）
+#   labels_draft/  200K  50 個 txt 標註
+# 擋這條的理由：這裡沒有任何一項是「不擋就會弄丟」的，但只要有人 git add . 就會把
+# 182M 的 mp4 推上去——大檔一旦進了歷史，之後要清得改寫歷史，會波及所有人的分支。
+# ⚠️ 若日後認定 labels_draft/ 的標註是人工成果、屬於「這批數字是拿什麼標的」的證據
+#    （理由同上面 ai/dataset_splits/ 那段），就在這行下面補 !ai/train/dataset/labels_draft/
+ai/train/dataset/
 
 # agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
 ai/agent_shadow.jsonl

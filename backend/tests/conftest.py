@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 os.environ["EVENT_API_KEY"] = "test-api-key"
 
 from main import app
+from core import config  # import 模組而非常數：讓 fixture 能 monkeypatch 換掉設定值
 from core.database import Base, get_db
 from core.models import User, Company, Location, Device, Staff, DetectEvent
 from core.security import hash_password
@@ -54,6 +55,21 @@ def db_session():
         yield db
     finally:
         db.close()
+
+
+@pytest.fixture(autouse=True)
+def isolate_mediamtx_base_url(monkeypatch):
+    """把 MEDIAMTX_BASE_URL 釘成空字串，讓測試不受本機 .env 影響。
+
+    沒釘住的話：有跑 MediaMTX 的機器 .env 裡會有 MEDIAMTX_BASE_URL，
+    於是 GET/POST /devices 回的 stream_url 就變成真網址而不是 None，
+    `test_devices_create.py` 那組寫死 None 的斷言會紅——**同一份程式碼在兩台機器
+    上結果不同**，這正是本專案最怕的那類破口。
+
+    要測「有設 base url」的行為就在該測試裡自己 monkeypatch 蓋回去
+    （`test_devices_stream_url.py` 全檔都是這樣做的），autouse 不會擋住你。
+    """
+    monkeypatch.setattr(config, "MEDIAMTX_BASE_URL", "")
 
 
 @pytest.fixture(autouse=True)

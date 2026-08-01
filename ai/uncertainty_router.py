@@ -44,6 +44,27 @@ DATASET_DIR = Path(__file__).resolve().parent / "active_learning_dataset"
 # VLM 推論介面。觸發/路由邏輯歸本 Router,推論後端隔離在 VLMModel 內(換 Triton 只改 vlm_client)。
 vlm_model = VLMModel()
 
+# ── 語言約束 ────────────────────────────────────────────────────────────────
+# 2026-07-31 端到端測試實測：prompt 開頭只寫一行
+# "You must reply ONLY in Traditional Chinese (繁體中文)." 時，qwen2.5vl:7b **照樣回簡體**
+#（實際產出："两名男性在走廊上似乎发生了肢体冲突"）。那段文字會直接顯示在值班人員的
+# 全螢幕警示上，違反 CLAUDE.md「一律繁體中文、禁止簡體字」。
+#
+# 改成頭尾各放一次、並給明確的否定與字例。結尾那次是重點：小模型對「最後看到的指令」
+# 服從度明顯高於開頭。
+# ⚠️ 這仍是 prompt 層的約束，**不保證 100%**。要保證得在拿到回覆後做簡→繁轉換
+#（opencc），那要多一個相依套件，尚未決定是否引入。
+_ZH_TW_HEAD = (
+    "【語言規則｜最高優先】你必須全程使用**繁體中文（台灣用語）**回答。\n"
+    "嚴禁使用簡體字。例如必須寫「兩名」不是「两名」、「發生」不是「发生」、"
+    "「衝突」不是「冲突」、「養老院」不是「养老院」、「環境」不是「环境」。\n"
+    "You MUST reply ONLY in Traditional Chinese (zh-TW). NEVER use Simplified Chinese.\n\n"
+)
+_ZH_TW_TAIL = (
+    "\n\n【再次確認｜語言規則】以上報告請全程使用**繁體中文（台灣用語）**輸出，"
+    "輸出前請自我檢查有沒有混入簡體字，有的話一律改成繁體。"
+)
+
 
 # =========================================================================
 # 📝 Router 狀態(只放流程用中間狀態,不放後端契約以外的東西進最終 payload)
@@ -166,8 +187,7 @@ def vlm_review_node(state: RouterState) -> Dict[str, Any]:
     # ── Prompt 分流(沿用 vlm_worker 現行兩段 prompt,一字不改)──
     if alert_type == "Routine_Environment_Sanity_Check":
         print(f"\n[🔍 定時巡檢] 房間：{cam_id}。讀取專屬歷史照片：{os.path.basename(img_path)}")
-        prompt_text = (
-            "You must reply ONLY in Traditional Chinese (繁體中文).\n"
+        prompt_text = _ZH_TW_HEAD + (
             "You are an AI head nurse conducting a routine security check. "
             "Inspect if there are any potential environmental hazards.\n"
             "Please output a structured environment report using this exact template:\n\n"
@@ -176,11 +196,10 @@ def vlm_review_node(state: RouterState) -> Dict[str, Any]:
             "2. 巡檢狀態: 正常 / 發現潛在隱患\n"
             "3. 現場環境具體描述: \n"
             "4. 預防性護理建議: "
-        )
+        ) + _ZH_TW_TAIL
     else:
         print(f"\n[🔔 疑似跌倒/滑落二審] 房間：{cam_id}。讀取專屬證據照片：{os.path.basename(img_path)}")
-        prompt_text = (
-            "You must reply ONLY in Traditional Chinese (繁體中文).\n"
+        prompt_text = _ZH_TW_HEAD + (
             "You are an AI head nurse in a security care center. Look at this security snapshot carefully.\n"
             f"The edge system detected these objects nearby: {env_clues}.\n"
             "Analyze the image and output a structured alert report using this exact template:\n\n"
@@ -197,7 +216,7 @@ def vlm_review_node(state: RouterState) -> Dict[str, Any]:
             "輸出你看到畫面中「最可能導致跌倒/異常的物品或現場關鍵物（例如 slipper, wire, iv_pole, "
             "walker，如無危險物請輸出 'unknown'）」，格式必須完全對齊如下：\n"
             '{"item_name": "物品英文名", "description": "物品的中文具體描述與現場狀況分析"}'
-        )
+        ) + _ZH_TW_TAIL
 
     fall_reason_item = "unknown"
     item_description = "無偵測到特定危險雜物"
@@ -221,6 +240,11 @@ def vlm_review_node(state: RouterState) -> Dict[str, Any]:
                                   .replace("【主動探索學習模組】", "").strip())
             except Exception as je:
                 print(f"⚠️ 解析 VLM 關鍵物 JSON 失敗（不影響外發）: {je}")
+
+        # 語言規則的尾巴會被模型抄進報告裡（實測 qwen2.5vl:7b 就這麼幹：輸出末尾多一行
+        # 「【再次確認｜語言規則】以上報告全程使用繁體中文（台灣用語）輸出。」）。
+        # 那是給模型看的指令、不是給護理師看的內容，會一路顯示到全螢幕警示上，砍掉。
+        raw_report = re.sub(r"\n*【再次確認[^】]*】.*$", "", raw_report, flags=re.DOTALL).strip()
 
         # MLOps 主動學習:YOLO 弱點視窗(0.35~0.85)才打包,把 VLM 判出的關鍵物一併帶進去。
         if alert_type != "Routine_Environment_Sanity_Check" and (0.35 <= yolo_score <= 0.85):

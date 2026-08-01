@@ -109,7 +109,7 @@ case "$MODEL_CONTROL_MODE" in
     triton_args+=(--model-control-mode=none)
     ;;
   *)
-    echo "❌ 未知 MODEL_CONTROL_MODE：$MODEL_CONTROL_MODE（可用 explicit / poll / none）" >&2
+    echo "❌ 未知 MODEL_CONTROL_MODE：${MODEL_CONTROL_MODE}（可用 explicit / poll / none）" >&2
     exit 1
     ;;
 esac
@@ -121,7 +121,7 @@ if [[ -n "$TRITON_GPUS" && "$TRITON_GPUS" != "none" ]]; then
 fi
 [[ -n "$TRITON_CPUS" ]] && docker_args+=(--cpuset-cpus "$TRITON_CPUS")
 
-echo "🚀 啟動 Triton（$TRITON_IMAGE）"
+echo "🚀 啟動 Triton（${TRITON_IMAGE}）"
 echo "   HTTP=$HTTP_PORT gRPC=$GRPC_PORT metrics=$METRICS_PORT"
 echo "   model_repository=$MODEL_REPO"
 echo "   models=$LOAD_MODELS"
@@ -137,10 +137,10 @@ echo "⏳ 等待 Triton 就緒 ..."
 for i in $(seq 1 30); do
   code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/v2/health/ready" 2>/dev/null || true)"
   if [[ "$code" == "200" ]]; then
-    echo "✅ Triton ready（HTTP $HTTP_PORT）"
+    echo "✅ Triton ready（HTTP ${HTTP_PORT}）"
     for m in $LOAD_MODELS; do
       mcode="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$HTTP_PORT/v2/models/$m/ready" 2>/dev/null || true)"
-      [[ "$mcode" == "200" ]] && echo "   ✓ $m 已載入" || echo "   ✗ $m 未就緒（HTTP $mcode）"
+      [[ "$mcode" == "200" ]] && echo "   ✓ $m 已載入" || echo "   ✗ $m 未就緒（HTTP ${mcode}）"
     done
     echo
     echo "查看日誌： docker logs -f $TRITON_NAME"

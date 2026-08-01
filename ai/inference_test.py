@@ -32,10 +32,10 @@ from triton_act_client import TritonActModel            # Triton 版 action_tran
 
 from av_reader import open_source, is_stream_source       # AV1 影片解碼（PyAV），介面對齊 cv2.VideoCapture
 from backend_devices import (                             # 從後端裝置表取真實攝影機清單
-    build_camera_channels, build_detect_channels, fetch_devices, login,
+    build_camera_channels, fetch_devices, login,
     BackendUnavailable, BACKEND_API_URL, cfg,
 )
-from detect_publisher import make_publisher               # 把畫好框的畫面推回 MediaMTX 偵測頻道
+from detection_broadcaster import build_persons, make_broadcaster  # 把骨架座標轉播給前端 canvas
 
 # =========================================================================
 # 🛠️ MLOps 基礎建設：Kafka 初始化
@@ -178,7 +178,7 @@ _MULTI_TRACK = cfg("MULTI_PERSON_TRACK", "1").strip().lower() not in ("0", "fals
 # 所以 debounce 跟追蹤是同一件事的兩半。
 _FALL_CONSECUTIVE_FRAMES = int(cfg("FALL_CONSECUTIVE_FRAMES", "4"))
 # 已發過事件的人，連續幾個處理幀「不再是倒地」就把他的狀態重置、允許再次發報。
-# 沒有這個的話，同一個人第二次跌倒永遠不會再示警（現況就是這樣，見 NEXT_STAGE 第 5 項）。
+# 沒有這個的話，同一個人第二次跌倒永遠不會再示警（現況就是這樣，見 docs/NEXT_STAGE.md 第 5 項）。
 _FALL_RECOVERY_FRAMES = int(cfg("FALL_RECOVERY_FRAMES", "90"))
 # 一個人連續幾幀沒被看到才把他的狀態忘掉。刻意設得比 ByteTrack 自己的 track_buffer 寬鬆：
 # 忘太快＝忘了「他已經發過事件」，人被擋一下再出現就重複發報。
@@ -252,6 +252,10 @@ _CLIP_DIR = cfg("CLIP_DIR") or os.path.join(
 # 機器照樣跑得動、不會在跌倒當下噴錯，只是前端暫時拿不到影片。
 _CLIP_S3_BUCKET = cfg("CLIP_S3_BUCKET").strip()
 _CLIP_S3_PREFIX = cfg("CLIP_S3_PREFIX", "videos").strip("/")
+# 快照走同一個 bucket、不同前綴。2026-07-31 端到端測試才發現：片段一直有上傳，
+# **快照從來沒有**——DB 裡 179 筆事件的 snapshot_path 全是本機絕對路徑，而後端
+# `core/s3.py` 只對 `s3://` 簽 presigned URL，所以前端的事件快照永遠是空的。
+_SNAPSHOT_S3_PREFIX = cfg("SNAPSHOT_S3_PREFIX", "snapshots").strip("/")
 # AWS 憑證：本檔只做一件 S3 動作——把事件片段 upload_file 上去，需要 PutObject（寫）。
 # 後端 backend/core/s3.py 只做 presigned GET（讀），兩邊刻意用不同金鑰＝最小權限，
 # 不是重複設定：
@@ -384,6 +388,35 @@ def write_event_clip(frames, out_path, fps, camera_id, s3_key=None):
     except Exception as e:
         print(f"❌ [{camera_id}] 事件片段處理失敗（警報已發出，不受影響）：{e}")
 
+
+def upload_event_snapshot(local_path, s3_key, camera_id):
+    """把已經寫在本機的事件快照傳一份上 S3。
+
+    給背景 daemon thread 跑，理由與 write_event_clip 相同：上傳是網路 I/O，
+    卡在推論迴圈裡會讓該路相機掉幀。整支包在 try 內——快照上傳失敗不該影響
+    已經發出去的警報（前端頂多看不到縮圖，事件本身照常）。
+
+    ⚠️ **本機那份不能刪**：`ai/uncertainty_router.py` 二審時要從
+    `ai/snapshots/` 讀圖餵給 VLM（它用 payload 的 `image_filename` 欄位重組本機
+    路徑，不是用 `snapshot_path`），主動學習資料集也是從那裡複製。
+    這裡只是「多傳一份上雲」，不是「搬過去」。
+    """
+    if not s3_key:
+        return
+    try:
+        import boto3  # lazy import：沒設 bucket 的機器不必裝 boto3
+        boto3.client(
+            "s3",
+            region_name=_S3_REGION or None,
+            aws_access_key_id=_S3_ACCESS_KEY or None,
+            aws_secret_access_key=_S3_SECRET_KEY or None,
+        ).upload_file(
+            local_path, _CLIP_S3_BUCKET, s3_key, ExtraArgs={"ContentType": "image/jpeg"}
+        )
+        print(f"🖼️ [{camera_id}] 快照已上傳：s3://{_CLIP_S3_BUCKET}/{s3_key}")
+    except Exception as e:
+        print(f"❌ [{camera_id}] 快照上傳失敗（警報已發出，不受影響）：{e}")
+
 # =========================================================================
 # 🌟 Action Transformer 模型架構
 # =========================================================================
@@ -438,7 +471,7 @@ frames_lock = threading.Lock()
 # =========================================================================
 # 📹 核心：多鏡頭平行巡邏的 Edge Worker
 # =========================================================================
-def camera_worker(camera_id, video_source, detect_url=None):
+def camera_worker(camera_id, video_source):
     global producer, device, yolo_pose_model, yolo_env_model, transformer_model, output_frames, frames_lock
 
     print(f"🚀 鏡頭頻道 [{camera_id}] 啟動拉流：{video_source}")
@@ -484,12 +517,13 @@ def camera_worker(camera_id, video_source, detect_url=None):
     source_fps = _fps_of(cap)
     frame_delay = 1.0 / source_fps
 
-    # ── 📤 偵測畫面推流（前端「即時／偵測」切換鈕的「偵測」那一半）────────
-    # 推的是下面 Step D 畫好的 annotated_frame。沒設 DETECT_STREAM=1、該相機沒有
-    # stream_channel_detect、或機器上沒有 ffmpeg 時一律回 None，迴圈內就不會推。
+    # ── 📤 偵測座標轉播（前端「即時／偵測」切換鈕的「偵測」那一半）──────────
+    # 送的是**座標**，不是畫面：前端拿乾淨影像 + canvas 自己疊骨架。
+    # 2026-07-31 取代原本的 detect_publisher（AI 端燒框再編一次 H.264 推 cam_out），
+    # 理由見 ai/detection_broadcaster.py 的檔頭。沒設 DETECT_BROADCAST=1 就回 None。
     # ⚠ 這條出口與事件片段/快照完全無關：那兩者刻意維持無框的原始畫面（組長決策：
-    #    彈窗當下有框會干擾人工確認），別把 annotated_frame 接進 write_event_clip。
-    detect_pub = make_publisher(camera_id, detect_url, fps=source_fps)
+    #    彈窗當下有框會干擾人工確認）。
+    detect_pub = make_broadcaster(camera_id)
 
     # ── 📼 事件片段緩衝（觸發前 PRE 秒 / 後 POST 秒）──────────────────────
     # 緩衝塞在 `frame_count % 2` 跳幀之前，存的是原始幀：存已處理幀的話同樣的秒數
@@ -537,13 +571,9 @@ def camera_worker(camera_id, video_source, detect_url=None):
     # 提速：NO_RENDER=1 時跳過 Step D 純畫圖渲染（.plot()/mask 疊圖/putText/copy），
     # 這些只為 GUI 顯示，HEADLESS 壓測根本不看畫面卻每幀白燒 CPU。快照存檔仍保留（事件證據）。
     _no_render = bool(os.environ.get("NO_RENDER"))
-    if _no_render and detect_pub is not None:
-        # 偵測推流推的就是 Step D 畫出來的那張圖，NO_RENDER 等於把來源整個關掉。
-        # 這兩個開關同時設一定是誤會，講明白比默默推出一片空白好。
-        print(f"⚠️ [{camera_id}] NO_RENDER=1 會跳過畫框渲染，偵測推流沒有畫面可推 → 停用推流"
-              f"（要推流請拿掉 NO_RENDER）")
-        detect_pub.close()
-        detect_pub = None
+    # ⚠ 這裡以前要在 NO_RENDER=1 時把偵測推流關掉：舊做法推的就是 Step D 畫出來的那張圖，
+    #   不渲染就沒東西可推。改成轉播座標之後**沒有這個牽連了**——座標來自幾何判定，
+    #   跟畫不畫圖無關，所以 HEADLESS 壓測時前端照樣看得到骨架。
     # 提速：DETR_EVERY_N=N（N>1）把 rt_detr 環境物件偵測降頻成「每 N 個處理幀才跑一次」，
     # 其餘幀復用上次結果。detr 佔 ~30% 幀時間，但它偵測的全是靜態家具（bed/chair/couch…），
     # results_env 三個下游用途（bed_box 離床、chair_box 座椅滑落、mask 疊圖）都只是
@@ -743,6 +773,12 @@ def camera_worker(camera_id, video_source, detect_url=None):
         # 這一幀「連續倒地幀數剛達門檻、且還沒發過事件」的人，等 AcT 算完再決定要不要外發。
         # 元素是 (track_id, is_occluded_i)。沒有追蹤器時恆為空，走原本的單筆事件路徑。
         fall_candidates = []
+        # Step E 的座標轉播要用這四個。跟上面三個一樣在這裡先給空值：
+        # 沒偵測到人、或下面 try 落到 except 時，轉播才不會拿到未定義的名字。
+        boxes_xyxy = []
+        conf_data = []
+        kpts_data = None
+        idx_to_track = {}
 
         if results_pose and len(results_pose[0].keypoints) > 0:
             kpts_obj = results_pose[0].keypoints
@@ -803,7 +839,7 @@ def camera_worker(camera_id, video_source, detect_url=None):
                         #   索引每幀都可能換人，照索引存參考值等於把 A 的身高記到 B 頭上，
                         #   比共用單一值更錯。本次範圍明確不引入 tracker。
                         #   代價（要知道）：離鏡頭遠、或本來就矮的人 h_box 天生小，比值可能
-                        #   直接低於 0.70 而誤判。這是 NEXT_STAGE.md 第 9 節「缺陷三」那個
+                        #   直接低於 0.70 而誤判。這是 docs/NEXT_STAGE.md 的 9-3「缺陷三」那個
                         #   既有問題的擴大版（參考值只校準一次、換來源不重設），不是新機制。
                         #   既有的 `y2 > img_h*0.5` 條件仍在，擋掉一部分「遠處站著的人」
                         #  （框底落在畫面上半）。真要修，要跟缺陷三一起改，不在本次範圍。
@@ -1066,6 +1102,22 @@ def camera_worker(camera_id, video_source, detect_url=None):
             snapshot_full_path = os.path.join(snapshot_dir, snapshot_name)
             cv2.imwrite(snapshot_full_path, frame)  # 實體不重複存檔留存
 
+            # 快照多傳一份上 S3，讓 payload 帶 s3:// —— 後端 core/s3.py 只對 s3:// 簽
+            # presigned URL，帶本機絕對路徑的話前端永遠拿不到圖（2026-07-31 實測 179 筆
+            # 事件全中）。**本機那份保留**：二審要從 ai/snapshots/ 讀圖（router 用
+            # image_filename 欄位重組本機路徑），主動學習也從那裡複製。
+            # 沒設 CLIP_S3_BUCKET 就退回本機路徑，行為與加這段之前完全相同。
+            snapshot_s3_key = (f"{_SNAPSHOT_S3_PREFIX}/{snapshot_name}"
+                               if _CLIP_S3_BUCKET else None)
+            snapshot_ref = (f"s3://{_CLIP_S3_BUCKET}/{snapshot_s3_key}"
+                            if snapshot_s3_key else snapshot_full_path)
+            if snapshot_s3_key:
+                threading.Thread(
+                    target=upload_event_snapshot,
+                    args=(snapshot_full_path, snapshot_s3_key, camera_id),
+                    daemon=True,
+                ).start()
+
             if producer is not None:
                 vlm_triggered = True
                 if _p_state is not None:
@@ -1101,7 +1153,9 @@ def camera_worker(camera_id, video_source, detect_url=None):
                     numeric_id=numeric_id,
                     clip_path=clip_path,
                     detected_at=datetime.now().isoformat(),  # 符合後端解析的 ISO 時間字串
-                    snapshot_full_path=snapshot_full_path,
+                    # 帶 s3:// 給後端（沒設 bucket 時是本機路徑）。二審端不受影響：
+                    # 它讀圖是用底下的 snapshot_name 欄位重組 ai/snapshots/ 的本機路徑。
+                    snapshot_full_path=snapshot_ref,
                     snapshot_name=snapshot_name,
                     final_score=final_score,
                     yolo_thresh=yolo_thresh,
@@ -1151,10 +1205,16 @@ def camera_worker(camera_id, video_source, detect_url=None):
             if is_current_frame_valid: last_valid_annotated_frame = annotated_frame.copy()
             with frames_lock: output_frames[camera_id] = annotated_frame.copy()
 
-            # 同一張畫好框的畫面，多送一份到 MediaMTX 的偵測頻道給前端看。
-            # publish() 保證不阻塞也不拋例外：滿了就丟幀，優先保住推論的節奏。
-            if detect_pub is not None:
-                detect_pub.publish(annotated_frame)
+        # === Step E: 偵測座標轉播（前端 canvas 疊圖的資料來源）===
+        # 刻意放在 Step D 的 `if not _no_render` **外面**：座標來自上面的幾何判定，
+        # 不是從畫好的圖反推，所以 NO_RENDER=1 時照樣要送。
+        # publish() 保證不阻塞也不拋例外：滿了就丟幀，優先保住推論的節奏。
+        if detect_pub is not None:
+            detect_pub.publish(build_persons(
+                boxes_xyxy=boxes_xyxy, conf_data=conf_data, kpts_xyn=kpts_data,
+                fall_flags=person_fall_flags, idx_to_track=idx_to_track,
+                img_w=img_w, img_h=img_h,
+            ))
 
         # FPS_NO_THROTTLE=1：量純 GPU 吞吐上限時，略過貼齊 source fps 的節流睡眠。
         if not _fps_no_throttle:
@@ -1192,18 +1252,12 @@ if __name__ == "__main__":
     _overrides_replace_all = bool(os.environ.get("SINGLE_SOURCE") or
                                   os.environ.get("STRESS_CAM_COUNT"))
 
-    # 偵測頻道（AI 畫框後要推回去的地方）。只有 CAMERA_SOURCE=backend 這條路拿得到，
-    # 因為它是資料庫欄位；離線 demo / 壓測沒有後端可問，維持不推流。
-    detect_channels = {}
-
     if _CAMERA_SOURCE == "hardcoded" or _overrides_replace_all:
         camera_channels = dict(_HARDCODED_CHANNELS)
     else:
         try:
-            # 一次登入 + 一次 GET /devices，原味與偵測兩份清單共用，不重複問後端。
             _devices = fetch_devices(login())
             camera_channels = build_camera_channels(devices=_devices)
-            detect_channels = build_detect_channels(devices=_devices)
         except BackendUnavailable as e:
             print("=" * 70)
             print(f"❌ [CAMERA_SOURCE=backend] 無法從後端取得相機清單：{e}")
@@ -1217,8 +1271,6 @@ if __name__ == "__main__":
             print("=" * 70)
             raise SystemExit(1)
         print(f"📡 [CAMERA_SOURCE=backend] 由後端取得 {len(camera_channels)} 路鏡頭：{camera_channels}")
-        if detect_channels:
-            print(f"📤 其中 {len(detect_channels)} 路有偵測頻道（畫框後推回）：{detect_channels}")
     # 單源量測開關（比照其他開關：未設 = 原三路行為，不留死改動）：
     # SINGLE_SOURCE=<檔案路徑或 rtsp URL> 時，改成「只掛一路」指向該來源，量單路乾淨 FPS
     #（避免三/四路併發共享 GPU 稀釋數字）。相機名固定 Room_301_Bed（device_id=301，已在後端註冊）。
@@ -1256,9 +1308,7 @@ if __name__ == "__main__":
     
     threads = []
     for cam_id, stream_src in camera_channels.items():
-        # detect_channels 對不到就是 None＝這路不推流（沒設偵測頻道，或走離線 demo）。
-        t = threading.Thread(target=camera_worker,
-                             args=(cam_id, stream_src, detect_channels.get(cam_id)))
+        t = threading.Thread(target=camera_worker, args=(cam_id, stream_src))
         t.daemon = True; threads.append(t); t.start()
 
     # Headless 壓測開關（未設 = 原本 GUI 行為，不留死改動）：HEADLESS=1 時主執行緒不畫

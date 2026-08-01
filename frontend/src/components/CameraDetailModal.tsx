@@ -29,11 +29,8 @@ export function CameraDetailModal({ camera, isDetecting, onClose, onNameChange }
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState(camera.name);
   const [streamMode, setStreamMode] = useState<StreamMode>('live');
-  const streamUrl = streamMode === 'detect' ? camera.stream_url_detect : camera.stream_url;
-  // 頻道名（LiveStream 拿去跟後端換串流權杖）。務必與 streamUrl 取同一個模式，
-  // 否則換來的票對不上要看的頻道，MediaMTX 會回 401。
-  const streamChannel =
-    streamMode === 'detect' ? camera.stream_channel_detect : camera.stream_channel;
+  // 兩種模式播同一條乾淨串流，「偵測」只是多疊一層 canvas 骨架（理由同 Home.tsx）。
+  const overlayDeviceId = streamMode === 'detect' ? camera.id : null;
 
   function startEditing() {
     setNameDraft(camera.name);
@@ -110,7 +107,8 @@ export function CameraDetailModal({ camera, isDetecting, onClose, onNameChange }
           </button>
         </div>
 
-        {/* 只有真的有偵測頻道的鏡頭才給切換鈕；沒有的話按了也只是看到空畫面 */}
+        {/* 只有接了 AI 的鏡頭才給切換鈕；沒接的按了也只是看到沒有骨架的同一個畫面。
+            stream_url_detect 已不再是播放網址，只留「這台有接 AI」的語意（見 Home.tsx）。 */}
         <div className="flex items-center justify-end">
           {camera.stream_url_detect !== null && (
             <StreamModeToggle value={streamMode} onChange={setStreamMode} />
@@ -119,13 +117,9 @@ export function CameraDetailModal({ camera, isDetecting, onClose, onNameChange }
 
         <div className="aspect-video w-full overflow-hidden rounded-xl">
           <LiveStream
-            whepUrl={streamUrl}
-            channel={streamChannel}
-            emptyLabel={
-              streamMode === 'detect' && camera.stream_url_detect === null
-                ? '此鏡頭無 AI 偵測'
-                : undefined
-            }
+            whepUrl={camera.stream_url}
+            channel={camera.stream_channel}
+            overlayDeviceId={overlayDeviceId}
           />
         </div>
 
