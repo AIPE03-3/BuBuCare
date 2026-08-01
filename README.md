@@ -19,7 +19,7 @@
 
 | 目錄 | 負責什麼 |
 |---|---|
-| [`ai/`](ai/) | 邊緣端推論。Triton 跑 `yolo_pose` / `rt_detr` / `action_transformer` 三顆模型判定跌倒，事件發進 Kafka；MLOps 重訓迴路也在這 |
+| [`ai/`](ai/) | 邊緣端推論。Triton 跑 `yolo_pose` / `rt_detr` / `action_transformer` 三顆模型判定跌倒，事件發進 Kafka；MLOps 重訓迴路也在這。檔案索引見 [`ai/README.md`](ai/README.md) |
 | [`backend/`](backend/) | FastAPI + PostgreSQL(AWS RDS)。消費 Kafka 落 DB、SSE 推前端、簽 S3 presigned URL |
 | [`frontend/`](frontend/) | React 19 + Tailwind 4。事件中心、即時監控、通報單、歷史查詢 |
 | [`agent/`](agent/) | LangGraph 版二審（7 節點）。**目前 shadow 模式**，正式服務的仍是 `ai/vlm_worker.py` |
