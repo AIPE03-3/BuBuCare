@@ -22,3 +22,7 @@ scrape_configs:
     static_configs:
       - targets: ["python:8000"]
       #這裡要寫docker 的服務名稱
+
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

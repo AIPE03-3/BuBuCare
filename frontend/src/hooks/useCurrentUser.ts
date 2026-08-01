@@ -10,7 +10,8 @@ export function useCurrentUser(): CurrentUser {
 
   return {
     name: session?.display_name ?? null,
-    // 待後端補上 /me 端點與員工編號欄位後，於此處改接真實員工編號
-    employeeCode: null,
+    // 員編來自登入時解出的 JWT payload.sub（見 api/auth/employeePassword.ts）。
+    // ?? null 是為了舊的 localStorage session——它們存的時候還沒有這個欄位。
+    employeeCode: session?.employee_code ?? null,
   };
 }

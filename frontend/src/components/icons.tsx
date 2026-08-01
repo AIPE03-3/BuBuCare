@@ -84,6 +84,18 @@ export function GearIcon(props: IconProps) {
   );
 }
 
+// 兩個人形：導覽列「管理使用者」用。與 GearIcon（設定）刻意分開，避免語意混淆。
+export function UsersIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <circle cx="9.5" cy="8" r="3.2" />
+      <path d="M3.5 19.5c0-3.2 2.7-5.2 6-5.2s6 2 6 5.2" />
+      <path d="M16.5 5.2a3.2 3.2 0 0 1 0 5.6" />
+      <path d="M18 14.6c1.6.8 2.5 2.4 2.5 4.4" />
+    </svg>
+  );
+}
+
 export function LogoutIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>

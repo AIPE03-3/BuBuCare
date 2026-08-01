@@ -6,6 +6,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from prometheus_client import Counter
 from pydantic import BaseModel
 from sqlalchemy.orm import Session, aliased, selectinload
 
@@ -18,8 +19,14 @@ from core.models import DetectEvent, Device, User
 from events.service import handle_incoming_event, operator_names, serialize_event, watch_delivery, DeviceNotFoundError
 from events.sse import pool, format_sse
 
+
 router = APIRouter()
 
+EVENT_VERDICT_TOTAL = Counter(
+    'event_verdict_total', # 指標名：Prometheus 慣例用 _total 結尾
+    '人工判定次數（依判定結果分類）', # 這句會印在 /metrics 裡，給看圖表的人讀
+    ['verdict'], # ← 標籤：把同一個計數器分成好幾格
+)
 
 # ── 機器驗證：判斷層帶 X-API-Key，跟 .env 的 EVENT_API_KEY 比對 ──
 def require_api_key(x_api_key: Optional[str] = Header(None)):
@@ -150,7 +157,9 @@ async def verdict_event(
 
     db.commit()
     db.refresh(event)
-
+    # 存成功才計數：放 commit 前的話，commit 失敗會讓指標虛高、永遠對不回資料庫
+    # body.verdict 已被 Literal 限定為兩種值，故直接當標籤用，不需要 if
+    EVENT_VERDICT_TOTAL.labels(verdict=body.verdict).inc()
     # 先存後播：commit 成功才廣播，讓所有中控站畫面同步
     device = db.query(Device).filter(Device.device_id == event.device_id).first()
     verdict_by_name, resolved_by_name = operator_names(db, event)
