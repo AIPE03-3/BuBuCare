@@ -1,0 +1,81 @@
+{
+  "evaluated_at": "2026-07-30T12:16:25",
+  "test_set": {
+    "split": "test",
+    "subjects": [
+      2,
+      5,
+      10
+    ],
+    "videos": 30,
+    "fall_videos": 15,
+    "skipped": []
+  },
+  "params": {
+    "frame_skip": 2,
+    "window_size": 30,
+    "act_threshold": 0.55,
+    "feature_norm": "image",
+    "lying_rule": "current",
+    "crop_guard": true,
+    "ai_thinking_conf": 0.35,
+    "direct_trigger_conf": 0.55
+  },
+  "strategies": [
+    "act_only",
+    "pipeline_geo_first",
+    "pipeline_current"
+  ],
+  "models": {
+    "ab_flip_s42": {
+      "path": "ai/train/runs/ab_flip_s42.pth",
+      "sha256": "46e5255365b5"
+    }
+  },
+  "results": {
+    "ab_flip_s42": {
+      "act_only": {
+        "fall_recall": 0.38095238095238093,
+        "forward_recall": 0.21875,
+        "normal_fpr": 0.024005053695514846,
+        "post_fall_fpr": 0.2204424103737605,
+        "mean_latency_s": 1.042857142857143,
+        "detected_videos": 9
+      },
+      "pipeline_geo_first": {
+        "fall_recall": 0.19047619047619047,
+        "forward_recall": 0.0,
+        "normal_fpr": 0.01831964624131396,
+        "post_fall_fpr": 0.37223493516399697,
+        "mean_latency_s": 0.9083333333333333,
+        "detected_videos": 10
+      },
+      "pipeline_current": {
+        "fall_recall": 0.4166666666666667,
+        "forward_recall": 0.21875,
+        "normal_fpr": 0.037271004421983576,
+        "post_fall_fpr": 0.4652936689549962,
+        "mean_latency_s": 0.7642857142857142,
+        "detected_videos": 12
+      }
+    }
+  },
+  "baselines": {
+    "always_fire": {
+      "fall_recall": 1.0,
+      "forward_recall": 1.0,
+      "normal_fpr": 1.0,
+      "post_fall_fpr": 1.0,
+      "mean_latency_s": 0.0,
+      "detected_videos": 15
+    },
+    "geometry_only": {
+      "fall_recall": 0.19642857142857142,
+      "forward_recall": 0.03125,
+      "normal_fpr": 0.06001263423878711,
+      "post_fall_fpr": 0.5316552250190694,
+      "mean_latency_s": 0.8538461538461538,
+      "detected_videos": 11
+    }
+  }
+}

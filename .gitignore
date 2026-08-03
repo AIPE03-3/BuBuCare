@@ -72,8 +72,28 @@ ai/triton_repo/*/[0-9]*/
 # inference_test 觸發事件時寫入的證據快照（執行時產物）
 ai/snapshots/
 
+# =========================================================================
+# AcT 重訓資料集（ai/train/dataset/）
+# 判準：能用腳本重跑產生的就不進版控，人工產出的一定要進。
+# =========================================================================
+# 影片本體已被上面的 *.mp4 擋掉（187MB）。以下是機器產物，重跑即可重建。
+# 注意：gitignore 不支援行尾註解，說明一律另起一行（這裡踩過一次）。
+#
+# 逐幀 pose 特徵，跑 ai/train/extract_features.py 重建
+ai/train/dataset/features/
+# 標註校正用的對照圖（23MB），跑 ai/train/review_labels.py 重建
+ai/train/dataset/labels_review/
+# 標註初稿；內容已合併進 labels/，留著只會造成兩份不同步（實際踩過）
+ai/train/dataset/labels_draft/
+#
+# ⚠ ai/train/dataset/labels/ **要進版控**——那是人工逐支看影片標出來的跌落區間，
+#   重跑任何腳本都產不出來，弄丟就要再花數小時。它只有 200KB。
+
 # inference_test 觸發事件時寫入的前後 N 秒事件片段（執行時產物，CLIP_DIR 可改）
 ai/clips/
+
+# local_pose_eval.py 產出的標註圖／影片（執行時產物，--out 可改）
+ai/pose_eval_out/
 
 # ultralytics 訓練/驗證輸出
 runs/
@@ -98,8 +118,20 @@ ai/*.runtime.yaml
 # 擋這條的理由：這裡沒有任何一項是「不擋就會弄丟」的，但只要有人 git add . 就會把
 # 182M 的 mp4 推上去——大檔一旦進了歷史，之後要清得改寫歷史，會波及所有人的分支。
 # ⚠️ 若日後認定 labels_draft/ 的標註是人工成果、屬於「這批數字是拿什麼標的」的證據
-#    （理由同上面 ai/dataset_splits/ 那段），就在這行下面補 !ai/train/dataset/labels_draft/
-ai/train/dataset/
+#    （理由同上面 ai/dataset_splits/ 那段），就在下面的白名單區補 !ai/train/dataset/labels_draft/
+#
+# 寫成 `dataset/*` 而不是 `dataset/`，是因為 git **不會走進被排除的目錄**——
+# 寫 `dataset/` 的話下面那幾條 `!` 一條都不會生效（實際踩過：2026-08-03 移植
+# AcT 重訓資料集時，50 份人工標註雖然已追蹤所以還在，但新增第 51 份會被靜默跳過，
+# 正好就是上面第 89 行警告「弄丟要再花數小時」的那種東西）。
+ai/train/dataset/*
+# 人工逐支看影片標出來的跌落區間，腳本產不出來（200KB）
+!ai/train/dataset/labels/
+# 哪幾個受試者分到 train/val/test。⚠ S<n+10> 是 S<n> 的水平鏡像、是同一個人，
+# 必須同一個 split，否則測試集洩漏而且指標看不出異常——這份是唯一的紀錄
+!ai/train/dataset/splits.json
+!ai/train/dataset/README.md
+!ai/train/dataset/FLIP_MANIFEST.md
 
 # agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
 ai/agent_shadow.jsonl

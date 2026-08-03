@@ -16,6 +16,7 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md
 | 5 | 事件冷卻計時器 | ⏸ **本輪不執行**，卡多人追蹤（本檔下方）|
 | 9-3 | `normal_h_reference` 換來源不重設 | 📋 **已診斷，未修**（見下）|
 | 9-4 | 體角判定的前提與俯視佈署不符 | 📋 **已診斷，未修，最需要正視**（見下）|
+| 11 | AcT 重訓成果的收割 | 🧰 **工具與資料進來了，管線沒接、權重沒拿到**（本檔下方）|
 
 已完成並驗證過的（紀錄在 [`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md)）：
 第 1 項 S3 上傳、第 2 項六大防線收斂 + 模組白名單、第 3 項 Triton GPU/CPU 對照、
@@ -111,5 +112,95 @@ rsync 部署）。導入時是「把零件搬進主 `docker-compose.yml`」，�
   就是為了避免網路抖動導致同一起事件重複發報）。
 - 不能動 `route_by_confidence()` 的 payload 欄位（護欄 AST 檢查監看）。
 - 冷卻放行後，片段錄製要跟著能再錄一次（同一段程式碼，一起做比較省事）。
+
+---
+
+## 11.【工具已進來、成果沒收割】AcT 重訓與降誤報
+
+2026-08-03 把 `feat/ai-act-retrain` 的 21 顆非 hazard commit 移植進 main
+（PR：`feat/act-retrain-onto-main`）。**那一批刻意沒有動 `ai/inference_test.py`
+一個字**——進來的是離線量測工具鏈、AcT 重訓全套、50 份人工逐幀標註與六份評估報告。
+
+所以「AcT 重訓讓誤報大幅下降」這件事，**目前只有工具和數據在 repo 裡，線上行為完全沒變**。
+以下四件事沒做，做的時候要照順序。
+
+### 11-1 ⚠️ 重訓後的權重不在版控裡（最先要解，其他三項都靠它）
+
+[`ai/action_transformer_v2.run.json`](../ai/action_transformer_v2.run.json) 記著那一輪的
+指標（val accuracy 0.9992、fall recall 0.9944），但 `action_transformer_v2.pth`
+**本身沒進 repo**（`.gitignore` 的 `*.pth` 擋掉）。Triton 上跑的仍是舊的
+`action_transformer`。
+
+兩條路：
+- 跟 ychsieh725 要那個 `.pth`
+- 或用 [`ai/train/train_act.py`](../ai/train/train_act.py) 依同一份
+  [`splits.json`](../ai/train/dataset/splits.json) 自己重訓（資料集標註都在 repo 裡了，
+  只缺影片素材 CAUCAFall）
+
+⚠️ `splits.json` 有一條不能踩的規則寫在檔案裡：`S<n+10>` 是 `S<n>` 的水平鏡像、
+**是同一個人**，兩者必須在同一個 split，否則測試集洩漏而且指標看不出異常。
+
+### 11-2 降誤報的兩個常數還沒套進管線
+
+分支實測（13 支單一動作短片）：正常動作幀誤報率 **44.7% → 2.0%**，靠兩個改動：
+
+| 改動 | 現況 |
+|---|---|
+| 遮擋高度門檻 `0.70 → 0.50`（[`ai/inference_test.py:921`](../ai/inference_test.py#L921)）| 未套用，main 仍是 0.70 |
+| 幾何正常時不讓 AcT 單獨發動（[`ai/inference_test.py:1019`](../ai/inference_test.py#L1019) 的 `elif`）| 未套用，AcT 仍可單獨觸發 |
+
+分支量到的代價也要一起看：跌倒片幀召回 67.1% → 41.5%。
+
+**動手前先用這次進來的工具在 5060 Ti 上複驗**，不要照抄 Mac 上的數字：
+
+```bash
+ai/.venv/bin/python ai/batch_eval.py --modes geo-first --occ-height 0.50
+ai/.venv/bin/python ai/tune_occlusion.py      # 掃門檻找取捨點
+```
+
+### 11-3 逐人 AcT 視窗（main 目前沒有）
+
+main 的多人跌倒已經很完整（[`ai/inference_test.py:818-964`](../ai/inference_test.py#L818-L964)：
+ByteTrack + 逐人身高基準 + 連續幀 debounce + 逐人閂鎖/復原 + 同位置去重 + 每人各一筆事件），
+**但 AcT 時序仍然只餵「框最大的那個人」**，是單一 30 幀視窗。
+
+分支的 [`ai/person_tracks.py`](../ai/person_tracks.py) 做到了「每個 track 各自一個
+30 幀視窗與身高基準」，但那是離線版，且它整套多人邏輯比 main 現有的簡略
+（沒有逐人身高、沒有去重、不是每人各一筆事件）。**不要照搬**——要做是把「逐人視窗」
+這一項接到 main 既有的 `person_states` / `idx_to_track` 上，那是重寫不是移植。
+
+⚠️ 接之前先想清楚 Triton 的 batch：現在 AcT 一幀最多問一次，改成逐人之後是 N 人 N 趟。
+只有在「幾何已標記躺平/遮擋」時才問 AcT 的話，實務上每幀通常 0 次，`batch=1` 夠用；
+但如果同時把 11-2 的 `ACT_ALONE_CAN_TRIGGER` 打開，就變成每人每幀都要問，
+人多會掉幀，屆時要先把 AcT 重匯出成動態 batch。
+
+### 11-4 ⚠️ 離線評估的躺平規則跟正式管線不一致
+
+[`ai/fall_chain.py`](../ai/fall_chain.py) 的檔頭寫「常數全部對齊 `inference_test.py`」，
+**但它對齊的是修正前的版本**：
+
+| | 躺平（防線 A）的角度條件 |
+|---|---|
+| `fall_chain.py`（離線，`LYING_RULE_CURRENT`）| `body_angle < 40` |
+| [`ai/inference_test.py:901`](../ai/inference_test.py#L901)（線上）| `min(angle, 180-angle) < 40` |
+
+線上那條是 `249f132` 補的——只寫 `< 40` 會整個漏掉「頭朝左躺」（約 180°）那一半。
+換句話說 **main 現行行為等同 `fall_chain` 裡的 `LYING_RULE_WIDE`**，不是 `CURRENT`。
+
+分支自己量過三種規則（CAUCAFall test split，跌倒幀 181 / 正常影片幀 1583）：
+
+| 規則 | 跌倒幀命中 | 正常幀誤報 |
+|---|---|---|
+| `current`（`<40`）| 16.6% | 5.9% |
+| `aspect`（只看寬高比）| 14.9% | **0.1%** |
+| `wide`（`<40` 或 `>140`，＝**線上現況**）| **22.7%** | 8.0% |
+
+**影響**：拿 `batch_eval.py` / `local_pipeline_eval.py` 算出來的「躺平」會比線上保守，
+數字不能直接當成線上表現。
+
+**為什麼本輪兩邊都不改**：改 `fall_chain` 會讓一起移植進來的六份評估報告數字對不上
+程式碼；改線上則是動偵測行為、而且會丟掉 `249f132` 修的東西。真要收斂時建議的順序是
+先補一組線上規則的離線量測，再決定要不要往 `aspect` 走（那看起來是誤報最低的，
+但召回也最低，要跟 11-2 一起評估）。
 
 ---
