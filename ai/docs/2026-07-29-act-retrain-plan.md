@@ -39,7 +39,9 @@
 | **13 支評估短片**  | `ai/test_demo/Fall*.mp4`、`Pickupobject*.mp4`、`SitDown*.mp4`、`Walk*.mp4` | 跟組員要。**這是唯一有既往數字可對照的基準集，一定要拿到** |
 | **Triton ONNX**    | `ai/triton_repo/*/1/model.onnx`                                                  | 需自行從權重轉出（見下）                                         |
 
-`.gitignore` 只白名單了 `ai/test_demo/test1.mp4`、`test2.mp4`、`test3.mp4` 三支（那是舊的剪接長片，**不適合用來評估**，見第 3.4 節）。
+**評估素材一律不進版控**，要另外取得。`.gitignore` 只白名單了 `ai/test_demo/test1.mp4`、`test2.mp4`、`test3.mp4` 與前端的示範片。
+
+> 2026-08-03 更新（移植進 main 時）：原分支曾於 2026-07-30 刪掉 `test1~3.mp4` 並移除白名單，理由是那三支是舊的剪接長片、不適合評估。**移植進 main 時沒有跟著刪**——main 上還有五處在用它們（`ai/inference_test.py` 連不到後端裝置表時的預設示範來源、`ai/verify_backend_parity.py`、兩份 benchmark 文件），刪了會斷。它們仍然不適合當評估素材（見第 3.4 節），[batch_eval.py](../batch_eval.py) 的 `SKIP_PREFIXES=("test",)` 本來就跳過它們。
 
 ### ⚠ 既有缺口：`ai/export_models.py` 不存在
 
@@ -181,7 +183,7 @@ ai/.venv/bin/python ai/batch_eval.py --modes geo-first --occ-height 0.50
 | **不要看「抓到幾支影片」**           | `FallForwardS2` 幀召回 3.8%（123 幀裡報 4 幀）用這標準算「成功」，但實際上訊號送出去時人早就躺很久了。這個標準會把正確的方案篩掉 |
 | **一律看「幀召回率」與「幀誤報率」** | [batch_eval.py](../batch_eval.py) 已強制輸出 baseline 對照，照它的輸出看                                                            |
 
-另外：`ai/test_demo/test1.mp4`~`test3.mp4` 是舊的**剪接長片**（一支裡混了多段跌倒與正常），[batch_eval.py:51](../batch_eval.py#L51) 用 `SKIP_PREFIXES = ("test",)` 明確跳過它們。不要拿來評估。
+另外：`ai/test_demo/test1.mp4`~`test3.mp4` 是舊的**剪接長片**（一支裡混了多段跌倒與正常），[batch_eval.py:51](../batch_eval.py#L51) 用 `SKIP_PREFIXES = ("test",)` 明確跳過它們。不要拿來評估——它們留在 repo 裡是給別的用途（預設示範來源、benchmark 對照），不是評估素材。
 
 ---
 
