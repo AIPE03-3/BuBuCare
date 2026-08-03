@@ -48,6 +48,7 @@ from ultralytics import YOLO
 # 這支量的是「關鍵點抓得好不好」，跟 AcT 用哪種正規化無關，故固定用 image-norm
 # （bbox-norm 只是同一組點的線性變換，抓不到就是抓不到，換基準不會變出點來）
 from pose_features import is_feature_valid, pose_feature_image_norm
+from fall_chain import person_geometry
 
 # 對齊 inference_test.py:564 的 conf=0.45。門檻不同，選中的人可能就不同，
 # 拿別的值測出來的結論套不回正式管線。
@@ -68,8 +69,7 @@ KEYPOINT_NAMES = [
     "左肩", "右肩", "左肘", "右肘", "左腕", "右腕",
     "左髖", "右髖", "左膝", "右膝", "左踝", "右踝",
 ]
-LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
-LEFT_HIP, RIGHT_HIP = 11, 12
+# 肩 5/6、臀 11/12 的索引在 fall_chain.py，這支不再自己宣告一份
 
 
 def pick_device():
@@ -101,22 +101,6 @@ def select_main_person(boxes_conf, boxes_xywh, conf_threshold):
     return best_idx
 
 
-def body_angle_degrees(keypoints_norm):
-    """肩中點→臀中點的軀幹角度（度）。肩或臀缺點時回 None。
-
-    正式管線 `:697` 用 `< 40°` 判躺平：站著時軀幹接近垂直（角度大），
-    躺著時接近水平（角度小）。缺點會讓這個判斷整個失效，故要單獨報出來。
-    """
-    shoulder_x = (keypoints_norm[LEFT_SHOULDER][0] + keypoints_norm[RIGHT_SHOULDER][0]) / 2.0
-    shoulder_y = (keypoints_norm[LEFT_SHOULDER][1] + keypoints_norm[RIGHT_SHOULDER][1]) / 2.0
-    hip_x = (keypoints_norm[LEFT_HIP][0] + keypoints_norm[RIGHT_HIP][0]) / 2.0
-    hip_y = (keypoints_norm[LEFT_HIP][1] + keypoints_norm[RIGHT_HIP][1]) / 2.0
-    # xyn 為 0 代表該點沒抓到（不是「在畫面左上角」），故 0 一律視為缺點
-    if shoulder_x == 0 or hip_x == 0:
-        return None
-    return float(np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x))))
-
-
 def analyze(result, conf_threshold):
     """把一幀的推論結果抽成評估指標 dict。沒有人時回 person_count=0。"""
     empty = {"person_count": 0, "best_idx": -1}
@@ -139,10 +123,12 @@ def analyze(result, conf_threshold):
     keypoints = keypoints_norm[best_idx]
     feature_34 = pose_feature_image_norm(keypoints)
     _, _, width, height = boxes_xywh[best_idx]
-    angle = body_angle_degrees(keypoints)
-    aspect_ratio = float(width / height) if height else 0.0
-    # 對齊 :697 的躺平判斷（兩條件取聯集）
-    is_lying = bool((angle is not None and angle < 40.0) or aspect_ratio > 1.25)
+    # 幾何判斷走 fall_chain 那一份，不在這裡重算。這支只看輸入品質，
+    # 只要防線 A（躺平）——防線 B 需要跨幀的身高基準，這支沒有那個狀態
+    geometry = person_geometry(keypoints, boxes_xywh[best_idx])
+    angle = geometry["body_angle"]
+    aspect_ratio = geometry["aspect_ratio"]
+    is_lying = geometry["is_lying"]
 
     return {
         "person_count": len(boxes_conf),

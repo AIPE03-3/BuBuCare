@@ -85,7 +85,11 @@ from ultralytics import YOLO
 from pose_features import (
     DEFAULT_FEATURE_NORM, FEATURE_NORMS, empty_feature, is_feature_valid, pose_feature,
 )
-from person_tracks import PersonTrackStore, build_tracker
+from person_tracks import PersonTrackStore, build_tracker, observe_tracks
+from fall_chain import (
+    LEFT_HIP, LEFT_SHOULDER, LYING_ANGLE_DEG, LYING_ASPECT_RATIO,
+    RIGHT_HIP, RIGHT_SHOULDER, person_geometry,
+)
 
 _AI_DIR = Path(__file__).resolve().parent
 DEFAULT_POSE_WEIGHTS = _AI_DIR / "yolo11s-pose.pt"
@@ -95,14 +99,11 @@ DEFAULT_OUT_DIR = _AI_DIR / "pose_eval_out"
 # 以下常數全部對齊 inference_test.py，改任何一個都會讓結果套不回正式管線
 POSE_CONF = 0.45          # :564
 WINDOW_SIZE = 30          # :403 deque(maxlen=30)
-LYING_ANGLE_DEG = 40.0    # :697
-LYING_ASPECT_RATIO = 1.25 # :697
 OCCLUDED_HEIGHT_RATIO = 0.50  # :702（2026-07-29 從 0.70 調降，見 docs/2026-07-29-pipeline-false-alarm-fix.md）
 AI_THINKING_CONF = 0.35   # :744
 DIRECT_TRIGGER_CONF = 0.55  # :749
-
-LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
-LEFT_HIP, RIGHT_HIP = 11, 12
+# LYING_ANGLE_DEG / LYING_ASPECT_RATIO / 關鍵點索引都在 fall_chain.py（正式端共用同一份），
+# 從那裡匯入而不是在這裡再宣告一次
 
 # BGR。與 inference_test.py:767-788 的配色一致，方便跟正式畫面對照
 COLOR_FALL = (0, 0, 255)      # 紅
@@ -415,46 +416,7 @@ def extract_pose_state(result, normal_height_reference, image_height,
     return state
 
 
-def person_geometry(keypoints, box_xywh, box_xyxy, image_height,
-                    height_reference, occluded_height_ratio=OCCLUDED_HEIGHT_RATIO):
-    """單一人物的幾何判斷：躺平（防線 A）、遮擋（防線 B）、軀幹角、寬高比。
-
-    單人與多人兩條路徑共用這一份——寫兩份的話，多人模式修了門檻而單人沒修
-    （或反過來），兩邊數字對不起來時完全查不出是哪邊的問題。
-
-    `height_reference` 是這個人站立時的框高。多人模式下每個 track 各有一份
-    （見 person_tracks.PersonTrack）；單人模式沿用全域那一個。
-    """
-    result = {"is_lying": False, "is_occluded": False, "body_angle": None,
-              "aspect_ratio": 0.0, "height_ratio": None, "y2_ratio": 0.0}
-
-    _, _, box_width, box_height = box_xywh
-    _, _, _, y2 = box_xyxy
-    aspect_ratio = float(box_width / box_height) if box_height else 0.0
-    result["aspect_ratio"] = aspect_ratio
-
-    # 躺平判斷（防線 A，:693-697）
-    shoulder_x = (keypoints[LEFT_SHOULDER][0] + keypoints[RIGHT_SHOULDER][0]) / 2.0
-    shoulder_y = (keypoints[LEFT_SHOULDER][1] + keypoints[RIGHT_SHOULDER][1]) / 2.0
-    hip_x = (keypoints[LEFT_HIP][0] + keypoints[RIGHT_HIP][0]) / 2.0
-    hip_y = (keypoints[LEFT_HIP][1] + keypoints[RIGHT_HIP][1]) / 2.0
-    if shoulder_x != 0 and hip_x != 0:  # xyn 為 0 代表該點沒抓到
-        angle = float(np.abs(np.degrees(np.arctan2(hip_y - shoulder_y, hip_x - shoulder_x))))
-        result["body_angle"] = angle
-        if angle < LYING_ANGLE_DEG:
-            result["is_lying"] = True
-    if aspect_ratio > LYING_ASPECT_RATIO:
-        result["is_lying"] = True
-
-    # 遮擋判斷（防線 B，:701-702）：人突然「變矮」且位置偏下 → 可能倒在遮蔽物後面
-    if height_reference is not None:
-        # 原始數值一併留下，讓離線掃描能重算不同門檻，不必為了試一個參數就重跑推論
-        result["height_ratio"] = float(box_height / height_reference)
-        result["y2_ratio"] = float(y2 / image_height) if image_height else 0.0
-        if result["height_ratio"] < occluded_height_ratio and result["y2_ratio"] > 0.5:
-            result["is_occluded"] = True
-
-    return result
+# person_geometry 已移到 fall_chain.py（正式管線也要用同一份），此處只保留匯入
 
 
 def run_act(act_model, window, device):
@@ -484,53 +446,7 @@ def run_act_batch(act_model, windows, device):
     return list(zip(classes.cpu().tolist(), confidences.cpu().tolist()))
 
 
-def observe_tracks(result, tracker, store, image_height, occluded_height_ratio,
-                   feature_norm, frame_index):
-    """跑追蹤器、逐人抽特徵與幾何，更新每人狀態。
-
-    回傳 [(PersonTrack, 幾何 dict, box_xyxy), …]，只含這一幀有看到的人。
-    """
-    if result.boxes is None or len(result.boxes) == 0 or result.keypoints is None:
-        store.update({}, frame_index)
-        return []
-
-    tracked = tracker.update(result.boxes.cpu())
-    if len(tracked) == 0:
-        store.update({}, frame_index)
-        return []
-
-    keypoints_all = result.keypoints.xyn.cpu().numpy()
-    boxes_xywh = result.boxes.xywh.cpu().numpy()
-    boxes_xyxy = result.boxes.xyxy.cpu().numpy()
-    boxes_xyxyn = result.boxes.xyxyn.cpu().numpy()
-
-    observations, geometry_by_id, box_by_id = {}, {}, {}
-    for row in tracked:
-        # BYTETracker 回傳 [x1,y1,x2,y2, track_id, score, cls, det_idx]，
-        # 最後一欄是原始偵測索引——靠它把 track 對回同一個人的關鍵點
-        track_id, detection_index = int(row[4]), int(row[7])
-        if detection_index >= len(keypoints_all):
-            continue
-        keypoints = keypoints_all[detection_index]
-        feature = pose_feature(keypoints, boxes_xyxyn[detection_index], feature_norm)
-        existing = store.tracks.get(track_id)
-        geometry = person_geometry(
-            keypoints, boxes_xywh[detection_index], boxes_xyxy[detection_index],
-            image_height, existing.height_reference if existing else None,
-            occluded_height_ratio,
-        )
-        observations[track_id] = {
-            "feature": feature,
-            "box_height": float(boxes_xywh[detection_index][3]),
-            "is_lying": geometry["is_lying"],
-            "valid": is_feature_valid(feature),
-        }
-        geometry_by_id[track_id] = geometry
-        box_by_id[track_id] = boxes_xyxy[detection_index]
-
-    seen = store.update(observations, frame_index)
-    return [(track, geometry_by_id[track.track_id], box_by_id[track.track_id])
-            for track in seen]
+# observe_tracks 已移到 person_tracks.py（正式管線也要用同一份）
 
 
 def evaluate_tracks(act_model, observed, device, mode):
