@@ -193,6 +193,53 @@ _FALL_DEDUP_SEC = float(cfg("FALL_DEDUP_SEC", "30"))
 # 中心距離可以，因為人體是實心的：**兩個不同的人不可能中心點只差半個身位**。
 # 實測那組換號的中心距離是 0.41 個身位，遠低於「並排兩人」的 1.0 個身位。
 _FALL_DEDUP_DIST = float(cfg("FALL_DEDUP_DIST", "0.6"))
+# ── 相機級冷卻：ByteTrack 起不來時那條退路的閂鎖替代品 ─────────────────────────
+# 原本那條退路用 `vlm_triggered` 這個只進不出的旗標，**整個 worker 生命週期只發一次**。
+# 影片檔時代沒事（播完就收工），接真攝影機之後 worker 一跑好幾天，等於第一次觸發
+#（很可能是誤報）之後那台相機就再也不會示警，片段也只錄得到一支。
+# 改動前等於「無限長」，所以預設值往長的抓：3 分鐘。
+# ⚠️ 只有 `person_tracker is None` 時才吃這個。有追蹤器時走 per-track 閂鎖
+#（st["fired"] + _FALL_RECOVERY_FRAMES 解鎖），把相機級冷卻套上去會擋掉冷卻期間
+# **別人**的跌倒 —— 那正是 docs/NEXT_STAGE.md 第 5 項當初不敢做冷卻的理由。
+_FALL_COOLDOWN_SEC = float(cfg("FALL_COOLDOWN_SEC", "180"))
+# 防線 B 參考身高的校正窗：從「這一次校正的起點」起算的第幾幀之間取樣。
+# 為什麼是區間而不是「第一次看到人就記」：開頭幾幀常是還沒穩定的畫面/半個人，
+# 太早記會記到爛值；太晚記則整段時間防線 B 都不成立。原本寫死 10~40，語意不變。
+_HREF_CALIB_FROM, _HREF_CALIB_TO = 10, 40
+
+
+def _in_calibration_window(frame_count, calib_frame0):
+    """現在這幀落不落在參考身高的校正窗內。
+
+    ⚠️ 這裡吃的是「相對於 calib_frame0 的幀齡」而不是絕對的 frame_count。
+    原本寫死 `frame_count > 10 and frame_count < 40`，而 frame_count 只進不出 ——
+    換來源時光把 normal_h_reference 設回 None **是無效的**：過了第 40 幀就再也
+    進不了校正窗，參考值會永遠停在 None，防線 B 從「用舊值誤判」變成「整條失效」。
+    所以重設參考值時一定要連 calib_frame0 一起推到當下（見主迴圈的畫面尺寸變化分支）。
+    """
+    age = frame_count - calib_frame0
+    return _HREF_CALIB_FROM < age < _HREF_CALIB_TO
+
+
+def _fallback_rearm(armed, recovery_frames, falling, cooldown_until, now):
+    """無追蹤器那條退路的「重新武裝」判斷。回傳 (armed, recovery_frames)。
+
+    規則刻意與 per-track 那條一致（見主迴圈 st["recovery"] 那段）：**先回到正常**
+    才解鎖，只是主體從「這個人」換成「整台相機」。純看時間的話，人倒在地上沒人處理時
+    會每 _FALL_COOLDOWN_SEC 補一筆洗版，而且會出現「追蹤器有起來就不重複提醒、
+    追蹤器掛了反而週期性提醒」這種說不通的差異。
+
+    冷卻沒到期時**不清 recovery_frames**：清掉的話冷卻一到期又要從頭數 90 幀，
+    等於冷卻與恢復兩個條件串起來變成加總，不是本意。
+    """
+    if armed:
+        return True, 0      # 已武裝時計數沒有意義，歸零免得 worker 跑幾天累成天文數字
+    if falling:
+        return armed, 0
+    recovery_frames += 1
+    if recovery_frames >= _FALL_RECOVERY_FRAMES and now >= cooldown_until:
+        return True, 0
+    return False, recovery_frames
 
 
 def _same_spot(a, b):
@@ -565,14 +612,22 @@ def camera_worker(camera_id, video_source):
     clip_s3_key = None
 
     frame_window = deque(maxlen=30)
-    vlm_triggered = False
+    # ── 事件冷卻（取代原本的 vlm_triggered 一次性閂鎖）──────────────────────
+    # 粒度＝每台相機 × 每種事件類型：worker 本來就一路相機一個，所以 dict 的 key 是
+    # 事件類型（目前值域只有 "fall"，見 route_by_confidence 的契約說明）。
+    fall_cooldown_until = {}   # event_type -> 冷卻到期的 epoch 秒
+    # 下面兩個只有「沒有追蹤器」那條退路在用（有追蹤器走 per-track 閂鎖，見 person_states）。
+    cam_armed = True           # 現在允不允許發報
+    cam_recovery_frames = 0    # 連續幾個處理幀判定非跌倒（與 st["recovery"] 同語意）
     vlm_report = "Waiting for alert..."
-    
+
     last_pose_feat = np.zeros(34, dtype=np.float32)
     has_seen_person = False
     last_valid_annotated_frame = None
     frame_count = 0
     normal_h_reference = None
+    calib_frame0 = 0           # 這一次校正窗的起點（見 _in_calibration_window）
+    last_frame_shape = None    # (h, w)：換攝影機／改構圖／換解析度重連的偵測依據
     triton_down_warned = False  # Triton 斷線降級提示只印一次，避免逐幀刷屏
     _multi_log_t = 0.0          # 上次印「多人逐人判定」的時刻（節流用，見下方主迴圈）
     # ── 多人分案狀態（每路相機各自一份）──────────────────────────────────
@@ -648,7 +703,10 @@ def camera_worker(camera_id, video_source):
                 if pre_clip_buffer.maxlen != _max_pre_frames:
                     pre_clip_buffer = deque(pre_clip_buffer, maxlen=_max_pre_frames)
                 # 錄到一半斷線：後段會缺一塊，硬接起來就是時間跳斷的假片段。中止本次錄影。
-                # vlm_triggered 仍為 True，維持現有「重連不重複發報」的性質不變。
+                # 事件冷卻（fall_cooldown_until / cam_armed / cam_recovery_frames）
+                # **刻意一個都不重設**：網路抖一下不該讓同一起事件重複發報。這是「不做」，
+                # 不是漏改 —— 原本這裡保留 vlm_triggered 就是同一個理由。
+                # 冷卻期間沒有處理幀，cam_recovery_frames 自然不會累積，語意也正確。
                 if is_recording_post:
                     print(f"🎞️ [{camera_id}] 片段錄製中斷線，中止本次後段錄影（避免拼出時間跳斷的片段）")
                     is_recording_post = False
@@ -663,6 +721,8 @@ def camera_worker(camera_id, video_source):
                 # 別讓中斷時間污染下一段區間 FPS（否則會印出荒謬的 <1 fps 像是退化）。
                 # normal_h_reference / frame_count / ever_detected_fall / 六個偵測器物件
                 # 一律保留：相機沒換人也沒移位，重設只會讓防線失效或對同一起事件重複發報。
+                # 重連後解析度真的變了（協商到別的 profile、或換了一台相機）的話，
+                # 主迴圈的「畫面尺寸變化」分支會接手重新校正 —— 這裡不必也不該預判。
                 _fps_t0 = time.time(); _fps_n = 0
                 print(f"♻️ [{camera_id}] 時序視窗已清空，重新累積 30 幀後恢復 AcT 判定")
                 continue
@@ -721,6 +781,32 @@ def camera_worker(camera_id, video_source):
             continue
 
         img_h, img_w, _ = frame.shape
+
+        # ── 畫面尺寸變了：換攝影機／改構圖／以不同解析度重連 ────────────────────
+        # 防線 B 的參考身高是「像素高度」，換了尺寸就整個沒有意義：舊值偏大 → 每個人都
+        # 矮於門檻 → 畫面永遠紅燈，而且從畫面上完全看不出原因（NEXT_STAGE.md 9-3）。
+        # 重設參考值時 **一定要連 calib_frame0 一起推到當下**，否則進不了校正窗，
+        # 參考值會永遠停在 None（理由見 _in_calibration_window 的 docstring）。
+        if last_frame_shape is not None and last_frame_shape != (img_h, img_w):
+            normal_h_reference = None
+            calib_frame0 = frame_count
+            # 逐人參考身高同樣是用舊尺寸量的，只清全域等於沒修（防線 B 優先吃 st["h_ref"]）。
+            # 但 fired / label / lying 一個都不准動：清掉等於忘記「他已經發過事件」，
+            # 人一回到畫面就會重複發報。
+            for _st in person_states.values():
+                _st["h_ref"] = None
+                _st["h_frames"] = 0
+            # 片段緩衝裡會混著兩種尺寸的幀，而 write_event_clip() 是拿第一幀的寬高開
+            # 編碼器的 —— 混尺寸直接編碼失敗。處置照斷線重連分支的既有做法。
+            pre_clip_buffer.clear()
+            if is_recording_post:
+                print(f"🎞️ [{camera_id}] 畫面尺寸變化，中止本次後段錄影（混尺寸的幀編不出片段）")
+                is_recording_post = False
+                pre_clip_snapshot = None
+                post_clip_buffer = []
+            print(f"📐 [{camera_id}] 畫面尺寸由 {last_frame_shape[1]}x{last_frame_shape[0]} "
+                  f"變為 {img_w}x{img_h} → 防線 B 參考身高重新校正")
+        last_frame_shape = (img_h, img_w)
 
         # ── FPS 量測：只數「真的進到推論」的幀（跳過的幀不算），每區間印一次 ──
         _fps_n += 1
@@ -869,8 +955,13 @@ def camera_worker(camera_id, video_source):
                         #   直接低於 0.70 而誤判。這是 docs/NEXT_STAGE.md 的 9-3「缺陷三」那個
                         #   既有問題的擴大版（參考值只校準一次、換來源不重設），不是新機制。
                         #   既有的 `y2 > img_h*0.5` 條件仍在，擋掉一部分「遠處站著的人」
-                        #  （框底落在畫面上半）。真要修，要跟缺陷三一起改，不在本次範圍。
-                        if normal_h_reference is None and frame_count > 10 and frame_count < 40: normal_h_reference = h_box
+                        #  （框底落在畫面上半）。真要修，要跟逐人 h_ref 一起改，不在本次範圍。
+                        # 2026-08-03：缺陷三（換來源不重設）已修 —— 校正窗改成相對於
+                        #   calib_frame0，換來源時由上面的「畫面尺寸變化」分支重開一次窗。
+                        #   ⚠️ 只把 normal_h_reference 設回 None **不夠**：frame_count 只進不出，
+                        #   過了第 40 幀就再也進不了這一行，參考值會永遠是 None、防線 B 整條失效。
+                        if normal_h_reference is None and _in_calibration_window(frame_count, calib_frame0):
+                            normal_h_reference = h_box
 
                         # ── 第 2 趟：防線 A / B 對「每一個通過門檻的人」各算一次 ──────
                         # 原本兩道防線只算 best_idx（信心×面積最大的那個人）一個人，畫面裡
@@ -1018,6 +1109,25 @@ def camera_worker(camera_id, video_source):
                 if len(frame_window) < 30 or is_ai_thinking_fall or is_occluded_fall: should_trigger_fall = True
             elif len(frame_window) == 30 and pred_class == 0 and act_confidence > 0.55: should_trigger_fall = True
 
+        # ── 事件類型：模組 I（座椅滑落）已刪除，"chair_slip" 不再產生，這裡恆為 "fall" ──
+        # 提到發事件迴圈外面，是因為冷卻的粒度是「每台相機 × 每種事件類型」，
+        # 組 _fire_list 之前就要拿得到這個 key。它是傳給 route_by_confidence() 的**值**，
+        # 不是 payload 的欄位名，護欄的 AST 檢查看的是 keys，不受影響。
+        event_label = "fall"
+
+        # ── 退路路徑（ByteTrack 起不來）的重新武裝 ──────────────────────────
+        # 有追蹤器時整段跳過：那條走 per-track 閂鎖（st["fired"] + 站起來解鎖），
+        # 相機級冷卻套上去會擋掉冷卻期間**別人**的跌倒。
+        if person_tracker is None:
+            _was_armed = cam_armed
+            cam_armed, cam_recovery_frames = _fallback_rearm(
+                cam_armed, cam_recovery_frames, should_trigger_fall,
+                fall_cooldown_until.get(event_label, 0.0), time.time(),
+            )
+            if cam_armed and not _was_armed:
+                print(f"ℹ️ [{camera_id}] 冷卻已過且畫面回到正常 {_FALL_RECOVERY_FRAMES} 個處理幀"
+                      f"，解除本路相機的 {event_label} 事件閂鎖")
+
         # ── 這一幀要為「哪些人」各發一筆事件 ────────────────────────────────
         # 閘門條件與上面單筆版完全一樣（window 未滿 / AcT 也覺得跌倒 / 遮擋難判），
         # 只是逐人套用。AcT 仍是單人序列（只餵 best_idx），所以 is_ai_thinking_fall
@@ -1090,12 +1200,13 @@ def camera_worker(camera_id, video_source):
         # =========================================================================
         # 發哪幾筆事件：
         #   · 有追蹤器 → tracks_to_fire 裡每個人各一筆（同時段兩人跌倒就是兩筆）
-        #   · 沒追蹤器（沒裝 lap、或 MULTI_PERSON_TRACK=0）→ 位元級退回原本的
-        #     「每個 worker 一次性閂鎖、只發一筆」行為
+        #   · 沒追蹤器（沒裝 lap、或 MULTI_PERSON_TRACK=0）→ 相機級冷卻閂鎖，一次一筆。
+        #     原本這裡是 `not vlm_triggered`（只進不出，整個 worker 生命週期只發一次），
+        #     接真攝影機後等於第一次觸發之後那台相機就再也不會示警。
         if person_tracker is not None:
             _fire_list = list(tracks_to_fire)
         else:
-            _fire_list = [None] if (should_trigger_fall and not vlm_triggered) else []
+            _fire_list = [None] if (should_trigger_fall and cam_armed) else []
 
         for _fire_tid in _fire_list:
             # 🧠 1. 解析並對齊 device_id 為 int
@@ -1104,9 +1215,7 @@ def camera_worker(camera_id, video_source):
             except ValueError:
                 numeric_id = 1
 
-            # 🧠 2. 對齊事件型態字串
-            # 模組 I（座椅滑落）已刪除，"chair_slip" 不再產生，這裡恆為 "fall"。
-            event_label = "fall"
+            # 🧠 2. 事件型態字串已在上面（組 _fire_list 之前）算好：event_label
 
             # 🧠 3. 基礎 YOLO 推理數據規格化
             final_score = float(act_confidence) if act_confidence > 0 else 0.70
@@ -1146,7 +1255,13 @@ def camera_worker(camera_id, video_source):
                 ).start()
 
             if producer is not None:
-                vlm_triggered = True
+                # 冷卻：每台相機 × 每種事件類型記一次「最後發報時刻 + 冷卻長度」。
+                # 有追蹤器時這個值不會被 _fire_list 讀（那條走 per-track 閂鎖），只是保留
+                # 這台相機這種事件的最後發報時刻 —— 不是漏接，是刻意兩條路徑共用同一份紀錄。
+                fall_cooldown_until[event_label] = time.time() + _FALL_COOLDOWN_SEC
+                if person_tracker is None:
+                    cam_armed = False
+                    cam_recovery_frames = 0
                 if _p_state is not None:
                     _p_state["fired"] = True      # 這個人的閂鎖：站起來夠久才會被解開
 
@@ -1193,6 +1308,10 @@ def camera_worker(camera_id, video_source):
                 if _fire_tid is not None:
                     print(f"🚨 [{camera_id}] 第 {_p_num} 位（track {_fire_tid}）跌倒事件已外發"
                           f"（topic={topic}，連續 {_FALL_CONSECUTIVE_FRAMES} 幀判定成立）")
+                else:
+                    # 退路路徑（無追蹤器）以前完全不印，冷卻放行的第二筆事件在 log 上看不出來。
+                    print(f"🚨 [{camera_id}] 跌倒事件已外發（topic={topic}，無追蹤器模式）"
+                          f"，接下來 {_FALL_COOLDOWN_SEC:.0f} 秒進入冷卻")
                 # 畫面上的 VLM 狀態依落點提示：快速道 vs 送二審佇列。
                 vlm_report = "Fast-track Sent" if topic == TOPIC_PROCESSED_REPORTS else "VLM Queued..."
 
