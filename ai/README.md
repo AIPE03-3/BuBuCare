@@ -35,6 +35,8 @@
 | Triton 這層 serving 值不值得 | [`BENCHMARK_TRITON_VS_LOCAL.md`](BENCHMARK_TRITON_VS_LOCAL.md) |
 | 重訓迴路怎麼跑 | [`MLOPS.md`](MLOPS.md) |
 | Triton 上哪個模型是哪個版本 | [`triton_repo/README.md`](triton_repo/README.md) |
+| 跌倒判得準不準、誤報從哪來 | [`docs/`](docs/) 六份評估報告（2026-07-28～07-30）|
+| AcT 怎麼重訓、資料集怎麼標的 | [`train/`](train/)、[`docs/2026-07-29-act-retrain-plan.md`](docs/2026-07-29-act-retrain-plan.md) |
 
 ---
 
@@ -91,6 +93,33 @@
 | [`monitor_kafka.py`](monitor_kafka.py) | 看 Kafka 上實際流過什麼訊息 |
 | [`watchdog.py`](watchdog.py) | 顧著推論行程，掛了自動重啟 |
 | [`make_cpu_repo.sh`](make_cpu_repo.sh) | 產 CPU 版的 Triton model repository（GPU vs CPU 對照用）|
+
+### 偵測準確度：離線評估與 AcT 重訓
+
+2026-08-03 從 `feat/ai-act-retrain` 移植進來。**這一整區都不在生產路徑上**——
+`inference_test.py` 不 import 其中任何一個，跑推論不需要它們。
+它們是「要調門檻/換模型前，先拿數據說話」用的。
+
+| 檔案 | 做什麼 |
+|---|---|
+| [`batch_eval.py`](batch_eval.py) | **最常用的入口**。一整個資料夾的短片跑完，直接吐幀召回率／幀誤報率 |
+| [`local_pipeline_eval.py`](local_pipeline_eval.py) | 完整跌倒判斷鏈（pose + AcT）的本機重現，可即時看畫面、可人工標註算延遲 |
+| [`local_pose_eval.py`](local_pose_eval.py) | 只看骨架抓得準不準，不依賴 Triton |
+| [`tune_occlusion.py`](tune_occlusion.py) | 掃遮擋高度門檻，找誤報／召回的取捨點 |
+| [`fall_chain.py`](fall_chain.py) | 幾何防線 A（躺平）/ B（遮擋）的離線版定義，上面三支共用 |
+| [`pose_features.py`](pose_features.py) | AcT 34 維輸入的離線版定義（image / bbox 兩種正規化）|
+| [`person_tracks.py`](person_tracks.py) | 離線評估的多人追蹤：每個人各一個 30 幀視窗與身高基準 |
+| [`train/`](train/) | AcT 重訓全套：建資料集、抽特徵、訓練、評估、匯出 ONNX、畫圖 |
+| [`train/dataset/labels/`](train/dataset/labels/) | **50 份人工逐幀標註**（CAUCAFall）。腳本產不出來，弄丟要重花數小時 |
+| [`docs/`](docs/) | 六份評估報告，每次調整前後的數字都在裡面 |
+| [`action_transformer_v2.run.json`](action_transformer_v2.run.json) | 重訓那一輪的紀錄。⚠ **權重本身不在版控裡** |
+
+> ⚠️ **`fall_chain.py` / `pose_features.py` 是離線版，不是生產版。**
+> 生產的那份仍寫在 [`inference_test.py`](inference_test.py) 主迴圈裡，兩邊是**各自一份**。
+> 已知落差：`fall_chain` 的躺平規則是 `body_angle < 40`，生產版是
+> `min(angle, 180-angle) < 40`（多抓「頭朝左躺」那一半）。
+> 所以離線算出來的「躺平」比線上保守，拿這些數字回推線上行為時要記得。
+> 詳見 [`../docs/NEXT_STAGE.md`](../docs/NEXT_STAGE.md) 的「AcT 重訓成果的收割狀態」。
 
 ---
 
