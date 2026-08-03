@@ -118,8 +118,20 @@ ai/*.runtime.yaml
 # 擋這條的理由：這裡沒有任何一項是「不擋就會弄丟」的，但只要有人 git add . 就會把
 # 182M 的 mp4 推上去——大檔一旦進了歷史，之後要清得改寫歷史，會波及所有人的分支。
 # ⚠️ 若日後認定 labels_draft/ 的標註是人工成果、屬於「這批數字是拿什麼標的」的證據
-#    （理由同上面 ai/dataset_splits/ 那段），就在這行下面補 !ai/train/dataset/labels_draft/
-ai/train/dataset/
+#    （理由同上面 ai/dataset_splits/ 那段），就在下面的白名單區補 !ai/train/dataset/labels_draft/
+#
+# 寫成 `dataset/*` 而不是 `dataset/`，是因為 git **不會走進被排除的目錄**——
+# 寫 `dataset/` 的話下面那幾條 `!` 一條都不會生效（實際踩過：2026-08-03 移植
+# AcT 重訓資料集時，50 份人工標註雖然已追蹤所以還在，但新增第 51 份會被靜默跳過，
+# 正好就是上面第 89 行警告「弄丟要再花數小時」的那種東西）。
+ai/train/dataset/*
+# 人工逐支看影片標出來的跌落區間，腳本產不出來（200KB）
+!ai/train/dataset/labels/
+# 哪幾個受試者分到 train/val/test。⚠ S<n+10> 是 S<n> 的水平鏡像、是同一個人，
+# 必須同一個 split，否則測試集洩漏而且指標看不出異常——這份是唯一的紀錄
+!ai/train/dataset/splits.json
+!ai/train/dataset/README.md
+!ai/train/dataset/FLIP_MANIFEST.md
 
 # agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
 ai/agent_shadow.jsonl
