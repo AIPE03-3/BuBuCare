@@ -38,6 +38,7 @@ sys.path.insert(0, str(_AI_DIR))
 from local_pipeline_eval import (  # noqa: E402
     WINDOW_SIZE, ActionTransformer, parse_label_file, pick_device,
 )
+from pose_features import DEFAULT_FEATURE_NORM, FEATURE_NORMS  # noqa: E402
 import dataset_utils as du  # noqa: E402
 
 DEFAULT_DATASET = _AI_DIR / "train" / "dataset"
@@ -104,15 +105,16 @@ def make_windows(features, spans, stride, valid=None, min_valid_ratio=0.0):
 
 
 def build_split(dataset_dir, splits, split_name, stride, min_valid_ratio=0.0,
-                exclude_flipped=False):
+                exclude_flipped=False, feature_norm=DEFAULT_FEATURE_NORM):
     """組出一個 split 的訓練樣本。回傳 (X, y, 統計 dict)。
 
     `exclude_flipped` 用來做鏡像增強的消融——不排除的話，無從證明鏡像有沒有貢獻。
     """
-    features_dir = Path(dataset_dir) / "features"
+    features_dir = du.features_dir(dataset_dir, feature_norm)
     all_windows, all_labels = [], []
     stats = {"videos": 0, "missing_features": [], "missing_labels": [],
-             "draft_labels": set(), "dropped_low_detection": 0, "excluded_flipped": 0}
+             "draft_labels": set(), "dropped_low_detection": 0, "excluded_flipped": 0,
+             "wrong_norm": []}
 
     for name in du.split_files(splits, split_name):
         stem = Path(name).stem
@@ -133,6 +135,11 @@ def build_split(dataset_dir, splits, split_name, stride, min_valid_ratio=0.0,
             stats["draft_labels"].add(du.label_source_stem(stem))
 
         stored = np.load(feature_path)
+        # 目錄名與內容不符時擋下來。混用兩種正規化訓練出的模型完全沒有意義，
+        # 但數值上看不出異常（都是 34 維 float32），不主動檢查就會靜默通過
+        if du.read_feature_norm(stored) != feature_norm:
+            stats["wrong_norm"].append(stem)
+            continue
         features = stored["features"]
         if len(features) < WINDOW_SIZE:
             continue
@@ -188,6 +195,9 @@ def parse_args():
     parser.add_argument("--exclude-flipped", action="store_true",
                         help="訓練時排除鏡像檔（做資料增強的消融對照）")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--feature-norm", default=DEFAULT_FEATURE_NORM, choices=FEATURE_NORMS,
+                        help="讀哪一份特徵：image=dataset/features／bbox=dataset/features-bbox。"
+                             "會寫進 run.json，推論端必須用同一個")
     return parser.parse_args()
 
 
@@ -210,7 +220,17 @@ def main():
     for split_name in ("train", "val"):
         X, y, stats = build_split(dataset_dir, splits, split_name, args.stride,
                                   args.min_valid_ratio,
-                                  exclude_flipped=args.exclude_flipped)
+                                  exclude_flipped=args.exclude_flipped,
+                                  feature_norm=args.feature_norm)
+        # 正規化不符一律當致命錯誤，不是警告。混著訓練出來的權重毫無意義，
+        # 但看起來一切正常——讓它跑完只會產生一份沒人知道是壞的模型
+        if stats["wrong_norm"]:
+            print(f"❌ {split_name} 有 {len(stats['wrong_norm'])} 支 npz 的 feature_norm "
+                  f"不是 {args.feature_norm}：{', '.join(stats['wrong_norm'][:5])}"
+                  f"{' …' if len(stats['wrong_norm']) > 5 else ''}", file=sys.stderr)
+            print(f"   請重跑：extract_features.py --feature-norm {args.feature_norm} "
+                  f"--overwrite", file=sys.stderr)
+            return 1
         if X is None:
             print(f"❌ {split_name} 沒有任何可用樣本", file=sys.stderr)
             if stats["missing_features"]:
@@ -323,6 +343,9 @@ def main():
                     "train_fall": int((train_y == CLASS_FALL).sum()),
                     "val_fall": int((val_y == CLASS_FALL).sum())},
         "exclude_flipped": args.exclude_flipped,
+        # 這顆權重只在這個正規化下有意義。推論端（inference_test 的 ACT_FEATURE_NORM、
+        # local_pipeline_eval 的 --feature-norm）必須設成一樣，evaluate_act 會擋不一致
+        "feature_norm": args.feature_norm,
         "history": history,
         "splits_rules": splits["rules"],
     }
