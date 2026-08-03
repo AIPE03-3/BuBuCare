@@ -1,6 +1,6 @@
 {
   "created_at": "2026-07-29T19:30:35",
-  "weights": "/Users/xieyuquan/Documents/BuBuCare/aipe03-3/ai/action_transformer_v2.pth",
+  "weights": "ai/action_transformer_v2.pth",
   "best_epoch": 22,
   "val": {
     "loss": 0.008358237653737888,
