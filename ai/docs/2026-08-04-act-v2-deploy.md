@@ -23,6 +23,11 @@
 
 一句話：**v1 在該報的時候不報（test8）、不該報的時候報（test6 早了 6 秒、test7 燒了 10 秒），v2 三項都修好了。**
 
+在 CAUCAFall test split（30 支、有人工逐幀標註）的正式評分上，同一個方向也成立
+——正式管線模式下**正常影片誤報 38.3% → 4.9%、跌倒召回 23.8% → 41.1%**，
+而且 v2 是**第一次**讓 AcT 的誤報低於「AcT 完全停用」的純幾何基準（5.8%）。
+詳見第五之二節。
+
 ---
 
 ## 一、做了什麼
@@ -231,12 +236,79 @@ Triton 容器啟動於 `2026-07-29T09:02:33Z`，而 `config.pbtxt` 裡
 - **樣本數小。** 六支有效影片、三場景，其中真跌倒事件只有 3 次（test6、test7、test8 各一段）。
   方向可信，倍數不可外推。
 - **`test8` 的 15.97s 那一幀兩版都報**，是幾何觸發，跟 AcT 無關。
-- **沒有做隔離評估。** CAUCAFall 影片不在這台機器上
-  （`ai/train/dataset/videos/` 是空的、沒有任何 `.npz` 特徵快取），所以
-  `ai/train/evaluate_act.py` 跑不起來 —— 那才是能跟重訓報告數字直接對照的評估。
-  影片備齊後補跑，見下方「還沒做的」。
 - `ai/batch_eval.py` 在這台機器上沒有用：它的 `SKIP_PREFIXES = ("test",)` 會把
   `test_demo/` 八支全部跳過，找不到目標直接 return 1。
+
+---
+
+## 五之二、隔離評估（有人工幀級標註的正式評分）
+
+CAUCAFall 素材於 2026-08-04 補齊後跑的。這是唯一能跟
+[重訓報告](2026-07-29-act-retrain-results.md)數字直接對照的評估。
+
+### 素材與流程
+
+100 支原始 CAUCAFall（10 動作 × 10 受試者）放 `ai/train/train_data/`，
+扁平複製進 `ai/train/dataset/videos/`。
+
+> ⚠️ **刻意沒有跑 `ai/train/build_dataset.py`。** 它會重寫 `splits.json`、
+> `README.md`、`FLIP_MANIFEST.md` 三個**已進版控**的檔案，而現有的 `splits.json`
+> 已經是完整正確的（train 100 含鏡像 / val 20 / test 30）。這次只有 100 支原始檔
+> （鏡像是訓練增強、評估用不到，且 repo 裡沒有 `flip_videos.py` 可重產），
+> 重跑會把 train 從 100 改寫成 50，等於用比較差的中繼資料覆蓋正確的。
+
+```bash
+ai/.venv/bin/python ai/train/extract_features.py --splits test
+#   → 30/30 完成，pose 偵測率 83%~100%
+ai/.venv/bin/python ai/train/evaluate_act.py \
+    --models ai/action_transformer.pth ai/action_transformer_v2.pth
+```
+
+test split：受試者 S2/S5/S10 共 30 支（跌倒 15 / 正常 15），鏡像已排除。
+15 支跌倒片的人工逐幀標註全部齊全。
+權重 sha256：v1 `0c912a147c5c` / v2 `4d50397c58f7`。
+完整輸出：`ai/train/eval_results/eval-20260804-151827.{json,md}`。
+
+### 結果：`pipeline_current`（＝正式管線的模式，見發現三）
+
+| 指標 | v1 | **v2** | 純幾何基準 | 方向 |
+|---|---:|---:|---:|---|
+| 跌倒幀召回率 | 23.8% | **41.1%** | 22.0% | 越高越好 |
+| **前跌幀召回率** | 15.6% | **21.9%** | 6.2% | 越高越好（v1 的盲區）|
+| 正常影片誤報率 | 38.3% | **4.9%** | 5.8% | 越低越好 |
+| 跌倒片非跌落段誤報率 | 52.9% | 46.6% | 52.9% | 越低越好 |
+| 平均觸發延遲 | 0.93s | **0.76s** | — | 越低越好 |
+
+**最關鍵的一列是「正常影片誤報率」對上純幾何基準：**
+v1 的 38.3% 比「AcT 完全停用」的 5.8% 還糟 6.6 倍 —— 也就是說**舊模型不只沒幫上忙，
+它是淨負貢獻**。v2 的 4.9% 首次低於純幾何，同時召回是純幾何的 1.9 倍、前跌是 3.5 倍。
+
+### AcT 隔離（把幾何防線拿掉，只看模型本身）
+
+| 指標 | v1 | **v2** |
+|---|---:|---:|
+| 跌倒幀召回率 | 16.1% | **36.9%** |
+| 前跌幀召回率 | 15.6% | **21.9%** |
+| 正常影片誤報率 | 37.1% | **3.8%** |
+| 平均觸發延遲 | 1.73s | **1.06s** |
+
+與[重訓報告](2026-07-29-act-retrain-results.md)的 `37.5% → 1.2%`、`16.7% → 35.5%`
+方向與量級一致。差異是因為那份報告取 **5 次訓練的平均**，這裡是實際上線的
+單一顆權重（seed 42）。**重訓報告的結論在這台機器上重現了。**
+
+### 順帶證實：`geo-first` 該退場
+
+| `pipeline_geo_first` | v1 | v2 |
+|---|---:|---:|
+| 前跌幀召回率 | 6.2% | **0.0%** |
+
+換上 v2 之後，`geo-first` 的前跌召回是 **0**，比純幾何的 6.2% 還差 ——
+因為它要求幾何先成立才讓 AcT 附議，而前跌的幾何特徵接近於零。
+[重訓報告](2026-07-29-act-retrain-results.md)早就預言了這件事。
+
+**正式管線用的是 `current` 不是 `geo-first`（見發現三），所以線上不受影響**，
+但 `ai/local_pipeline_eval.py` 的預設值還停在 `geo-first`，
+拿它的預設值評估會低估 v2。
 
 ---
 
@@ -283,12 +355,7 @@ git status --short                        → 只有 M ai/triton_repo/action_tra
 
 ## 九、還沒做的
 
-1. **隔離評估**（等 CAUCAFall 影片）：影片放 `ai/train/train_data/` →
-   `build_dataset.py` → `extract_features.py --splits test` →
-   `evaluate_act.py --models ai/action_transformer.pth ai/action_transformer_v2.pth`。
-   `ai/train/dataset/labels/` 已有 50 份人工逐幀標註，可算出跌倒召回／**前跌召回**／
-   正常誤報／跌完躺著誤報四項，與重訓報告一比一對照。
-2. **端到端實跑**（本輪刻意不做）：`SINGLE_SOURCE=ai/test_demo/test8.mp4` 走完整條
+1. **端到端實跑**（本輪刻意不做）：`SINGLE_SOURCE=ai/test_demo/test8.mp4` 走完整條
    Kafka → 後端鏈。本輪決定不外發到共用 RDS／S3。
-3. 發現三、四的兩個工具落差（`local_pipeline_eval.py` 預設值、
+2. 發現三、四的兩個工具落差（`local_pipeline_eval.py` 預設值、
    `verify_backend_parity.py` 權重寫死）**本輪只記錄未修**。
