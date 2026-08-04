@@ -29,7 +29,7 @@ def test_預設是本機開發設定_只需給圖檔目錄(monkeypatch, tmp_path
 
     settings = load_settings()
 
-    assert settings.agent_llm == "ollama:qwen3"   # 地端模型，零 API 成本
+    assert settings.agent_llm == "ollama:qwen2.5:7b"   # 地端模型，零 API 成本
     assert settings.image_source == "local"
     assert settings.shadow_mode is False
     assert settings.kafka_in_topic == "nursing-home-alerts"

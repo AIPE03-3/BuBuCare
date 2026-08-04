@@ -18,7 +18,7 @@ Kafka worker、還是未來的 agent)都必須存在、介面不變。
 import os
 
 VLM_BACKEND = os.environ.get("VLM_BACKEND", "ollama")  # 之後可加 "triton"
-VLM_MODEL_NAME = os.environ.get("VLM_MODEL_NAME", "llava:latest")
+VLM_MODEL_NAME = os.environ.get("VLM_MODEL_NAME", "qwen2.5vl:7b")
 
 
 class VLMModel:

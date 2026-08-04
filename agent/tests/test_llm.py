@@ -24,7 +24,7 @@ def test_預設走地端_ollama(settings, spy_init):
     build_chat_model(settings)
 
     assert spy_init[0]["provider"] == "ollama"
-    assert spy_init[0]["model"] == "qwen3"
+    assert spy_init[0]["model"] == "qwen2.5:7b"
     assert spy_init[0]["kwargs"]["base_url"] == "http://localhost:11434"
 
 
