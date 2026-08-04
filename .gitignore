@@ -11,6 +11,7 @@ fulilian.db
 
 # Virtual environments
 .venv
+.venv-backend
 
 # Environment variables (contains secrets)
 .env

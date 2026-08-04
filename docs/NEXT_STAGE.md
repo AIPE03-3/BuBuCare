@@ -10,59 +10,46 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md
 
 ## 待辦總覽
 
-| # | 項目 | 狀態 |
-|---|---|---|
-| 4 | Prometheus 導入 | 📐 **只出設計，未接線**（本檔下方）|
-| 5 | 事件冷卻計時器 | ✅ **2026-08-03 已修**（本檔下方，紀錄待搬進 CHANGELOG）|
-| 9-3 | `normal_h_reference` 換來源不重設 | ✅ **2026-08-03 已修**（見下，紀錄待搬進 CHANGELOG）|
-| 9-4 | 體角判定的前提與俯視佈署不符 | 📋 **已診斷，未修，最需要正視**（見下）|
-| 11 | AcT 重訓成果的收割 | 🧰 **工具與資料進來了，管線沒接、權重沒拿到**（本檔下方）|
+**分級**：🔴 P0＝現在就在漏報／誤判；🟠 P1＝成果做完了沒收割，或收割會炸；
+🟡 P2＝已診斷／已設計，可排期。
+
+| # | 項目 | 分級 | 狀態 |
+|---|---|---|---|
+| 9-4 | 體角判定的前提與俯視佈署不符 | 🔴 P0 | 📋 **已診斷，未修，最需要正視**（見下）|
+| 11 | AcT 重訓成果的收割 | 🟠 P1 | 🧰 **工具與資料進來了，管線沒接、權重沒拿到**（本檔下方）|
+| 12 | agent 二審尚未 cutover | 🟠 P1 | shadow log 停在 7/28、僅 4 筆，證據量不足（本檔下方）|
+| 4 | Prometheus 導入 | 🟡 P2 | 📐 **只出設計，未接線**（本檔下方）|
+| 13 | 離床／輪椅（座椅滑落）| 🟡 P2 | 📌 **本輪只埋伏筆，未實作**（本檔下方）|
 
 已完成並驗證過的（紀錄在 [`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md)）：
 第 1 項 S3 上傳、第 2 項六大防線收斂 + 模組白名單、第 3 項 Triton GPU/CPU 對照、
-第 6 項 agent P2、第 7 項 `stream_channel` 改名、第 8 項偵測畫面推流、
-第 9 項真攝影機實測、第 10 項 MLOps 進版控。
+第 5 項事件冷卻計時器、第 6 項 agent P2、第 7 項 `stream_channel` 改名、
+第 8 項偵測畫面推流、第 9 項真攝影機實測（含 `normal_h_reference` 換來源重設）、
+第 10 項 MLOps 進版控、第 14 項 VLM 二審模型切換至 `qwen2.5vl:7b`。
 
 ---
 
-## 9-3 / 9-4：第 9 項裡兩個**沒修**的缺陷
+## 9-4：第 9 項裡**還沒修**的缺陷
 
-第 9 項整項標【已完成】，但它列的四個缺陷**只修了兩個**。這兩個至今是壞的，
-放在這裡是因為它們是待辦、不是歷史：
+第 9 項整項標【已完成】，它列的四個缺陷中缺陷一、二已修，**缺陷三（`normal_h_reference`
+換來源不重設）也已於 2026-08-03 修掉**（分支 `fix/fall-cooldown-and-href-reset`，完整記錄
+搬進了 [`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項缺陷三）。**只剩缺陷四還沒修**：
 
-| # | 缺陷 | 為什麼還沒修 |
-|---|---|---|
-| 9-3 | 防線 B 的 `normal_h_reference` **只在 worker 開頭 10~40 幀校正一次**，之後永不更新 | ✅ **2026-08-03 已修**，見下方「9-3 已修」 |
-| 9-4 | 防線 A 的體角規則**隱含假設攝影機是水平視角**，但正式環境是公共區域**俯視** | 俯視時站著的人軀幹投影就接近水平，幾何特徵與臥倒完全相同 —— **調門檻無效**。屬模型調校，範圍不小 |
+防線 A 的體角規則**隱含假設攝影機是水平視角**，但正式環境是公共區域**俯視**——俯視時
+站著的人軀幹投影就接近水平，幾何特徵與臥倒完全相同，**調門檻無效**。屬模型調校，範圍不小。
 
-### 9-3 已修（2026-08-03，分支 `fix/fall-cooldown-and-href-reset`）
+**重要旁證**：實測中 AcT 時序分類判「正常」信心 0.93~1.00 **完全正確**，被騙的是兩條
+手寫幾何規則。要調權重時這是依據。完整量測數據（含那組「髖部在影像上比肩膀還高」的座標）
+見 [`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項缺陷四。
 
-畫面尺寸變化（換攝影機／改構圖／以不同解析度重連）時把 `normal_h_reference` 設回 `None`、
-同時把每個 track 的 `h_ref` / `h_frames` 也清掉（逐人參考身高同樣是用舊尺寸量的）。
+---
 
-**動手時才發現、當初的修法方向漏掉的一半**：光把參考值設回 `None` **是無效的**。
-校正窗原本寫死絕對的 `frame_count > 10 and frame_count < 40`，而 `frame_count` 只進不出——
-跑到第 41 幀之後就再也進不了校正窗，參考值會永遠卡在 `None`，防線 B 從「用舊值誤判」
-變成**整條失效**。所以校正窗一併改成相對於 `calib_frame0`（重設當下的幀號），
-抽成 `_in_calibration_window()` 並有回歸測試（`ai/tests/test_fall_gates.py`）。
+## 12.【未拍板】agent 二審尚未 cutover
 
-**還沒解的**：同解析度的斷線重連（相機被撞歪、重新對焦但畫面尺寸沒變）偵測不到，
-仍會沿用舊參考值。要解得靠畫面內容比對，不在這批範圍。
-
-**9-4 的重要旁證**：同一次測試裡，AcT 時序分類判「正常」信心 0.93~1.00 **完全正確**，
-被騙的是兩條手寫幾何規則。要調權重時這是依據。
-
-完整量測數據（含那組「髖部在影像上比肩膀還高」的座標）見
-[`docs/CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項缺陷三、缺陷四。
-
-### 事件一次性閂鎖讓測試很難做 —— 已隨第 5 項一起解掉
-
-`vlm_triggered` 讓每個 worker 生命週期只發一次事件。實測時 AI 啟動 9 秒就被誤觸發、
-把唯一額度用掉，後面真的躺下**完全不會再發事件**，一度以為是事件管線壞了；
-現場調校與驗收測試也等於每測一次就要重啟一次 AI。
-
-2026-08-03 已改成冷卻計時器（見第 5 項）。測跌倒時把 `FALL_COOLDOWN_SEC` 與
-`FALL_RECOVERY_FRAMES` 調小，同一支 AI 就能連續測好幾次。
+正式二審仍是 `vlm_worker.py`（`AGENT_SHADOW=1`）。`ai/agent_shadow.jsonl` 只有 **4 筆、
+停在 2026-07-28**，通過門檻的證據量嚴重不足；`agent/docs/04-open-questions.md` Q4–Q7
+（`uncertain` 的前端呈現、shadow 通過門檻、問答助手範圍、前端請求怎麼到 agent）未拍板。
+系統現況見 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §6.2。
 
 ---
 
@@ -105,37 +92,6 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md
 FastAPI instrumentator，但它跟主 stack 是**兩套不同架構**（nginx + 空殼 python 容器 +
 rsync 部署）。導入時是「把零件搬進主 `docker-compose.yml`」，不是兩套並存，
 否則會養出第三套環境。
-
----
-
-## 5.【2026-08-03 已修】跌倒事件只發一次：改成冷卻計時器
-
-分支 `fix/fall-cooldown-and-href-reset`。紀錄留在這裡是為了接下去的人看得到限制，
-完整版待文件同步那批搬進 [`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md)。
-
-**原本壞在哪**：`ai/inference_test.py` 的 `vlm_triggered` 是 per-worker 的一次性旗標，
-同一路相機**整個行程生命週期只發一次跌倒事件**，片段錄製掛在同一個閂鎖下所以也只錄一支。
-影片檔時代沒事（播完就收工），接真攝影機後 worker 一跑好幾天，等於第一次觸發
-（很可能是誤報）之後那台相機就變成裝飾品。
-
-**動手時才確認的關鍵事實**：這把死鎖**只鎖得到「ByteTrack 起不來」那條退路**。
-多人分案進 main 之後，有追蹤器時走的是 per-track 閂鎖（`st["fired"]` + 站起來
-`FALL_RECOVERY_FRAMES` 個處理幀解鎖），那條早就能重複發報了。所以：
-
-- **冷卻只套退路路徑**（`person_tracker is None`）。相機級冷卻套到有追蹤器那條上，
-  會擋掉冷卻期間**別人**的跌倒 —— 那正是這項當初被擱置的理由，不能自己走回去。
-- **重新武裝＝冷卻到期 `and` 畫面連續 `FALL_RECOVERY_FRAMES` 個處理幀判非跌倒**
-  （`_fallback_rearm()`，有單元測試）。純看時間的話，人倒著沒人處理會週期性洗版，
-  而且會變成「追蹤器有起來就不重複提醒、追蹤器掛了反而每 3 分鐘提醒一次」。
-- `FALL_COOLDOWN_SEC` 未設＝ **180 秒**（改動前等於無限長，保守方向偏長）。
-  粒度是每台相機（worker 本來就一路一個）× 每種事件類型。
-- **斷線重連不重設冷卻**（維持原本保留 `vlm_triggered` 的用意：網路抖動不該重複發報）。
-- 片段錄製**一行都沒改**：它掛在 `is_recording_post`（寫檔後歸零）＋「有沒有進到發事件
-  迴圈」，閂鎖一放行第二支自然錄得到。
-- `route_by_confidence()` 的 payload 欄位一個字沒動。
-
-**已知限制**：`ever_detected_fall` 仍是只進不出（供串流結束總結與巡檢抑制），
-畫面紅框則早已改由 `FALL_DISPLAY_HOLD_SEC` 控制，不受影響。
 
 ---
 
@@ -226,5 +182,52 @@ ByteTrack + 逐人身高基準 + 連續幀 debounce + 逐人閂鎖/復原 + 同�
 程式碼；改線上則是動偵測行為、而且會丟掉 `249f132` 修的東西。真要收斂時建議的順序是
 先補一組線上規則的離線量測，再決定要不要往 `aspect` 走（那看起來是誤報最低的，
 但召回也最低，要跟 11-2 一起評估）。
+
+---
+
+## 13.【伏筆，本輪未實作】離床／輪椅（座椅滑落）
+
+依 [`CLAUDE.md`](../CLAUDE.md) 第一節 2026-07-30 的決定，這兩項要收回來做，
+`ai/modules/` 白名單已放行，但**本輪只寫這節文件**——不動 `ai/modules/`、不動護欄、
+不撈檔案回來。這裡列「未來動工的人一次就對」需要知道的四件事。
+
+### 1. 檔案怎麼取回——只在 git 歷史裡，不在版控中
+
+`bed_exit.py` / `chair_slip.py` 於 `61c9f63` 被刪，`^` 是刪之前那顆（還有檔案的版本）：
+
+```bash
+git show 61c9f63^:ai/modules/bed_exit.py   > ai/modules/bed_exit.py
+git show 61c9f63^:ai/modules/chair_slip.py > ai/modules/chair_slip.py
+```
+
+### 2. 兩個檔的契約狀況完全不同，動工前一定要先確認
+
+`chair_slip.py` **乾淨**：只 `return True/False`，護欄會直接過，就是範本。
+
+`bed_exit.py` **違約**：第 52 行 `producer.send('processed-reports', ...)` 自組 payload
+直送 Kafka，欄位多 `alert_id`/`camera_id`/`severity`/`status`、少 `clip_path`/
+`snapshot_path`——**復活後護欄的 `check_module_no_kafka()` 會直接擋下來**，就算過了護欄，
+沒改的話送到後端也是 422 靜默丟棄。**必須先把 `producer.send(...)` / `producer.flush()`
+整段拿掉，改成只 `return is_leaving_bed`**，外發統一交給主迴圈的 `route_by_confidence()`——
+照 `chair_slip.py` 的樣子做就對了。
+
+### 3. 接進來之前要先修的另一個坑：`rt_detr` 類別對照表
+
+線上 `rt_detr` 鎖 v2，只有 **5 類**（`person`/`chair`/`sofa`/`bed`/`tv`，
+見 `ai/data.yaml`），但 [`ai/triton_detr_client.py:15-20`](../ai/triton_detr_client.py#L15-L20)
+的 `.names` 寫死的是 **COCO 80 類**——`names[cls_id]` 查出來的名字會是錯的
+（例：v2 的 `cls_id=4` 是 `tv`，這裡會查成 COCO 的 `airplane`）。現在不會壞是因為
+唯一會讀這張表的下游（`bed_exit`/`chair_slip`）已刪，沒人在用；離床要查 `bed`、
+輪椅要查 `chair`，**兩者都吃這顆對照表**，復活前一定要先把 `names` 改成讀
+`ai/data.yaml` 的類別映射，不能假設它是 COCO。
+
+### 4. 復活模組時，三件事缺一不可（CLAUDE.md 已規定）
+
+1. 改 `CLAUDE.md` 的白名單表，寫清楚為什麼收回這個決定
+2. 改 [`scripts/check_guardrails.py`](../scripts/check_guardrails.py) 的 `MODULES_ALLOW`
+3. **確認該模組不會自組 payload 外發**，外發一律回主迴圈的 `route_by_confidence()`
+   （範本是 `chair_slip.py` 的做法）——`check_module_no_kafka()` 會機器強制第 2、3 類，
+   但**護欄只擋 Kafka 外發，不會幫你檢查偵測邏輯對不對、或事件會不會誤報**，不要因為
+   有機器擋就不看。
 
 ---
