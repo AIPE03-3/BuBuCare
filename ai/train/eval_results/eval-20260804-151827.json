@@ -1,0 +1,111 @@
+{
+  "evaluated_at": "2026-08-04T15:18:27",
+  "test_set": {
+    "split": "test",
+    "subjects": [
+      2,
+      5,
+      10
+    ],
+    "videos": 30,
+    "fall_videos": 15,
+    "skipped": []
+  },
+  "params": {
+    "frame_skip": 2,
+    "window_size": 30,
+    "act_threshold": 0.55,
+    "feature_norm": "image",
+    "lying_rule": "current",
+    "crop_guard": false,
+    "ai_thinking_conf": 0.35,
+    "direct_trigger_conf": 0.55
+  },
+  "strategies": [
+    "act_only",
+    "pipeline_geo_first",
+    "pipeline_current"
+  ],
+  "models": {
+    "action_transformer": {
+      "path": "ai/action_transformer.pth",
+      "sha256": "0c912a147c5c"
+    },
+    "action_transformer_v2": {
+      "path": "ai/action_transformer_v2.pth",
+      "sha256": "4d50397c58f7"
+    }
+  },
+  "results": {
+    "action_transformer": {
+      "act_only": {
+        "fall_recall": 0.16071428571428573,
+        "forward_recall": 0.15625,
+        "normal_fpr": 0.37144662034112447,
+        "post_fall_fpr": 0.2745995423340961,
+        "mean_latency_s": 1.73,
+        "detected_videos": 5
+      },
+      "pipeline_geo_first": {
+        "fall_recall": 0.15476190476190477,
+        "forward_recall": 0.0625,
+        "normal_fpr": 0.04674668351231838,
+        "post_fall_fpr": 0.38672768878718533,
+        "mean_latency_s": 0.8538461538461538,
+        "detected_videos": 11
+      },
+      "pipeline_current": {
+        "fall_recall": 0.23809523809523808,
+        "forward_recall": 0.15625,
+        "normal_fpr": 0.3828174352495262,
+        "post_fall_fpr": 0.5293668954996186,
+        "mean_latency_s": 0.9333333333333335,
+        "detected_videos": 11
+      }
+    },
+    "action_transformer_v2": {
+      "act_only": {
+        "fall_recall": 0.36904761904761907,
+        "forward_recall": 0.21875,
+        "normal_fpr": 0.03790271636133923,
+        "post_fall_fpr": 0.2219679633867277,
+        "mean_latency_s": 1.0571428571428572,
+        "detected_videos": 9
+      },
+      "pipeline_geo_first": {
+        "fall_recall": 0.20833333333333334,
+        "forward_recall": 0.0,
+        "normal_fpr": 0.01831964624131396,
+        "post_fall_fpr": 0.37223493516399697,
+        "mean_latency_s": 0.8333333333333334,
+        "detected_videos": 10
+      },
+      "pipeline_current": {
+        "fall_recall": 0.4107142857142857,
+        "forward_recall": 0.21875,
+        "normal_fpr": 0.049273531269740996,
+        "post_fall_fpr": 0.4660564454614798,
+        "mean_latency_s": 0.7571428571428571,
+        "detected_videos": 12
+      }
+    }
+  },
+  "baselines": {
+    "always_fire": {
+      "fall_recall": 1.0,
+      "forward_recall": 1.0,
+      "normal_fpr": 1.0,
+      "post_fall_fpr": 1.0,
+      "mean_latency_s": 0.0,
+      "detected_videos": 15
+    },
+    "geometry_only": {
+      "fall_recall": 0.22023809523809523,
+      "forward_recall": 0.0625,
+      "normal_fpr": 0.05811749842072015,
+      "post_fall_fpr": 0.5293668954996186,
+      "mean_latency_s": 0.7846153846153847,
+      "detected_videos": 11
+    }
+  }
+}
