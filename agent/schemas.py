@@ -59,7 +59,24 @@ class AlertMessage(BaseModel):
     detected_at: Optional[datetime] = None   # 可能缺，缺則由 publish 以收到時間補
     clip_path: Optional[str] = None          # 可能缺；注意這是整支來源影片，不是事件片段
 
-    model_config = {"extra": "ignore"}       # 邊緣端還會多送 snapshot_path/severity/status 等，忽略即可
+    # ⚠️ 這兩欄非收不可，被 extra="ignore" 吃掉會出事（2026-08-04 cutover 前修）：
+    #
+    # snapshot_path —— 邊緣端 2026-07-31 起送的是 s3:// URI（inference_test.py:135）。
+    #   後端 core/s3.py 的 parse_s3_uri() **只認 s3://**，不是就回 None、簽不出 presigned
+    #   URL，前端事件詳情的快照就是空白。publish 原本改送 image_path（ImageStore 為了
+    #   餵 VLM 而解析出的本機絕對路徑，見下方 AgentState），正好踩中這個坑。
+    #   ai/vlm_worker.py:69-74 的註解就是在警告它，還註明「實測：走慢速道的事件全部中招」。
+    #   仍是 Optional：巡檢訊息（ai/modules/sanity_check.py）不帶這欄，沒設 CLIP_S3_BUCKET
+    #   的機器也不帶，那兩種情況要退回 image_path。
+    #
+    # person_label —— 多人同時跌倒時主迴圈每人各發一筆，兩筆的相機/時間/畫面完全一樣，
+    #   靠這個「畫面內第 N 位倒地者」才分得出是兩個人還是系統重複報（inference_test.py:143）。
+    #   它是 AI 內部欄位（護欄的 INTERNAL_ONLY_KEYS），**不外發後端**，只由 publish
+    #   併進既有的 vlm_summary 字串，作法與 vlm_worker.py:83-85 相同。
+    snapshot_path: Optional[str] = None
+    person_label: Optional[str] = None
+
+    model_config = {"extra": "ignore"}       # 邊緣端還會多送 severity/status 等，那些才是真的忽略即可
 
     @model_validator(mode="before")
     @classmethod
@@ -158,7 +175,9 @@ class AgentState(TypedDict, total=False):
     # 輸入
     raw: dict                    # Kafka 1 收到的原始訊息（ingest 之前唯一有值的欄位）
     alert: AlertMessage          # ingest 驗證後的告警
-    image_path: str              # ingest 經 ImageStore 解析出的本機絕對路徑
+    # ingest 經 ImageStore 解析出的**本機絕對路徑**，只給 VLM 讀圖用。
+    # ⚠️ 不要拿它當外發的 snapshot_path（後端只認 s3://），理由見 AlertMessage.snapshot_path。
+    image_path: str
     # 同一事件的連續畫面（時序判讀用）。有值時 vlm_analyze 會一次全部餵給 VLM，
     # 單張畫面分不出「躺著休息」與「跌倒」，姿態的變化才是關鍵
     image_paths: Optional[list[str]]

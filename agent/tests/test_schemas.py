@@ -11,16 +11,18 @@ from agent.schemas import AlertMessage, ALDecision, JudgeResult, ProcessedReport
 # 03-contracts.md §1 的範例與實際送出的格式不符（缺 device_id、camera_id 也對不上），
 # 照文件寫 schema 會讓 100% 的真實訊息驗證失敗進 DLQ。
 
-# ai/inference_test.py:341 慢車道告警（注意：完全沒有 camera_id 欄位）
+# ai/inference_test.py:127-145 慢車道告警（注意：完全沒有 camera_id 欄位）
 REAL_FALL_ALERT = {
     "device_id": 301,
     "event_type": "fall",
     "clip_path": "test_demo/test1.mp4",
     "detected_at": "2026-07-19T15:30:00",
-    "snapshot_path": "/abs/path/snapshot_Room_301_Bed_20260719_153000.jpg",
+    # 2026-07-31 起是 s3:// URI（設了 CLIP_S3_BUCKET 時）。後端 core/s3.py 只認這個開頭
+    "snapshot_path": "s3://aipe03-3/snapshots/snapshot_Room_301_Bed_20260719_153000.jpg",
     "image_filename": "snapshot_Room_301_Bed_20260719_153000.jpg",
     "yolo_score": 0.72,
     "yolo_threshold": 0.45,   # 慢車道保留：AI 內部欄位，judge prompt 比大小用
+    "person_label": "畫面內第 2 位倒地者",   # 多人時才有值，單人是空字串
     "vlm_summary": "【AI 信心度不足】已觸發大模型二審…",
 }
 
@@ -58,10 +60,29 @@ def test_真實巡檢訊息可通過驗證():
 
 
 def test_邊緣端多送的欄位被忽略而非報錯():
-    # snapshot_path / vlm_summary / alert_id / status / severity（巡檢模組仍在送）
-    # 都不是我們要的，但它們的存在不該讓訊息被拒絕
+    # vlm_summary / alert_id / status / severity（巡檢模組仍在送）都不是我們要的，
+    # 但它們的存在不該讓訊息被拒絕
     assert AlertMessage(**REAL_FALL_ALERT).device_id == 301
     assert AlertMessage(**REAL_ROUTINE_ALERT).device_id == 301
+
+
+def test_邊緣端的_s3_快照與第幾位倒地者要收得下來():
+    # 這兩欄 2026-08-04 之前被 extra="ignore" 吃掉，是 cutover 前必修的兩個坑：
+    # snapshot_path 被丟掉 → publish 只好送本機路徑 → 後端簽不出 presigned URL
+    #                        → 前端事件詳情的快照全空白
+    # person_label 被丟掉 → 多人同時跌倒時兩筆事件長得一模一樣，分不出是幾個人
+    alert = AlertMessage(**REAL_FALL_ALERT)
+
+    assert alert.snapshot_path == "s3://aipe03-3/snapshots/snapshot_Room_301_Bed_20260719_153000.jpg"
+    assert alert.person_label == "畫面內第 2 位倒地者"
+
+
+def test_巡檢訊息沒有這兩欄也不會壞():
+    # ai/modules/sanity_check.py 的巡檢 payload 兩欄都沒有，要退回 None 讓 publish 走退路
+    alert = AlertMessage(**REAL_ROUTINE_ALERT)
+
+    assert alert.snapshot_path is None
+    assert alert.person_label is None
 
 
 # ── device_id 的解析順序 ────────────────────────────────
