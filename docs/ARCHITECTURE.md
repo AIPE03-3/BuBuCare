@@ -204,12 +204,32 @@ Triton 熱載切版（服務不中斷）→ 可 --rollback
 
 | 缺陷                                       | 狀態                                                                                                                    |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| **體角判定的前提與實際佈署場景不符** | **未修，最需要正視**。正式環境是公共區域**俯視**鏡頭，而防線 A 的軀幹角條件在那個角度基本沒訊號，調門檻無效 |
-| `normal_h_reference` 換來源不重設        | 未修，已診斷                                                                                                            |
+| **體角判定的前提與實際佈署場景不符** | 🔴 **未修，最需要正視**。正式環境是公共區域**俯視**鏡頭，而防線 A 的軀幹角條件在那個角度基本沒訊號，調門檻無效 |
+| `normal_h_reference` 換來源不重設        | ✅ 2026-08-03 已修（分支 `fix/fall-cooldown-and-href-reset`）                                                          |
+| 跌倒事件一次性閂鎖（整個行程只發一次）    | ✅ 2026-08-03 已修，改成每相機每事件類型的冷卻計時器（同一批分支）                                                     |
 
-兩項都還開著，追蹤在 [`NEXT_STAGE.md`](NEXT_STAGE.md) 的 9-3 / 9-4；
-完整量測數據見 [`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項。
-**不要以為跌倒偵測在所有場景都可靠。**
+只剩體角一項還開著，追蹤在 [`NEXT_STAGE.md`](NEXT_STAGE.md) 9-4；
+完整量測數據見 [`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 9 項、第 5 項。
+**不要以為跌倒偵測在所有場景都可靠**——AcT 時序分類在俯視角度下判斷正確，
+被騙的是兩條手寫幾何規則，是接下來調權重的依據。
+
+**另一塊已做完但沒收割**：`feat/ai-act-retrain` 的 AcT 重訓成果（正式管線正常動作幀
+誤報率 44.7%→2.0%）已於 2026-08-03 把離線工具鏈與資料移植進 main
+（`feat/act-retrain-onto-main`），但**刻意沒有動 `ai/inference_test.py` 的偵測邏輯**——
+權重不在版控裡、降誤報常數沒套進管線、逐人 AcT 視窗沒接。線上行為目前完全沒變，
+細節與待辦順序見 [`NEXT_STAGE.md`](NEXT_STAGE.md) 第 11 項。同一次移植也把 main
+既有的多人跌倒（ByteTrack + 逐人身高基準 + 每人各一筆事件）保留下來，是本輪唯一
+接受過人工逐段合併的檔案。
+
+**VLM 二審已切換**：2026-08-03 頭對頭 A/B 驗證後，`vlm_worker.py` 與 LangGraph 的
+視覺模型都已從 `llava:latest` 切到團隊拍板的 `qwen2.5vl:7b`，理由與數據見
+[`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 14 項。
+
+**危險物品偵測（hazard）本輪未收**：程式碼完整留在 `feat/hazard-detection` 分支未合併。
+兩個技術理由：線上 `rt_detr` 鎖 v2 只有 5 類（person/chair/sofa/bed/tv），
+`HAZARD_CLASSES={"knife","scissors"}` 需要的 COCO 80 類抓不到；且合併要跑 DB
+migration（專案無 alembic，`init_db.py` 的 `create_all` 只建新表不加欄位），
+正式 PostgreSQL 沒加對應欄位會直接寫入失敗。
 
 ### 6.2 兩套二審併行，agent 尚未 cutover
 

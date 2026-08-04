@@ -168,7 +168,12 @@ PR 上 GitHub Actions 是綠燈才代表「沒踩到已知的雷」，不代表�
 
 所以合併後**不能只看有沒有衝突標記**：
 
-1. 跑全套測試（`backend` pytest、`agent` pytest、`npx tsc -b`）
+1. 跑全套測試（`backend` pytest、`agent` pytest、`npx tsc -b`）——
+   backend 平常用 `cd backend && uv run pytest`（見 `backend/CLAUDE.md`），但那顆 venv
+   在 `nh-backend` 容器管理範圍外時常沒建好；host 另建一顆 `.venv-backend`
+   （`python -m venv .venv-backend` + 裝 `backend/pyproject.toml` 的 `[project.dependencies]`
+   加 `pytest`）可以在 repo 根目錄直接 `.venv-backend/bin/python -m pytest backend -q` 驗證，
+   不必進容器也不用改 `nh-backend` 的 image
 2. 跑 `python3 scripts/check_guardrails.py`
 3. **實際起服務打 API** —— 上面那個 bug 三種測試都測不出來，是打 `POST /devices` 才炸的
 
