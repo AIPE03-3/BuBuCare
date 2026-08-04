@@ -124,9 +124,10 @@ a32c1be499e157b328dd007bc1afcb49  clip_Room_301_Bed_20260804_162845.mp4
 所以 9.0~12.5s 這段從頭到尾都是倒地狀態，接起來才不會混進「已經站起來」的幀
 （混到的話畫面會回到正常，反而把閂鎖解開，這支素材就白造了）。
 
-> 這組時間點原本是在部署 AcT v2 時逐幀確認的，紀錄在 `feat/act-v2-deploy` 分支的
-> `ai/docs/2026-08-04-act-v2-deploy.md` 第三節。**那份文件不在本分支上**，所以這裡不放連結，
-> 直接把結論寫明。等該分支併進 `main` 之後才查得到原始逐幀紀錄。
+原始的逐幀紀錄在
+[`ai/docs/2026-08-04-act-v2-deploy.md`](2026-08-04-act-v2-deploy.md#三ground-truth-是怎麼確認的)
+第三節「ground truth 是怎麼確認的」（該文件第 166-167 行）——那是部署 AcT v2 時建立的，
+已隨 PR #35 併入 `main`。
 
 產生腳本與素材都是暫存的，不進版控；作法完整記在本節，可重現：
 
@@ -414,14 +415,15 @@ Run B 的價值在於**證明那條單元測試描述的行為在真實影像上
 ## 八、驗證指令與結果
 
 ```
-python scripts/check_guardrails.py       → ✅ 護欄檢查通過（掃了 438 個檔案）
-python -m pytest agent ai scripts -q     → 191 passed in 4.03s
+python scripts/check_guardrails.py       → ✅ 護欄檢查通過（掃了 441 個檔案）
+python -m pytest agent ai scripts -q     → 191 passed in 3.68s
 python -m pytest ai/tests/test_fall_gates.py -q → 10 passed
 ```
 
-> 檔案數從 437 變 438 不是多冒出檔案：護欄掃的是 `git ls-files`
-> （[`scripts/check_guardrails.py:124`](../../scripts/check_guardrails.py#L124)），
-> 第一版是在 commit 前跑的，當時本文件還沒被追蹤。
+> 護欄的檔案數在本輪出現過 437 → 438 → 441，都不是多冒出檔案：它掃的是 `git ls-files`
+> （[`scripts/check_guardrails.py:124`](../../scripts/check_guardrails.py#L124)），只算被追蹤的檔。
+> 437 是第一版在 commit 前跑的（本文件當時還沒被追蹤），438 是本文件進版控後，
+> 441 是併入 `main` 後多了 PR #35 帶進來的三個檔（AcT v2 報告與兩份評估輸出）。
 
 > 本分支從 `main` 開，所以是 191 passed。第 5 批（`feat/agent-cutover`，PR #36）
 > 新增的 11 支不在這條分支上。
