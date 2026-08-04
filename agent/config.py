@@ -108,8 +108,8 @@ def load_settings() -> Settings:
         # 刻意跟 vlm_worker 的 group_id（vlm-brain-cluster）不同：
         # shadow 階段兩者要能併行消費同一個 topic，各自拿到完整訊息
         kafka_group_id=os.getenv("AGENT_KAFKA_GROUP_ID", "agent-reviewer"),
-        agent_llm=os.getenv("AGENT_LLM", "ollama:qwen3"),
-        vlm_model=os.getenv("AGENT_VLM_MODEL", "llava:latest"),
+        agent_llm=os.getenv("AGENT_LLM", "ollama:qwen2.5:7b"),
+        vlm_model=os.getenv("AGENT_VLM_MODEL", "qwen2.5vl:7b"),
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         image_source=image_source,
         image_base_dir=image_base_dir,

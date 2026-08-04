@@ -74,8 +74,8 @@ def test_健檢報告涵蓋關鍵設定(settings):
 
     assert "nursing-home-alerts" in text
     assert "processed-reports" in text
-    assert "ollama:qwen3" in text
-    assert "llava:latest" in text
+    assert "ollama:qwen2.5:7b" in text
+    assert "qwen2.5vl:7b" in text
     assert settings.image_base_dir in text
 
 

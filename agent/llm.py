@@ -1,7 +1,7 @@
 # agent/llm.py
 """LLM factory：所有 LLM 呼叫都從這裡拿模型，程式碼中不得出現寫死的模型名。
 
-開發期預設是純地端 Ollama（AGENT_LLM=ollama:qwen3），零 API 成本、零雲端依賴。
+開發期預設是純地端 Ollama（AGENT_LLM=ollama:qwen2.5:7b），零 API 成本、零雲端依賴。
 未來要切雲端只改環境變數：
     AGENT_LLM=anthropic:claude-haiku-4-5-20251001
 不改任何一行程式碼（已拍板決策，見 agent/docs/01-architecture.md §4）。
@@ -23,7 +23,7 @@ def build_chat_model(settings: Settings, **kwargs) -> BaseChatModel:
     spec = settings.agent_llm.strip()
     if ":" not in spec:
         raise ConfigError(
-            f"AGENT_LLM 格式必須是 provider:model（例如 ollama:qwen3），目前是 {spec!r}"
+            f"AGENT_LLM 格式必須是 provider:model（例如 ollama:qwen2.5:7b），目前是 {spec!r}"
         )
 
     provider, model = spec.split(":", 1)
