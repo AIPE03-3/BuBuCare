@@ -116,6 +116,10 @@ HEADLESS=1 SINGLE_SOURCE=ai/test_demo/test_e2e_20260731.mp4 DETR_EVERY_N=5 \
 ```bash
 # 終端 1：推 mp4 進 cam_in
 # ⚠️ 這台 PATH 上沒有 ffmpeg，用 ai/.venv 裡 imageio-ffmpeg 附的靜態版（路徑帶版號，現查）
+# ⚠️ 2026-08-05 實測：venv 重建後 imageio-ffmpeg 會不見（它不在 requirements 裡），
+#    下一行會噴 ModuleNotFoundError。沒有就先補裝，不要改去 apt install ffmpeg
+#    （那會裝進系統、汙染其他專案，而且 WSL2 重建又要再來一次）：
+#        ai/.venv/bin/python -m pip install imageio-ffmpeg
 FF=$(ai/.venv/bin/python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())")
 "$FF" -nostdin -re -stream_loop -1 -i ai/test_demo/test_e2e_20260731.mp4 \
   -an -c:v libx264 -preset ultrafast -tune zerolatency -g 30 \
