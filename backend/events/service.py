@@ -122,19 +122,74 @@ async def watch_delivery(
             db.close()
 
 
-def handle_incoming_event(db: Session, data: dict) -> dict:
+# 同一起事件補寫時，只准覆寫這幾欄。
+#
+# 為什麼要限制：補寫是事發約 35 秒後才到的（VLM 判讀要跑那麼久），那時護理師很可能
+# 已經按過「接手處理」或「誤報」。整包覆蓋會把人工操作洗掉——畫面上事件退回待處理，
+# 值班人員會以為自己剛才按的沒生效。所以 status / verdict / notified_at / clip_path /
+# snapshot_path 一律不碰，補寫只補「AI 說了什麼」。
+ENRICHABLE_FIELDS = ("vlm_summary", "ai_verdict", "ai_confidence", "ai_reasoning")
+
+
+def find_same_event(db: Session, data: dict) -> DetectEvent | None:
+    """找出「同一起事件」的既有紀錄，沒有就回 None。
+
+    認定條件是 device_id + detected_at + event_type 三個一組。這不是新發明的鍵：
+    agent 自己的冪等去重用的就是這三個（agent/nodes/publish.py 的 dedupe_key），
+    而邊緣端補寫那封訊息的 detected_at 與第一封逐字相同（ai/inference_test.py 的
+    route_by_confidence 兩封共用同一個值）。
+    """
+    return (
+        db.query(DetectEvent)
+        .filter(
+            DetectEvent.device_id == data["device_id"],
+            DetectEvent.detected_at == data["detected_at"],
+            DetectEvent.event_type == data.get("event_type"),
+        )
+        .first()
+    )
+
+
+def handle_incoming_event(db: Session, data: dict) -> tuple[dict, bool]:
+    """收一則事件訊息：同一起事件就補寫，否則新增。回傳 (payload, 是不是新建的)。
+
+    2026-08-05 加上「補寫」這條路。原因：高信心跌倒走快速道、依規格不等 VLM
+    （docs/ARCHITECTURE.md §2「危急事件零延遲」），所以它的 vlm_summary 一直是邊緣端
+    寫死的罐頭字串。要讓前端警示視窗有真的 AI 判讀，就得讓 agent 事後把判讀文字補回
+    **同一筆**事件——不補的話，那封訊息會變成事件中心多一筆一模一樣的跌倒。
+
+    回傳值 2026-08-05 從單一 dict 改成 (dict, created)：入口層要靠它決定回 201 還是 200、
+    以及要不要啟動 watch_delivery（那是盯「新事件有沒有送到護理師眼前」用的，補寫不需要）。
+    """
     # 1. 先確認裝置存在（不存在就什麼都不做）
     device = db.query(Device).filter(Device.device_id == data["device_id"]).first()
     if device is None:
         raise DeviceNotFoundError(f"裝置 {data['device_id']} 不存在")
 
-    # 2. 先存 DB（status 一律後端設 pending，company_id / location_id 都跟著裝置當下狀態凍一份）
+    # 2. 同一起事件已經在庫裡 → 補寫既有那筆，不新增
+    existing = find_same_event(db, data)
+    if existing is not None:
+        for field in ENRICHABLE_FIELDS:
+            # 只有「這次真的帶了值」才覆蓋：補寫訊息沒帶到的欄位，保留原本的值，
+            # 不要被 None 洗掉（例如 agent 判不出 verdict 時 ai_verdict 是 None）
+            if data.get(field) is not None:
+                setattr(existing, field, data[field])
+        db.commit()
+        db.refresh(existing)
+        payload = serialize_event(existing, device)
+        # event_updated 而非 event_created：前端據此就地更新既有那筆（含還開著的警示視窗），
+        # 不會再跳一次全螢幕警示（EventsProvider 以 event_id upsert）
+        pool.broadcast("event_updated", payload)
+        return payload, False
+
+    # 3. 新事件：照舊存 DB（status 一律後端設 pending，company_id / location_id 都跟著
+    #    裝置當下狀態凍一份）
     event = DetectEvent(**data, company_id=device.company_id, location_id=device.location_id)
     db.add(event)
     db.commit()
     db.refresh(event)
 
-    # 3. 存成功才廣播（資料庫是唯一真相；存失敗上面就丟例外，不會走到這行）
+    # 4. 存成功才廣播（資料庫是唯一真相；存失敗上面就丟例外，不會走到這行）
     payload = serialize_event(event, device)
     pool.broadcast("event_created", payload)
-    return payload
+    return payload, True

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AiSuggestionBadge } from './AiSuggestionBadge';
 import { CloseIcon } from './icons';
 import { SuppressConfirmModal } from './SuppressConfirmModal';
 import { useEventClipUrl } from '../hooks/useEventClipUrl';
@@ -152,6 +153,33 @@ export function FullScreenAlert({ alerts, now, onAcknowledge, onSuppress, onDism
             </p>
           </section>
         )}
+
+        {/* AI 二審判讀：agent（LangGraph）看過快照後的結論與理由。
+            與上面那塊的差別——上面是「VLM 描述看到什麼」，這裡是「agent 判它是真是假、為什麼」。
+
+            為什麼會有「判讀中」這個中間狀態：高信心跌倒走快速道，依規格不等 VLM 就先通報
+            （docs/ARCHITECTURE.md §2「危急事件零延遲」），所以彈窗跳出的當下還沒有判讀。
+            約 35 秒後 agent 判完，後端補寫同一筆並推 event_updated，這裡的文字就會自己換上。
+            全程不重新彈窗、不打斷值班人員正在做的事。 */}
+        <section
+          aria-label="AI 二審判讀"
+          className="mt-3 rounded-md border border-[var(--border)] bg-[var(--bg-surface-2)] p-3"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-xs font-semibold text-[var(--text-primary)]">AI 二審判讀</h3>
+            {/* 判定與信心分數重用事件清單那顆徽章，樣式與用色不另外發明一套 */}
+            <AiSuggestionBadge event={activeAlert} />
+          </div>
+          {activeAlert.ai_reasoning ? (
+            <p className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-[var(--text-secondary)]">
+              {activeAlert.ai_reasoning}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-[var(--text-muted)]">
+              AI 二審判讀中，完成後會自動顯示於此。
+            </p>
+          )}
+        </section>
 
         {/* 底列：AI 信心分數＋已經過（左）／誤報＋接手處理（右） */}
         <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

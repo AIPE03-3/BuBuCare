@@ -22,8 +22,13 @@ logger = logging.getLogger("kafka_consumer")
 
 
 def classify_response(status_code: int) -> str:
-    # 201 建立成功；400/422 是毒訊息（重試無用，跳過）；其餘（5xx/未知）當一時失敗重試
-    if status_code == 201:
+    # 201 建立成功、200 補寫成功；400/422 是毒訊息（重試無用，跳過）；
+    # 其餘（5xx/未知）當一時失敗重試
+    #
+    # 200 是 2026-08-05 加的：POST /events 收到「同一起事件」時改成補寫既有那筆並回 200
+    # （agent 二審完成後把判讀文字補回快速道事件，見 backend/events/service.py）。
+    # 沒有這一行的話，每一則補寫訊息都會落到下面的 retry，consumer 會對同一筆無限重試。
+    if status_code in (200, 201):
         return "ok"
     if status_code in (400, 422):
         return "poison"
