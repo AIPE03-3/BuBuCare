@@ -70,6 +70,12 @@ cutover 當下順手修掉兩個「照現況切一定會壞」的點（`snapshot
 
 ## 4.【只出設計】Prometheus 導入
 
+> **2026-08-05 更新**：機器層監控已改用**原生安裝的 Netdata**暫時補上
+> （13 個 Docker 容器 + GPU + Triton `:8002/metrics` 都有資料，裝法與設定見
+> `docs/DEPLOY.md`「機器層監控（Netdata，原生安裝）」一節），**未收斂進主
+> `docker-compose.yml`**。下面這條 Prometheus 導入路線因此暫緩——不是不做，
+> 是目前用 Netdata 頂著，優先序往後。backend `/metrics`、Kafka 監控都還沒動。
+
 ### 對「照架構圖五個底色各包一顆 Docker」的評估：**分層很好用，但不能拿來當容器邊界**
 
 四個具體會出錯的地方：
