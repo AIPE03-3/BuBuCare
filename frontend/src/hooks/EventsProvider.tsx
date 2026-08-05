@@ -72,7 +72,16 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       return exists ? prev.map((e) => (e.id === event.id ? event : e)) : [event, ...prev];
     });
     if (event.status === 'pending') {
-      setConfirmedAlerts((prev) => (prev.some((e) => e.id === event.id) ? prev : [...prev, event]));
+      // 已在警示佇列裡就**就地換成新版本**，不是原封不動略過。
+      // 這是「AI 二審判讀事後補寫」能不能顯示的關鍵：快速道事件先以罐頭文字彈出，
+      // 約 35 秒後 agent 判讀完，後端更新同一筆並推 event_updated——只有這裡換掉舊物件，
+      // 那個還開著的彈窗才會把文字換成真判讀（見 backend/events/service.py 的補寫說明）。
+      // 用 id 比對所以不會重複彈窗，也不會因為補寫而讓警示重新排到隊尾。
+      setConfirmedAlerts((prev) =>
+        prev.some((e) => e.id === event.id)
+          ? prev.map((e) => (e.id === event.id ? event : e))
+          : [...prev, event],
+      );
     }
   }, []);
 

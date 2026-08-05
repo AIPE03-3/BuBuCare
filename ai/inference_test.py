@@ -66,18 +66,39 @@ FAST_TRACK_CONF = 0.90  # 規格：AcT 信心 ≥0.9 直入 PG、<0.9 走 VLM �
 TOPIC_PROCESSED_REPORTS = "processed-reports"   # 高信心快速道 + 二審完成 → 後端 consumer 寫 PG
 TOPIC_NURSING_HOME_ALERTS = "nursing-home-alerts"  # 低信心 → VLM 二審佇列
 
+# 快速道事件要不要「額外」再送一份去二審佇列，讓 agent 事後補寫 VLM 判讀文字。
+#
+# 為什麼需要這個開關：快速道依規格不等 VLM（見 FAST_TRACK_CONF 上方與 docs/ARCHITECTURE.md
+# §2「危急事件零延遲」），所以它的 vlm_summary 一直是下面那句寫死的罐頭字串——
+# 前端全螢幕警示的「AI 影像分析判斷理由」對高信心事件永遠只有那一句。
+# 開了這個之後：快速道**照舊立刻**送 processed-reports（規則一個字沒動、零延遲不變），
+# 同一筆再送一份進二審佇列；agent 判讀完把結果送回 processed-reports，後端認出是同一起
+# 事件（device_id + detected_at + event_type）改成更新而非新增，SSE 推 event_updated，
+# 前端那個還開著的彈窗文字就地換成真判讀。
+#
+# 預設關：未設時行為與加這個開關之前位元級相同。
+# 用 cfg() 不用 os.environ.get：專案的 .env 是 dotenv_values 讀成 dict、刻意不注入
+# os.environ（見 ai/backend_devices.py 檔頭），只讀 os.environ 會完全看不到 .env 的設定。
+FAST_TRACK_VLM_ENRICH = cfg("FAST_TRACK_VLM_ENRICH", "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def route_by_confidence(*, act_confidence, is_occluded_fall,
                         event_label, numeric_id, clip_path, detected_at,
                         snapshot_full_path, snapshot_name, final_score, yolo_thresh,
                         person_label=""):
-    """依 AcT 信心把單一跌倒事件路由到對應 Kafka topic，回傳 (topic, payload)。
+    """依 AcT 信心把單一跌倒事件路由到對應 Kafka topic，回傳 [(topic, payload), ...]。
+
+    2026-08-05 回傳型別從單一 `(topic, payload)` 改成**清單**。原因是快速道多了一個
+    可選的第二封訊息（見 FAST_TRACK_VLM_ENRICH），一筆事件不再必然只對應一個 topic。
+    分流規則本身一個字沒動：判斷式、門檻、兩個 payload 的欄位全部原封不動。
 
     這是 C 組信心分流的乾淨抽離點（原本寫死在 camera_worker 裡的 if/else）：
       - 高信心（act_confidence >= FAST_TRACK_CONF）且非遮擋不確定
-        → (processed-reports, 快速道 payload)：後端 consumer 直接落 PostgreSQL，不經 VLM。
+        → [(processed-reports, 快速道 payload)]：後端 consumer 直接落 PostgreSQL，不經 VLM。
+        · FAST_TRACK_VLM_ENRICH=1 時**再多一封** (nursing-home-alerts, 待審 payload)，
+          讓 agent 事後補寫判讀文字回同一起事件。第一封的時機完全不受影響。
       - 其餘（信心不足 / 遮擋難判）
-        → (nursing-home-alerts, 待審 payload)：走 Kafka → vlm_worker 二審 → 回 processed-reports。
+        → [(nursing-home-alerts, 待審 payload)]：走 Kafka → vlm_worker 二審 → 回 processed-reports。
 
     2026-07-27：原本還有一個 `is_chair_slipped` 參數（模組 I 判定座椅滑落時強制走快速道，
     event_type 送 "chair_slip"）。該模組已隨 ai/modules/ 白名單收斂刪除（見檔頭與 CLAUDE.md），
@@ -110,23 +131,13 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
     _who = f"（{person_label}）" if person_label else ""
     is_fast_track = act_confidence >= FAST_TRACK_CONF and not is_occluded_fall
 
-    if is_fast_track:
-        # 🟢 分流 A：快速道路（Critical_Fast_Track）——高信心，直入後端落庫。
-        # 這條直接進後端，只帶後端要的欄位；不帶 yolo_threshold（AI 內部用的門檻值）。
-        payload = {
-            "device_id": numeric_id,
-            "event_type": event_label,
-            "clip_path": str(clip_path),
-            "detected_at": detected_at,
-            "snapshot_path": snapshot_full_path,
-            "image_filename": snapshot_name,
-            "yolo_score": final_score,
-            "vlm_summary": f"【緊急通報】邊緣端偵測到嚴重跌倒{_who}！請立刻前往救援。",
-        }
-        return TOPIC_PROCESSED_REPORTS, payload
-
     # 🔵 分流 B：慢速道路（Pending_VLM_Review）——信心不足/遮擋難判，送 VLM 二審。
     # 收件人是 AI 內部（vlm_worker / agent），故多帶 yolo_threshold 供二審端比對信心用。
+    #
+    # ⚠️ 先組在這裡（而不是等到走慢車道那支才組），是因為快速道的「事後補寫」要送的
+    # 就是同一份東西。**刻意指派給名為 `payload` 的變數**：護欄 check_contract() 只認
+    # route_by_confidence() 裡「指派給 payload 的 dict 字面值」，換個變數名或搬去別的
+    # 函式，這份 payload 就溜出契約檢查了（見 scripts/check_guardrails.py:198-215）。
     payload = {
         "device_id": numeric_id,
         "event_type": event_label,
@@ -143,7 +154,30 @@ def route_by_confidence(*, act_confidence, is_occluded_fall,
         "person_label": person_label,
         "vlm_summary": f"【AI 信心度不足】已觸發大模型二審{_who}，正在分析影像特徵並生成詳細報告...",
     }
-    return TOPIC_NURSING_HOME_ALERTS, payload
+    review_payload = payload
+
+    if is_fast_track:
+        # 🟢 分流 A：快速道路（Critical_Fast_Track）——高信心，直入後端落庫。
+        # 這條直接進後端，只帶後端要的欄位；不帶 yolo_threshold（AI 內部用的門檻值）。
+        payload = {
+            "device_id": numeric_id,
+            "event_type": event_label,
+            "clip_path": str(clip_path),
+            "detected_at": detected_at,
+            "snapshot_path": snapshot_full_path,
+            "image_filename": snapshot_name,
+            "yolo_score": final_score,
+            "vlm_summary": f"【緊急通報】邊緣端偵測到嚴重跌倒{_who}！請立刻前往救援。",
+        }
+        routes = [(TOPIC_PROCESSED_REPORTS, payload)]
+        if FAST_TRACK_VLM_ENRICH:
+            # 事後補寫：上面那筆已經先走了，這筆只是去排隊等 VLM 判讀。
+            # 順序不能顛倒——先送 processed-reports 才保得住「危急事件零延遲」。
+            # detected_at 兩封完全相同，後端就是靠它（＋device_id＋event_type）認出是同一起事件。
+            routes.append((TOPIC_NURSING_HOME_ALERTS, review_payload))
+        return routes
+
+    return [(TOPIC_NURSING_HOME_ALERTS, review_payload)]
 
 # =========================================================================
 # 📼 事件片段存檔：跌倒瞬間前 PRE 秒 + 後 POST 秒
@@ -1287,8 +1321,11 @@ def camera_worker(camera_id, video_source):
                     is_recording_post = True
 
                 # 🚦 信心分流抽成 route_by_confidence()：由它決定送哪個 topic、組哪個 payload。
-                # 這裡只負責算好參數、把回傳的 (topic, payload) 送出，路由決策可被 LangGraph 接管。
-                topic, payload = route_by_confidence(
+                # 這裡只負責算好參數、把回傳的每一組 (topic, payload) 依序送出，
+                # 路由決策可被 LangGraph 接管。
+                # 一筆事件通常只有一組；開了 FAST_TRACK_VLM_ENRICH 的快速道會有兩組
+                # （先 processed-reports 立刻通報，再 nursing-home-alerts 排隊等補寫）。
+                routes = route_by_confidence(
                     act_confidence=act_confidence,
                     is_occluded_fall=is_occluded_fall,
                     event_label=event_label,
@@ -1303,8 +1340,12 @@ def camera_worker(camera_id, video_source):
                     yolo_thresh=yolo_thresh,
                     person_label=_person_label,   # 只寫進 vlm_summary 文字，欄位 key 沒動
                 )
-                producer.send(topic, value=payload)
+                for _topic, _payload in routes:
+                    producer.send(_topic, value=_payload)
                 producer.flush()
+                # 顯示與 log 一律看第一組：那是「這起事件走哪條道」的答案。
+                # 補寫那封是附帶動作，不該讓 log 看起來像分流結果變了。
+                topic = routes[0][0]
                 if _fire_tid is not None:
                     print(f"🚨 [{camera_id}] 第 {_p_num} 位（track {_fire_tid}）跌倒事件已外發"
                           f"（topic={topic}，連續 {_FALL_CONSECUTIVE_FRAMES} 幀判定成立）")

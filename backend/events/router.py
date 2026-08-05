@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from prometheus_client import Counter
 from pydantic import BaseModel
@@ -56,12 +56,23 @@ class EventCreateRequest(BaseModel):
 # ════════════════════════════════════════════════════════
 # async def 的原因：廣播（put_nowait）要在事件迴圈執行緒上跑才安全
 @router.post("/events", status_code=201, dependencies=[Depends(require_api_key)])
-async def create_event(body: EventCreateRequest, db: Session = Depends(get_db)):
+async def create_event(body: EventCreateRequest, response: Response, db: Session = Depends(get_db)):
     try:
         # model_dump() 把 Pydantic 物件轉成 dict，交給共用處理函式
-        payload = handle_incoming_event(db, body.model_dump())
+        payload, created = handle_incoming_event(db, body.model_dump())
     except DeviceNotFoundError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    if not created:
+        # 同一起事件的補寫（agent 二審完成後把判讀文字補回既有那筆，見 service 層說明）。
+        # 回 200 不回 201：沒有新建任何東西。
+        # ⚠️ backend/kafka_consumer.py 的 classify_response() 必須把 200 也當成功，
+        #    否則 consumer 會把每一則補寫訊息當成一時失敗、無限重試。
+        response.status_code = 200
+        # 刻意不啟動 watch_delivery：那是盯「新事件有沒有推到護理師眼前」用的，
+        # 這筆早在 30 幾秒前就推過、也早就 ack 過了，再盯一次只是白跑三輪計時器。
+        return payload
+
     # 廣播後啟動背景任務盯送達。放這裡而非 handle_incoming_event 內：
     # 路由是 async、有 event loop；handle_incoming_event 是同步、被測試直接呼叫時沒 loop
     asyncio.create_task(watch_delivery(payload["event_id"]))
