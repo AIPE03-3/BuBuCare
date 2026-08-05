@@ -17,7 +17,7 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md
 |---|---|---|---|
 | 9-4 | 體角判定的前提與俯視佈署不符 | 🔴 P0 | 📋 **已診斷，未修，最需要正視**（見下）|
 | 11 | AcT 重訓成果的收割 | 🟠 P1 | 🧰 **工具與資料進來了，管線沒接、權重沒拿到**（本檔下方）|
-| 12 | agent 二審尚未 cutover | 🟠 P1 | shadow log 停在 7/28、僅 4 筆，證據量不足（本檔下方）|
+| 12 | agent 二審 cutover | ✅ | **2026-08-04 已上線**，Q4–Q7 仍未拍板（本檔下方）|
 | 4 | Prometheus 導入 | 🟡 P2 | 📐 **只出設計，未接線**（本檔下方）|
 | 13 | 離床／輪椅（座椅滑落）| 🟡 P2 | 📌 **本輪只埋伏筆，未實作**（本檔下方）|
 
@@ -44,12 +44,27 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md
 
 ---
 
-## 12.【未拍板】agent 二審尚未 cutover
+## 12.【已上線，但不是因為門檻過了】agent 二審 cutover
 
-正式二審仍是 `vlm_worker.py`（`AGENT_SHADOW=1`）。`ai/agent_shadow.jsonl` 只有 **4 筆、
-停在 2026-07-28**，通過門檻的證據量嚴重不足；`agent/docs/04-open-questions.md` Q4–Q7
-（`uncertain` 的前端呈現、shadow 通過門檻、問答助手範圍、前端請求怎麼到 agent）未拍板。
+**2026-08-04 已 cutover**：正式二審是 `agent/`（`AGENT_SHADOW=0`，
+啟動 `python -m agent.main`），`ai/vlm_worker.py` 退居回滾路徑不再常駐。
+實測報告：[`ai/docs/2026-08-04-agent-cutover.md`](../ai/docs/2026-08-04-agent-cutover.md)，
 系統現況見 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §6.2。
+
+⚠️ **上線的理由是「不論成效，系統先真的完整跑過一輪」的決定，不是證據量夠了。**
+原本卡住的東西一項都沒消失：
+
+- `ai/agent_shadow.jsonl` 仍只有 **4 筆、停在 2026-07-28**
+- `agent/docs/04-open-questions.md` 的 **Q4–Q7 仍未拍板**（`uncertain` 的前端呈現、
+  shadow 通過門檻、問答助手範圍、前端請求怎麼到 agent）
+
+cutover 當下順手修掉兩個「照現況切一定會壞」的點（`snapshot_path` 被 schema 丟掉導致
+前端快照全空白、多人跌倒的 `person_label` 沒帶），這兩項有單元測試護著。
+
+**還欠的實跑驗證**（本次只驗到單人 → 遮擋 → 慢速道 → `true_alarm` 一條路徑）：
+`false_alarm` 判定、`uncertain` 降級成 `ai_verdict=null` 時前端怎麼顯示、
+巡檢事件走 `env_report`、**多人同時跌倒兩筆並存**時護理師實際分不分得出來。
+另外 `agent/` 目前沒有 watchdog，掛了不會自己爬起來。
 
 ---
 

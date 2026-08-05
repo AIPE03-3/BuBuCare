@@ -37,8 +37,8 @@
                     ↓                                ↓
          Kafka: processed-reports        Kafka: nursing-home-alerts
                     │                                ↓
-                    │                    vlm_worker.py（VLM 二審）
-                    │                    ／ agent/（LangGraph，shadow 中）
+                    │                    agent/（LangGraph 二審，正式）
+                    │                    ／ vlm_worker.py（回滾路徑，不常駐）
                     │                                │
                     └────────────────┬───────────────┘
                                      ↓
@@ -95,17 +95,19 @@ is_fast_track = act_confidence >= FAST_TRACK_CONF and not is_occluded_fall   # 0
 
 VLM 讀事件快照 → 產生中文判讀 → 組成後端要的格式 → 送 `processed-reports`。
 
-目前有**兩套實作併行**：
+有**兩套實作**，但**同一時間只能跑一套**（2026-08-04 已 cutover，詳見 §6.2）：
 
-|             | `ai/vlm_worker.py`                | `agent/`                                                |
-| ----------- | ----------------------------------- | --------------------------------------------------------- |
-| 狀態        | **正式服務中**                | **shadow 模式**（`AGENT_SHADOW=1`）               |
-| 架構        | 單檔流程 +`uncertainty_router.py` | LangGraph 圖，7 個節點                                    |
-| Kafka group | `vlm-brain-cluster`               | `agent-reviewer`（刻意不同，才能併行）                  |
-| 產出        | `vlm_summary`                     | 多帶`ai_verdict` / `ai_confidence` / `ai_reasoning` |
+|             | `agent/`（**現行**）                                    | `ai/vlm_worker.py`                |
+| ----------- | --------------------------------------------------------- | ----------------------------------- |
+| 狀態        | **正式服務中**（`AGENT_SHADOW=0`）                | **回滾路徑**，不常駐        |
+| 架構        | LangGraph 圖，7 個節點                                    | 單檔流程 +`uncertainty_router.py` |
+| Kafka group | `agent-reviewer`                                        | `vlm-brain-cluster`               |
+| 產出        | `vlm_summary` +`ai_verdict` / `ai_confidence` / `ai_reasoning` | 只有`vlm_summary`               |
+| 啟動        | `python -m agent.main`                                  | `cd ai && python vlm_worker.py`   |
 
-shadow 模式下 `agent/` 判定結果**只寫 jsonl 不送 Kafka**，兩者各自獨立消費同一個 topic。
-上線策略是 shadow → 比對 → cutover，回滾只要反向操作。
+⚠️ **不要兩套一起跑**：group 不同 = Kafka 各給一份完整訊息，兩邊都發到
+`processed-reports`，每起事件會進後端兩次。shadow 期間（`AGENT_SHADOW=1`）能併行，
+是因為那時 agent 一則都不送。
 
 ### 4. 後端落地（`backend/`）
 
@@ -231,11 +233,30 @@ Triton 熱載切版（服務不中斷）→ 可 --rollback
 migration（專案無 alembic，`init_db.py` 的 `create_all` 只建新表不加欄位），
 正式 PostgreSQL 沒加對應欄位會直接寫入失敗。
 
-### 6.2 兩套二審併行，agent 尚未 cutover
+### 6.2 二審已 cutover 到 `agent/`（2026-08-04）
 
-`agent/` 在 shadow 模式，正式服務的是 `vlm_worker.py`。
-`agent/docs/04-open-questions.md` 還有 Q4–Q7 未拍板（`uncertain` 的前端呈現、shadow 通過門檻、
-問答助手範圍、前端請求怎麼到 agent）。
+**正式服務是 `agent/`（LangGraph），啟動方式 `python -m agent.main`。**
+`ai/vlm_worker.py` 退居**回滾路徑**，不再常駐。
+
+> ⚠️ **兩者絕對不能同時跑。** consumer group 不同——`vlm_worker` 是 `vlm-brain-cluster`
+> （[`ai/vlm_worker.py:18`](../ai/vlm_worker.py#L18)），agent 是 `agent-reviewer`
+> （[`agent/config.py:110`](../agent/config.py#L110)）。Kafka 對不同 group 各給一份完整訊息，
+> 兩邊又都發到 `processed-reports`，所以併行 = 每起事件進後端**兩次**、護理師畫面跳兩次。
+> shadow 期間之所以能併行，是因為 `AGENT_SHADOW=1` 讓 agent 一則都不送。
+>
+> 回滾：`.env` 的 `AGENT_SHADOW` 改回 `1`、停掉 agent、再起 `vlm_worker.py`。
+
+cutover 同時修掉兩個「照現況切一定會壞」的點（實測報告：
+[`ai/docs/2026-08-04-agent-cutover.md`](../ai/docs/2026-08-04-agent-cutover.md)）：
+
+- `AlertMessage` 原本用 `extra="ignore"` 把邊緣端的 `snapshot_path`（`s3://` URI）丟掉，
+  publish 只好送本機路徑 → `backend/core/s3.py` 簽不出 presigned URL → 前端快照全空白
+- 多人同時跌倒的 `person_label` 一併補上，否則兩筆事件長得一模一樣
+
+**還沒解決**：`agent/docs/04-open-questions.md` 的 Q4–Q7 仍未拍板（`uncertain` 的前端呈現、
+shadow 通過門檻、問答助手範圍、前端請求怎麼到 agent）。上線是執行「先完整跑一輪」的決定，
+不代表這些問題有答案了。而且實測只驗過一筆事件、一條路徑（單人 → 遮擋 → 慢速道 →
+`true_alarm`），`false_alarm` / `uncertain` / 巡檢 / 多人並存都還沒實跑過。
 
 ### 6.3 `agent/docs/` 的架構文件已過時（07-19/20 寫的）
 
@@ -288,8 +309,8 @@ migration（專案無 alembic，`init_db.py` 的 `create_all` 只建新表不加
 
 1. 先只跑 **P1 核心鏈**（Triton + Kafka + backend + frontend），用 mp4 觸發一次跌倒
 2. 開 Kafka UI（`:8080`）看訊息實際長什麼樣 —— 比讀 schema 直觀
-3. 再起 `vlm_worker`，觀察慢速道多了什麼欄位
+3. 再起二審 `python -m agent.main`，觀察慢速道多了什麼欄位
 4. 最後才碰 MLOps（很吃資源，而且與核心鏈解耦）
 
-> **順序陷阱**：`vlm_worker` 是 `auto_offset_reset='latest'`，**一定要先起它再跑推論**，
-> 否則它看不到已經發生的事件。
+> **順序陷阱**：二審是 `auto_offset_reset='latest'`（`agent/main.py:87`，
+> `vlm_worker.py:17` 也是），**一定要先起它再跑推論**，否則它看不到已經發生的事件。
