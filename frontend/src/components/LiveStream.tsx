@@ -28,6 +28,19 @@ interface LiveStreamProps {
 }
 
 /**
+ * 連線掉了自動重試幾次才放棄、改show「連線失敗」讓人手動按。
+ *
+ * 為什麼需要自動重試：MediaMTX 在**推流端離開時會一併踢掉所有觀看者**。
+ * 這在正常運作下就會發生——推流端重啟、網路瞬斷、或 demo 用
+ * `scripts/demo_push_streams.py` 換下一支影片（每支播完就換）。
+ * 沒有自動重試的話，護理站的畫面會停在「連線失敗」等人去按，等於沒人看著就沒畫面。
+ */
+const MAX_AUTO_RETRIES = 6;
+/** 退避：1s → 2s → 4s → 8s，10 秒封頂。第一次刻意短，換片的空檔只有不到一秒。 */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 10_000;
+
+/**
  * 等 ICE candidate 收集完再送出 SDP：一次帶齊所有候選路徑，
  * 省掉逐筆傳送的來回協商（MediaMTX 支援這種一次性做法）。
  */
@@ -51,8 +64,12 @@ export function LiveStream({
 }: LiveStreamProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<ConnectionState>('connecting');
-  // 遞增此值即觸發重新連線（重試按鈕用）
+  // 遞增此值即觸發重新連線（自動重試與重試按鈕共用）
   const [attempt, setAttempt] = useState(0);
+  // 連續失敗次數。連上就歸零，所以「換片斷線 → 接回來」不會把退避愈拖愈長。
+  // 用 ref 不用 state：它只決定「下一次等多久」，不需要驅動畫面重繪。
+  const failStreakRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -75,8 +92,30 @@ export function LiveStream({
 
     pc.onconnectionstatechange = () => {
       if (cancelled) return;
-      if (pc.connectionState === 'connected') setState('connected');
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') setState('failed');
+      if (pc.connectionState === 'connected') {
+        failStreakRef.current = 0;
+        setState('connected');
+        return;
+      }
+      if (pc.connectionState !== 'failed' && pc.connectionState !== 'disconnected') return;
+
+      // 斷了。次數還沒用完就自己接回來，畫面維持「連線中…」而不是閃一下「連線失敗」——
+      // 換片的空檔只有一兩秒，讓值班人員看到失敗字樣再自己好，反而像系統在出問題。
+      if (failStreakRef.current < MAX_AUTO_RETRIES) {
+        const delay = Math.min(RETRY_BASE_MS * 2 ** failStreakRef.current, RETRY_MAX_MS);
+        failStreakRef.current += 1;
+        setState('connecting');
+        // 舊的計時器一律先清掉：failed 與 disconnected 可能連續觸發兩次，
+        // 不清就會排到兩顆計時器、attempt 一次跳兩格（等於白重連一次）。
+        if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          setAttempt((n) => n + 1);
+        }, delay);
+        return;
+      }
+      // 重試額度用完＝這條串流是真的沒了（推流端根本沒開），交給人工按
+      setState('failed');
     };
 
     void (async () => {
@@ -103,8 +142,19 @@ export function LiveStream({
       pc.onconnectionstatechange = null;
       pc.close();
       video.srcObject = null;
+      // 待命中的重試計時器也要收：換頻道或元件收掉之後才觸發的話，
+      // 會對著已經不該再連的目標多開一條連線
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
     };
   }, [whepUrl, channel, attempt]);
+
+  // 換鏡頭／換模式＝從頭算起，不要沿用上一條串流的失敗次數
+  useEffect(() => {
+    failStreakRef.current = 0;
+  }, [whepUrl, channel]);
 
   if (!whepUrl) {
     return (
@@ -130,6 +180,8 @@ export function LiveStream({
               // 不擋住事件冒泡的話，按重試會連帶把格子放大或縮小，看起來像沒重試。
               onClick={(e) => {
                 e.stopPropagation();
+                // 手動按＝重新給一輪自動重試的額度
+                failStreakRef.current = 0;
                 setAttempt((n) => n + 1);
               }}
               className="rounded-lg border border-[var(--border)] px-3 py-1 text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--brand-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
