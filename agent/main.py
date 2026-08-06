@@ -85,6 +85,20 @@ def build_consumer(settings: Settings):
         group_id=settings.kafka_group_id,
         enable_auto_commit=False,   # 處理完才手動 commit（at-least-once）
         auto_offset_reset="latest",
+        # 一次只取一則。**這行不能拿掉**，2026-08-06 四台相機實跑時被這個打死過：
+        # kafka-python 的 max_poll_records 預設是 500，而本 agent 每則要跑一次 VLM
+        # 判讀（約 6 秒）加一次 judge，一則約 8 秒。只要單次 poll 拿回超過約 37 則，
+        # 兩次 poll() 之間就會超過 max_poll_interval_ms（預設 300 秒），Kafka 會判定
+        # 這個 consumer 掛了、把 partition 收走給別人，接著 commit 就噴
+        # CommitFailedError（group has already rebalanced）。
+        #
+        # 症狀很難認：**行程還活著、log 也不再報錯，但它已經不在 group 裡、一則都不處理**，
+        # 看起來就像 agent 靜靜地停擺，事件永遠停在「二審判讀中」。
+        # 事件量低的時候一次拿不到幾則，所以單台相機測不出來。
+        #
+        # 設 1 讓 poll 迴圈每約 8 秒就回到 poll() 一次，離 300 秒門檻很遠。
+        # 代價是每則多一次 fetch 往返，相對於 8 秒的判讀完全可以忽略。
+        max_poll_records=1,
         # 不設 value_deserializer：拿原始 bytes 交給 handle_raw_message 自己解析，
         # 壞 JSON 才能在函式內被接住判成 poison，而不是在迭代時噴例外
     )
