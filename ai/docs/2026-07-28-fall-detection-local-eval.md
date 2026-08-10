@@ -303,6 +303,9 @@ test4.mp4 是**剪接過的**素材（實測偵測到 17 個畫面切換點）�
 `agent/sample_store.py` 收的是「單張快照 + sidecar JSON」，那整套是為 **YOLO-Pose**
 設計的。AcT 吃的是完全不同的東西：
 
+> 註（2026-08-10）：`agent/sample_store.py` 已刪除（見
+> [`docs/CHANGELOG-STAGES.md`](../../docs/CHANGELOG-STAGES.md) 第 15 項）。這段的結論不變。
+
 | | 現有資料集 | AcT 需要 |
 |---|---|---|
 | 輸入 | 單張圖片 | **連續 30 幀**的 34 維特徵序列 |

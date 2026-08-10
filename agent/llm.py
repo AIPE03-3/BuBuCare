@@ -7,7 +7,7 @@
 不改任何一行程式碼（已拍板決策，見 agent/docs/01-architecture.md §4）。
 
 VLM 走另一條路：Ollama 的多模態呼叫要傳本機圖檔路徑，用 ollama 原生 client 最直接，
-所以這裡只提供推理腦（judge / drafter / curator / 問答）。VLM 客戶端在 nodes/vlm.py。
+所以這裡只提供推理腦（judge / drafter / 問答）。VLM 客戶端在 nodes/vlm.py。
 """
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel

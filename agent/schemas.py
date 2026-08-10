@@ -10,7 +10,7 @@
    把這兩欄從 detect_events 與 EventCreateRequest 整組移除，現在送過去只會被
    Pydantic（預設 extra="ignore"）靜默丟掉。既然接收端已經沒有這兩欄，
    「不動舊欄位」就不再適用——本 Agent 亦同步不送。
-3. 各節點的 structured output —— judge / al_curator 要 LLM 吐的形狀。
+3. 各節點的 structured output —— judge 要 LLM 吐的形狀。
 """
 from datetime import datetime
 from typing import Literal, Optional, TypedDict
@@ -141,14 +141,6 @@ class JudgeResult(BaseModel):
     reasoning: str = Field(description="判定理由，繁體中文，寫給值班人員看")
 
 
-class ALDecision(BaseModel):
-    """al_curator 節點：這張圖值不值得收進回訓資料集（P4）。"""
-
-    keep: bool
-    reason: str
-    priority: Literal["low", "medium", "high"] = "low"
-
-
 # ════════════════════════════════════════════════════════
 # 4. 流經整張圖的 State
 # ════════════════════════════════════════════════════════
@@ -174,7 +166,6 @@ class AgentState(TypedDict, total=False):
     verdict: Verdict
     confidence: float
     reasoning: str
-    al_decision: Optional[ALDecision]
 
     # 流程控制：ingest 擋掉的壞資料在這裡標記原因，後續節點直接短路
     error: Optional[str]

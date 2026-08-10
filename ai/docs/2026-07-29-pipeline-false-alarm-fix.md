@@ -224,3 +224,6 @@ ai/.venv/bin/python ai/batch_eval.py --modes geo-first --occ-height 0.50  # 改�
 
 ⚠️ 現有的主動學習資料集（`agent/sample_store.py`）**餵不了 AcT**——
 那裡存的是單張快照，AcT 吃的是 30 幀序列，形態不同。
+
+> 註（2026-08-10）：`agent/sample_store.py` 已刪除（見
+> [`docs/CHANGELOG-STAGES.md`](../../docs/CHANGELOG-STAGES.md) 第 15 項）。這段的結論不變。

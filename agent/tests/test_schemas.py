@@ -5,7 +5,7 @@
 import pytest
 from pydantic import ValidationError
 
-from agent.schemas import AlertMessage, ALDecision, JudgeResult, ProcessedReport
+from agent.schemas import AlertMessage, JudgeResult, ProcessedReport
 
 # ⚠️ 以下兩則是從邊緣端「程式碼」抄來的真實訊息，不是文件範例。
 # 03-contracts.md §1 的範例與實際送出的格式不符（缺 device_id、camera_id 也對不上），
@@ -179,9 +179,3 @@ def test_judge_接受_uncertain():
 def test_judge_信心度必須在_0_到_1_之間(bad_confidence):
     with pytest.raises(ValidationError):
         JudgeResult(verdict="true_alarm", confidence=bad_confidence, reasoning="x")
-
-
-def test_主動學習決定的形狀():
-    decision = ALDecision(keep=True, reason="YOLO 分數低但確實跌倒", priority="high")
-
-    assert (decision.keep, decision.priority) == (True, "high")

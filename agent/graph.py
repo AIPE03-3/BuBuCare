@@ -6,10 +6,7 @@
             └─(告警事件)──→ vlm_analyze → judge ─┬─(uncertain 且還有補問次數)
                                  ↑                │      → followup → 回 vlm_analyze
                                  └────────────────┘                          │
-                                                  └─(其餘)─────────────────────┴→ publish
-                                                                                    ↓
-                                                                            al_curator → END
-                                                                          （告警已送出，不擋通知）
+                                                  └─(其餘)─────────────────────┴→ publish → END
 
 所有依賴（image store、VLM client、judge 模型、Kafka producer）都從外面傳進來，
 build_graph 自己不去讀環境變數也不建任何連線——這樣測試才能把整張圖跑在假的替身上。
@@ -18,7 +15,6 @@ import logging
 
 from langgraph.graph import END, START, StateGraph
 
-from agent.nodes.al_curator import make_al_curator_node
 from agent.nodes.env_report import make_env_report_node
 from agent.nodes.ingest import has_error, make_ingest_node
 from agent.nodes.judge import make_followup_node, make_judge_node, route_after_judge
@@ -36,8 +32,7 @@ def route_after_ingest(state: AgentState) -> str:
     return "routine" if state["alert"].is_routine_check else "review"
 
 
-def build_graph(*, image_store, vlm_client, judge_model, curator_model, sample_store,
-                producer, settings):
+def build_graph(*, image_store, vlm_client, judge_model, producer, settings):
     graph = StateGraph(AgentState)
 
     graph.add_node("ingest", make_ingest_node(image_store, settings.dlq_log_path))
@@ -45,13 +40,6 @@ def build_graph(*, image_store, vlm_client, judge_model, curator_model, sample_s
     graph.add_node("judge", make_judge_node(judge_model, settings.judge_max_retries))
     graph.add_node("followup", make_followup_node())
     graph.add_node("env_report", make_env_report_node(vlm_client, settings.vlm_max_retries))
-    graph.add_node("al_curator", make_al_curator_node(
-        curator_model,
-        sample_store,
-        enabled=settings.al_enabled,
-        fallback_min=settings.al_fallback_min_score,
-        fallback_max=settings.al_fallback_max_score,
-    ))
     graph.add_node("publish", make_publish_node(
         producer,
         settings.kafka_out_topic,
@@ -73,11 +61,11 @@ def build_graph(*, image_store, vlm_client, judge_model, curator_model, sample_s
     )
     graph.add_edge("followup", "vlm_analyze")   # 帶著追問回頭再問一次 VLM
     graph.add_edge("env_report", "publish")
-    # 策展刻意排在 publish **之後**：它多花約 3 秒的 LLM 呼叫，
-    # 而產出（al_decision）沒有任何人讀，publish 也用不到——
-    # 排在前面等於讓跌倒通知白等一個資料集決定。告警先送出去，樣本慢慢挑。
-    graph.add_edge("publish", "al_curator")
-    graph.add_edge("al_curator", END)
+    # publish 是終點。曾經在它後面掛 al_curator 收重訓樣本，2026-08-10 移除
+    # （收了 1037 筆一筆都進不了訓練，見 docs/CHANGELOG-STAGES.md 第 15 項）。
+    # 這條 END 是刻意寫出來的：LangGraph 對「沒有出邊的節點」不會報錯，
+    # 少寫它圖照跑、測試照綠，但下一個人看不出 publish 之後就結束了。
+    graph.add_edge("publish", END)
 
     return graph.compile()
 

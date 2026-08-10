@@ -15,7 +15,7 @@
 | Q6 | 問答助手的資料範圍 | ⬜ 未拍板 | P5.1 |
 | Q7 | 前端請求如何到 agent | ⬜ 未拍板（**拍一次解鎖兩期**） | P3.2、P5.3 |
 | Q8 | 視覺模型 | ✅ 已落地，**但驗出三個遺留問題** | P2.4 |
-| Q9 | al_curator priority 校準 | ⬜ 待 shadow 資料 | 不擋功能 |
+| Q9 | al_curator priority 校準 | ❌ 作廢（al_curator 於 2026-08-10 移除）| 不擋功能 |
 | Q10 | 時序資訊拿不到（VLM 看不了影片） | ⬜ 待邊緣端配合 | 篩選能力改善 |
 
 **目前最值得先解的是 Q7**：它是唯一一個「一個決定解鎖兩個期別」的問題，
@@ -159,6 +159,10 @@ Agent 存在的目的是幫值班人員濾掉誤報，目前它每一筆都往�
 
 ## Q9 — al_curator 的 priority 校準偏鬆 【不擋功能，擋實用性】
 
+> **本題作廢（2026-08-10）**：`al_curator` 已移除，見
+> [`docs/CHANGELOG-STAGES.md`](../../docs/CHANGELOG-STAGES.md) 第 15 項。
+> 以下實測結果保留 —— 日後若再做 LLM 挑樣本，「priority 全給 high」是已知的第一個坑。
+
 **現況**：以 `qwen2.5:7b` 實測三個情境，`priority` **全部給 `high`**：
 
 | 情境 | yolo | keep | priority |
@@ -186,7 +190,7 @@ Agent 存在的目的是幫值班人員濾掉誤報，目前它每一筆都往�
 | 圖檔路徑寫死個人機器路徑 | `ai/vlm_worker.py:74` | P0.2 環境變數化 |
 | **所有慢車道事件都被記到裝置 101**（比原本描述的更嚴重，見下） | `ai/vlm_worker.py:67,149` | ✅ 已修：AlertMessage 優先讀 `device_id`，抽不出編號才進 DLQ |
 | severity 用 `"Fall" in alert_type` 字串判斷 | `ai/vlm_worker.py:170` | ✅ 已解：欄位整個不存在了。後端 2026-07-19（`1bbb585`）就把 severity 從 `detect_events` 與 `EventCreateRequest` 移除，2026-07-27 補做 AI 端清理，judge 不再產這個值 |
-| 主動學習 0.35–0.85 寫死區間 | `ai/vlm_worker.py:136` | ✅ 已修：P4 以 al_curator 取代 |
+| 主動學習 0.35–0.85 寫死區間 | `ai/uncertainty_router.py:250` | ❌ **未修**。這欄本來就寫錯：正式路徑上的寫死區間一直在 `uncertainty_router`（`vlm_worker.py:136` 那份早已隨重構搬走），P4 的 `al_curator` 只是在 agent 那條並行實作裡另做一套，從沒取代過它；而 P4 已於 2026-08-10 移除 |
 
 ### 補充：裝置歸屬錯誤比原本記錄的嚴重（2026-07-20 核對程式碼發現）
 

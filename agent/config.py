@@ -52,12 +52,6 @@ class Settings:
     vlm_temperature: float       # 降低隨機性：實測同張圖同提示，llava 偶爾會拒答/答非所問
     judge_max_retries: int       # judge 判 uncertain 時回頭補問 VLM 的次數上限
 
-    # ── 主動學習樣本收錄 ──────────────────────────────────
-    al_enabled: bool             # 關掉就完全不收樣本（例如壓測時不想灌爆硬碟）
-    al_dataset_dir: str          # 樣本落地目錄，沿用現況的 active_learning_dataset
-    al_fallback_min_score: float # curator 失效時的退路規則下限（沿用現況 0.35）
-    al_fallback_max_score: float # 退路規則上限（沿用現況 0.85）
-
     # ── 落地檔案 ──────────────────────────────────────────
     dlq_log_path: str            # 壞訊息記錄（JSON lines）
     shadow_log_path: str         # shadow 模式的判定記錄（JSON lines）
@@ -123,12 +117,6 @@ def load_settings() -> Settings:
         vlm_timeout_seconds=_get_float("AGENT_VLM_TIMEOUT_SECONDS", "120"),
         vlm_temperature=_get_float("AGENT_VLM_TEMPERATURE", "0.1"),
         judge_max_retries=_get_int("AGENT_JUDGE_MAX_RETRIES", "1"),
-        al_enabled=_get_bool("AGENT_AL_ENABLED", "1"),
-        al_dataset_dir=os.getenv("AGENT_AL_DATASET_DIR", "active_learning_dataset"),
-        # 這兩個數字是 vlm_worker.py:136 的寫死區間，搬進設定當作 curator 失效時的退路，
-        # 不是主要判斷依據——主要依據是 al_curator 的 LLM 判斷
-        al_fallback_min_score=_get_float("AGENT_AL_FALLBACK_MIN_SCORE", "0.35"),
-        al_fallback_max_score=_get_float("AGENT_AL_FALLBACK_MAX_SCORE", "0.85"),
         dlq_log_path=os.getenv("AGENT_DLQ_LOG_PATH", "agent_dlq.jsonl"),
         shadow_log_path=os.getenv("AGENT_SHADOW_LOG_PATH", "agent_shadow.jsonl"),
     )

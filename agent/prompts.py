@@ -104,44 +104,6 @@ JUDGE_TEMPLATE = """你是安養中心的 AI 複判護理長，負責覆核邊�
 """
 
 
-AL_CURATOR_TEMPLATE = """你是機器學習資料集的策展人，負責挑出「值得拿來重新訓練跌倒偵測模型」的樣本。
-
-【這起事件】
-- 事件類型：{event_type}
-- 邊緣端 YOLO 信心度：{yolo_score:.2f}（觸發門檻 {yolo_threshold:.2f}）
-- VLM 影像判讀：{vlm_report}
-- 複判結果：{verdict}（信心 {confidence:.2f}）
-- 判定理由：{reasoning}
-
-【什麼樣本值得收】
-高價值的是**邊緣端模型判錯或判得勉強**的樣本，因為那才是它的盲點：
-1. YOLO 分數低（勉強過門檻甚至沒把握），但複判確認是真跌倒 → 漏抓的盲點，最有價值
-2. YOLO 分數高，但複判確認是誤報 → 誤觸發的盲點，同樣有價值
-3. YOLO 分數落在模糊地帶，複判也難以確定 → 邊界樣本，中等價值
-
-【什麼不值得收】
-- YOLO 判得又準又有把握，複判也完全同意 → 模型已經會了，收了是浪費
-- 影像本身無法判讀（全黑、嚴重遮蔽）→ 訓練用不上
-
-【輸出】
-- keep：是否收錄
-- reason：繁體中文，一句話說明為什麼收或不收，要具體指出是哪一類盲點
-- priority：high=明確的模型盲點；medium=邊界樣本；low=參考價值有限
-"""
-
-
-def build_al_curator_prompt(alert: AlertMessage, state: dict) -> str:
-    return AL_CURATOR_TEMPLATE.format(
-        event_type=alert.event_type,
-        yolo_score=alert.yolo_score,
-        yolo_threshold=alert.yolo_threshold,
-        vlm_report=state.get("vlm_report") or "（未取得影像判讀）",
-        verdict=state.get("verdict", "uncertain"),
-        confidence=state.get("confidence", 0.0),
-        reasoning=state.get("reasoning", ""),
-    )
-
-
 def describe_score_vs_threshold(score: float, threshold: float) -> str:
     """把「分數 vs 門檻」的比較先算好再寫進 prompt。
 

@@ -16,8 +16,7 @@ from agent.image_store import build_image_store
 from agent.jsonl import append_jsonl
 from agent.llm import build_structured_model
 from agent.nodes.vlm import build_vlm_client
-from agent.sample_store import ActiveLearningStore
-from agent.schemas import ALDecision, JudgeResult
+from agent.schemas import JudgeResult
 
 logger = logging.getLogger("agent")
 
@@ -110,8 +109,6 @@ def build_runtime(settings: Settings):
         image_store=build_image_store(settings),
         vlm_client=build_vlm_client(settings),
         judge_model=build_structured_model(settings, JudgeResult, temperature=0),
-        curator_model=build_structured_model(settings, ALDecision, temperature=0),
-        sample_store=ActiveLearningStore(settings.al_dataset_dir),
         producer=build_producer(settings),
         settings=settings,
     )

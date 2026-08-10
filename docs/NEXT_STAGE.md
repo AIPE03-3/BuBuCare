@@ -25,7 +25,8 @@ Mac 本機環境的建置任務表在 [`docs/MAC_SETUP_WBS.md`](MAC_SETUP_WBS.md
 第 1 項 S3 上傳、第 2 項六大防線收斂 + 模組白名單、第 3 項 Triton GPU/CPU 對照、
 第 5 項事件冷卻計時器、第 6 項 agent P2、第 7 項 `stream_channel` 改名、
 第 8 項偵測畫面推流、第 9 項真攝影機實測（含 `normal_h_reference` 換來源重設）、
-第 10 項 MLOps 進版控、第 14 項 VLM 二審模型切換至 `qwen2.5vl:7b`。
+第 10 項 MLOps 進版控、第 14 項 VLM 二審模型切換至 `qwen2.5vl:7b`、
+第 15 項 agent 的 `al_curator` 移除。
 
 ---
 
@@ -182,6 +183,22 @@ ByteTrack + 逐人身高基準 + 連續幀 debounce + 逐人閂鎖/復原 + 同�
 程式碼；改線上則是動偵測行為、而且會丟掉 `249f132` 修的東西。真要收斂時建議的順序是
 先補一組線上規則的離線量測，再決定要不要往 `aspect` 走（那看起來是誤報最低的，
 但召回也最低，要跟 11-2 一起評估）。
+
+### 11-5 主動學習樣本進不了訓練（agent 那條已拆，`ai/` 那條還在）
+
+`agent` 的 `al_curator` 已於 2026-08-10 移除（見
+[`CHANGELOG-STAGES.md`](CHANGELOG-STAGES.md) 第 15 項），但**問題只是少了一個生產者**：
+
+- `ai/active_learning_dataset/` 裡 **1037 張沒有標註的圖還在**，每次跑
+  `ai/prepare_dataset.py` 都會被隔離一次（`隔離・沒有對應標註` → `_quarantine/images/`）。
+  要嘛送進 Label Studio 補標，要嘛移走。**本輪刻意沒動這些檔案**
+  （在 `.gitignore` 內、且刪資料不可逆）。
+- 還在收樣本的是 [`ai/uncertainty_router.py:250`](../ai/uncertainty_router.py#L250) 的
+  寫死區間 `0.35 ≤ yolo_score ≤ 0.85`，配 `package_active_learning_sample()` 寫的
+  **假 YOLO-Pose 座標**（每張圖同一組數字，與畫面無關）。那 143 個 `labels/` 就是這樣來的
+  —— **有標註，但標註是假的**。這比沒有標註更難發現。
+- 也就是說：**目前這條迴路兩端都不通**，一端沒標註、一端標註是假的。
+  接 AcT 重訓（第 11 項）之前要先把這件事講清楚。
 
 ---
 
