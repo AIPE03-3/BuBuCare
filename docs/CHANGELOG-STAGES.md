@@ -15,6 +15,83 @@
 
 ---
 
+## 15.【已完成】移除 agent 的 `al_curator` —— 收了 1037 筆樣本，一筆都進不了訓練
+
+分支 `refactor/agent-remove-al-curator`。刪除的 commit：`b61b1ad`。
+
+### 為什麼拆掉
+
+`al_curator` 每筆告警多花一次約 3.2 秒的 LLM 呼叫，判斷「這張圖值不值得回訓」，
+收錄的走 `agent/sample_store.py` 落地成「圖檔 + sidecar JSON」。它有兩個問題疊在一起：
+
+1. **刻意不寫 `labels/`**（`sample_store.py` 檔頭寫得很清楚：假標註比沒有更糟）。
+   而 `ai/prepare_dataset.py:269-274` 遇到沒有對應 `.txt` 的圖，會計進
+   `隔離・沒有對應標註` 並複製進 `_quarantine/images/`。
+   **收進來的樣本結構上就進不了訓練。**
+2. **`.env` 把它指到正式資料集**。`.env.example` 原本要它寫進
+   `ai/active_learning_dataset/agent_shadow/`（註解明寫「shadow 期間不要污染正式資料集」），
+   但實際的 `.env` 是 `ai/active_learning_dataset` —— D 組重訓在用的那個。
+
+2026-08-10 清點 `ai/active_learning_dataset/`：
+
+| | 數量 | 誰寫的 |
+|---|---:|---|
+| `images/` | 1180 | 兩邊都有 |
+| `labels/` | 143 | 全部是 `ai/uncertainty_router.py` |
+| `meta/`（sidecar）| 1037 | 全部是 `agent/sample_store.py` |
+| **沒有標註的圖** | **1037** | 跑 `prepare_dataset.py` 全進 `_quarantine` |
+
+`143 + 1037 = 1180`，兩組完全不重疊。已上線的兩顆模型都沒有用到這 1037 筆：
+RT-DETR v2 是 2026-07-29 用當時的 111 份標註檔訓的（**比第一筆 agent 樣本早 6 天**），
+AcT v2 用的是 CAUCAFall 資料集，`grep -rn "active_learning" ai/train/` 零命中。
+
+`docs/TEST-PLAN-E2E.md` 第 4 項發現與 `agent/docs/04-open-questions.md` Q9 早就記過
+品質問題（priority 全給 high、把「高分＋真跌倒」說成誤觸發盲點），
+但真正的問題不是判得準不準，是**那條路的終點根本沒接上**。
+
+### 拆了什麼
+
+圖從 7 節點縮成 6 節點，`publish` 之後直接 `END`。刪掉四支檔案
+（`agent/nodes/al_curator.py`、`agent/sample_store.py` 與兩支測試），
+以及只剩它在用的 `ALDecision`、`AgentState.al_decision`、`AL_CURATOR_TEMPLATE`、
+四個 `al_*` 設定與 `AGENT_AL_DATASET_DIR`。測試 181 → 153 條。
+
+`test_graph.py` 補了一條 `test_publish_是圖的終點`。被刪掉的 `test_告警先送出再策展`
+是全 repo **唯一**釘住圖拓樸的測試 —— 而 LangGraph 1.2.9 的 `StateGraph.validate()`
+只擋「未知的邊來源／目標」與「缺 START」，**節點沒有出邊照樣編譯成功**。
+沒有替代品的話，日後在 `publish` 後面再掛一個慢節點不會有任何測試變紅，
+那正是 al_curator 當初的樣子。
+
+**沒有動 `ai/`**：`ai/uncertainty_router.py:250` 的 `0.35 <= yolo_score <= 0.85`
+與 `package_active_learning_sample()` 是正式路徑上真正在收樣本的那條，這次不碰。
+已經落地的樣本檔案也沒動（`ai/active_learning_dataset/` 在 `.gitignore:103` 內）。
+
+### 怎麼取回
+
+四支檔案只在 git 歷史裡。`^` 是刪之前那顆（還有檔案的版本）：
+
+```bash
+git show b61b1ad^:agent/nodes/al_curator.py            > agent/nodes/al_curator.py
+git show b61b1ad^:agent/sample_store.py                > agent/sample_store.py
+git show b61b1ad^:agent/tests/test_nodes_al_curator.py > agent/tests/test_nodes_al_curator.py
+git show b61b1ad^:agent/tests/test_sample_store.py     > agent/tests/test_sample_store.py
+```
+
+⚠️ **但只撈這四支不會動** —— 圖的接線、`Settings` 的四個欄位、`conftest.py` 的
+`make_settings` 預設、`ALDecision` 與 prompt 模板全在同一顆 commit 裡被拿掉了。
+真的要整套復活，用這個，不要手撈：
+
+```bash
+git show b61b1ad --stat      # 先看那顆改了哪 14 個檔
+git revert --no-commit b61b1ad
+```
+
+復活前先解掉當初的死結，否則收回來的還是進不了訓練：
+**要嘛接上真正的標註步驟（Label Studio 已在 `ai/` 的迴路裡），要嘛不要收。**
+收一堆沒有標註的圖不是「先存著以後再說」，是讓 `prepare_dataset.py` 每次都多隔離 1000 張。
+
+---
+
 ## 10.【已完成】MLOps 進版控 —— 換一台機器整條不再消失
 
 分支 `feat/mlops-into-vcs`。完整 runbook 見 **[`ai/MLOPS.md`](../ai/MLOPS.md)**。

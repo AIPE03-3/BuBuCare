@@ -63,7 +63,7 @@ Kafka 1: nursing-home-alerts
 **為什麼草稿不走 Kafka**：草稿是一次 LLM 呼叫（估計 3–8 秒），且只在 `true_alarm` 時需要——
 正好是最該快的那條路。塞進 Kafka 訊息等於讓跌倒通知等草稿產生完才發得出去。
 改成開表單時即時產生後，告警路徑上完全沒有草稿的成本，而且草稿產生失敗也只是表單空白，
-不會影響告警本身。同樣的理由已經套用在 `al_curator` 上（見 §3.2）。
+不會影響告警本身。
 
 ## 3. LangGraph 圖設計
 
@@ -86,7 +86,6 @@ class AgentState(TypedDict):
     verdict: Literal["true_alarm", "false_alarm", "uncertain"]
     confidence: float              # Agent 對自己判定的信心 0~1
     reasoning: str                 # 判定理由（繁中，給人看）
-    al_decision: ALDecision | None # 主動學習收錄決定
 
     # 流程控制
     error: str | None              # ingest 擋掉壞資料時標記原因，後續節點短路
@@ -105,9 +104,7 @@ ingest ─┬─(drop：壞資料/缺圖)─────────────
                                      ↑  (失敗重試≤2)  │
                                      └─ followup ←────┤(retry_vlm：uncertain 且未達補問上限)
                                                       │
-                                     (publish：其餘)───┴→ publish（Kafka 2）
-                                                              ↓
-                                                         al_curator → END
+                                     (publish：其餘)───┴→ publish（Kafka 2）→ END
 ```
 
 | 節點 | 型態 | 職責 |
@@ -117,16 +114,19 @@ ingest ─┬─(drop：壞資料/缺圖)─────────────
 | `judge` | **LLM 節點** | 綜合 yolo_score、VLM 報告、事件類型 → structured output（verdict/confidence/reasoning）。`uncertain` 且未達補問上限 → 走 `followup` 回 `vlm_analyze` |
 | `followup` | 純函式 | 組追問內容、累加補問次數 |
 | `env_report` | 工具節點 | 巡檢報告整理（沿用現況功能，不加戲）；不做真假判定 |
-| `publish` | 純函式 | 組 Kafka 2 訊息（現有格式超集）、冪等去重、flush、記 log |
-| `al_curator` | LLM 節點 | 判斷樣本回訓價值（取代寫死的 0.35–0.85 規則），輸出 `{keep, reason, priority}` |
+| `publish` | 純函式 | 組 Kafka 2 訊息（現有格式超集）、冪等去重、flush、記 log。**圖的終點** |
 
 分流不是獨立節點，而是條件邊（`route_after_ingest` / `route_after_judge` 兩個純函式），
 所以分支邏輯可以單測，不必跑整張圖。
 
-**`al_curator` 刻意排在 `publish` 之後**（2026-07-20 修正）：它是一次 LLM 呼叫，
-實測平均 3.2 秒（qwen2.5:7b），而產出 `al_decision` 沒有任何人讀、`publish` 組訊息時也用不到。
-排在前面等於讓跌倒通知白等一個資料集決定。改成先發告警再挑樣本後，處理總時間不變，
-但告警早 3.2 秒送出。`test_告警先送出再策展` 釘住這個順序。
+**`al_curator` 已於 2026-08-10 移除**（原本排在 `publish` 之後，理由是它多花 3.2 秒的
+LLM 呼叫而產出沒人讀）。移除的理由比排序更根本：那 3.2 秒換來的樣本沒有標註，
+`ai/prepare_dataset.py` 一律隔離，回訓一筆都用不到。完整緣由與取回方式見
+[`docs/CHANGELOG-STAGES.md`](../../docs/CHANGELOG-STAGES.md) 第 15 項。
+
+「對告警沒必要的 LLM 節點排在 `publish` 之後或移出圖外」這條原則仍然有效，
+現存的例子是通報單草稿（§2）。`test_publish_是圖的終點` 接手釘住拓樸——
+LangGraph 對「節點沒有出邊」與「publish 後面被接上新節點」都不會報錯，沒有斷言就沒有防線。
 
 設計原則：**LLM 節點只做判斷，副作用（Kafka、檔案）全部集中在純函式節點**，方便單元測試與重放。
 
@@ -140,7 +140,7 @@ ingest ─┬─(drop：壞資料/缺圖)─────────────
 | 用途 | 決定 | 說明 |
 |---|---|---|
 | 視覺複判（VLM） | **Ollama `llava`（維持現況）** | 已驗證可跑、零成本、影像不出門；Agent 只是把它從主角降為工具 |
-| Agent 推理（judge/curator/草稿/問答） | **開發期：地端 Ollama**（任一支援 structured output 的文字模型；勿用 llava 當推理腦）。**已實測可用：`qwen2.5:7b`** | 在開發者本機開發測試，零 API 成本。已知代價：地端小模型的 structured output 穩定度低於雲端，因此 judge 的解析失敗降級路徑（→ ai_verdict=null 交回人工）是**必要防線，不是加分項** |
+| Agent 推理（judge/草稿/問答） | **開發期：地端 Ollama**（任一支援 structured output 的文字模型；勿用 llava 當推理腦）。**已實測可用：`qwen2.5:7b`** | 在開發者本機開發測試，零 API 成本。已知代價：地端小模型的 structured output 穩定度低於雲端，因此 judge 的解析失敗降級路徑（→ ai_verdict=null 交回人工）是**必要防線，不是加分項** |
 | 未來正式環境 | **未拍板**（續留地端或切雲端 API 再議） | factory 抽象保證切換只改環境變數：`AGENT_LLM=ollama:qwen3` ↔ `AGENT_LLM=anthropic:claude-haiku-4-5-20251001` |
 
 實作要求：所有 LLM 呼叫走同一個 factory（`agent/llm.py`，`init_chat_model` 抽象），模型名稱、API key、base_url 全部進 `agent/config.py` 讀環境變數，**程式碼中不得出現寫死的模型名或路徑**（順手修掉 vlm_worker 寫死 `/Users/albert/...` 的既有問題）。預設值即開發環境，無任何雲端依賴也能完整跑通。
@@ -150,7 +150,7 @@ ingest ─┬─(drop：壞資料/缺圖)─────────────
 規劃當初把「支援 tool calling」列為推理模型的必要條件，但**實作到目前為止一次都沒用到**——
 沒有 `bind_tools`、沒有 `@tool`、沒有 `ToolNode`。所有 LLM 節點都只用 structured output（填一張表）。
 
-原因：複判流程是固定的（取圖 → 看圖 → 判定 → 發布 → 策展），沒有「要不要查資料、先查哪個」
+原因：複判流程是固定的（取圖 → 看圖 → 判定 → 發布），沒有「要不要查資料、先查哪個」
 的決策空間。把固定流程交給 LLM 自由決定，只會多一個不穩定來源，地端小模型尤其。
 圖的邊由程式決定，LLM 只在被叫到時回答問題。
 
@@ -165,10 +165,9 @@ ingest ─┬─(drop：壞資料/缺圖)─────────────
 ```
 agent/                        # 頂層套件（與 backend/、ai/ 平行）
 ├── __init__.py
-├── config.py                 # 環境變數集中（Kafka、LLM、圖檔來源、閾值、樣本收錄）
+├── config.py                 # 環境變數集中（Kafka、LLM、圖檔來源、閾值）
 ├── llm.py                    # LLM factory（init_chat_model 抽象）
 ├── image_store.py            # ImageStore 抽象（local / s3 兩種後端，見 §8）
-├── sample_store.py           # 主動學習樣本落地（圖檔 + sidecar JSON）
 ├── schemas.py                # AlertMessage / ProcessedReport / AgentState / structured output
 ├── prompts.py                # 所有 prompt 集中，節點只管流程不管措辭
 ├── jsonl.py                  # DLQ 與 shadow 判定記錄的落地工具
@@ -178,7 +177,6 @@ agent/                        # 頂層套件（與 backend/、ai/ 平行）
 │   ├── vlm.py
 │   ├── judge.py
 │   ├── env_report.py
-│   ├── al_curator.py
 │   └── publish.py
 ├── qa/                    ⬜ # 事件問答助手（P5，獨立小圖 + 唯讀 DB 工具）
 ├── docs/                     # 本資料夾（規劃文件與程式碼放一起）
