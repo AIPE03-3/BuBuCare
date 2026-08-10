@@ -60,15 +60,6 @@ class ScriptedVlm:
         return item
 
 
-class FakeSampleStore:
-    def __init__(self):
-        self.saved = []
-
-    def save(self, image_path, metadata):
-        self.saved.append((image_path, metadata))
-        return image_path
-
-
 class ScriptedJudge:
     def __init__(self, script):
         self.script = list(script)
@@ -99,11 +90,8 @@ def build(settings, fake_producer):
             image_store=store or FakeStore(),
             vlm_client=vlm,
             judge_model=judge,
-            # 策展預設關閉：這批測試在乎的是複判與發布，開著會讓每個案例都多一次假 LLM 呼叫
-            curator_model=ScriptedJudge([]),
-            sample_store=FakeSampleStore(),
             producer=fake_producer,
-            settings=dataclasses.replace(cfg, al_enabled=False),
+            settings=cfg,
         )
         return (lambda msg: run_once(graph, msg, cfg.judge_max_retries)), fake_producer, vlm, judge
     return _build
@@ -258,108 +246,26 @@ def test_補問次數為零時不補問(build):
     assert judge.calls == 1
 
 
-# ── 主動學習策展接在圖裡 ────────────────────────────────
-@pytest.fixture
-def build_with_curation(settings, fake_producer):
-    """策展開啟的圖；回傳 (跑一筆的函式, producer, sample_store)。"""
-    import dataclasses
+# ── 圖的拓樸 ────────────────────────────────────────────
+def test_publish_是圖的終點(settings, fake_producer):
+    """六個節點，publish 之後直接 END。
 
-    def _build(curator_script, judge_script=None, message_verdict="true_alarm"):
-        sample_store = FakeSampleStore()
-        graph = build_graph(
-            image_store=FakeStore(),
-            vlm_client=ScriptedVlm(["VLM 報告：長者倒臥於地面"]),
-            judge_model=ScriptedJudge(judge_script or [JudgeResult(
-                verdict=message_verdict, confidence=0.9, reasoning="理由")]),
-            curator_model=ScriptedJudge(curator_script),
-            sample_store=sample_store,
-            producer=fake_producer,
-            settings=dataclasses.replace(settings, al_enabled=True),
-        )
-        return (lambda msg: run_once(graph, msg, settings.judge_max_retries)), fake_producer, sample_store
-    return _build
-
-
-def test_告警先送出再策展(settings, fake_producer):
-    """策展是 LLM 呼叫（實測約 3 秒），排在 publish 前等於讓跌倒通知白等。
-
-    這條測試釘住順序：告警必須先進 Kafka，樣本才慢慢挑。
+    原本釘住流程順序的是 test_告警先送出再策展，它隨 al_curator 一起刪了（2026-08-10）。
+    留這條的理由跟當初那條一樣：LangGraph 對「publish 後面被接上新節點」不會抱怨，
+    對「節點沒有出邊」也不會抱怨，沒有斷言就完全沒有防線。
     """
-    import dataclasses
-
-    from agent.schemas import ALDecision
-
-    order = []
-
-    class RecordingProducer:
-        def send(self, topic, value=None):
-            order.append("publish")
-
-        def flush(self):
-            pass
-
-    class RecordingStore:
-        def save(self, image_path, metadata):
-            order.append("curate")
-            return image_path
-
     graph = build_graph(
         image_store=FakeStore(),
-        vlm_client=ScriptedVlm(["VLM 報告：長者倒臥於地面"]),
-        judge_model=ScriptedJudge([JudgeResult(
-            verdict="true_alarm", confidence=0.9, reasoning="理由")]),
-        curator_model=ScriptedJudge([ALDecision(keep=True, reason="漏抓盲點", priority="high")]),
-        sample_store=RecordingStore(),
-        producer=RecordingProducer(),
-        settings=dataclasses.replace(settings, al_enabled=True),
+        vlm_client=ScriptedVlm([]),
+        judge_model=ScriptedJudge([]),
+        producer=fake_producer,
+        settings=settings,
     )
-    run_once(graph, ALERT_MESSAGE, settings.judge_max_retries)
+    drawn = graph.get_graph()
 
-    assert order == ["publish", "curate"], "告警必須先送出，策展不得擋在通知前面"
-
-
-def test_策展在圖裡執行且不影響發布(build_with_curation):
-    from agent.schemas import ALDecision
-
-    run, producer, sample_store = build_with_curation(
-        [ALDecision(keep=True, reason="YOLO 偏低但確認跌倒，屬漏抓盲點", priority="high")]
-    )
-
-    run(ALERT_MESSAGE)
-
-    assert len(sample_store.saved) == 1                     # 樣本有收
-    assert producer.sent[0][1]["ai_verdict"] == "true_alarm"  # 發布內容不受影響
-
-
-def test_策展判定不收時發布照常(build_with_curation):
-    from agent.schemas import ALDecision
-
-    run, producer, sample_store = build_with_curation(
-        [ALDecision(keep=False, reason="模型已經判得準", priority="low")]
-    )
-
-    run(ALERT_MESSAGE)
-
-    assert sample_store.saved == []
-    assert len(producer.sent) == 1
-
-
-def test_策展壞掉不擋發布(build_with_curation):
-    # 資料集是附加價值，事件該送還是要送
-    run, producer, sample_store = build_with_curation([RuntimeError("策展模型爆炸")])
-
-    run(ALERT_MESSAGE)
-
-    assert len(producer.sent) == 1
-
-
-def test_巡檢事件不經過策展(build_with_curation):
-    run, producer, sample_store = build_with_curation([])   # 一被呼叫就會 IndexError
-
-    run(ROUTINE_MESSAGE)
-
-    assert sample_store.saved == []
-    assert len(producer.sent) == 1
+    assert {n for n in drawn.nodes if not n.startswith("__")} == {
+        "ingest", "vlm_analyze", "judge", "followup", "env_report", "publish"}
+    assert ("publish", "__end__") in {(e.source, e.target) for e in drawn.edges}
 
 
 # ── Shadow 模式端到端 ───────────────────────────────────
