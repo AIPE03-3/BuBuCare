@@ -1,96 +1,37 @@
-# 長照跌倒偵測系統
+# merge/cutover-and-netdata（整合分支，尚未併入 main，先單獨留著）
 
-資策會 AIPE03 第三組。攝影機畫面進來 → AI 判斷有沒有人跌倒 → 通知護理站 → 留下影片證據
-供人工複判 → 複判結果回頭餵給模型重訓。
+這不是單一功能分支，是把 5 個已經各自做完、驗證過的功能疊在一起的**整合分支**，
+先在這裡跑過一輪再考慮要不要正式對 main 發 PR。目前**刻意不合併**，純粹保留內容。
 
-```
-攝影機/mp4 ─→ MediaMTX ─→ ai/（Triton 三顆模型）─→ Kafka ─→ backend/ ─→ frontend/
-                                     │                        （FastAPI）   （React）
-                              低信心的走二審 ──→ VLM
-                                     │
-                              事件樣本 ──→ Label Studio ──→ ClearML 重訓 ──→ Triton 熱載
-```
+## 裡面裝了什麼（依時間順序）
 
-**這份只是路標。** 要理解系統怎麼運作，看 **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**。
+| 功能 | commit | 說明 |
+|---|---|---|
+| agent consumer 一次只取一則 | `ab1c485` | 修四台相機量大時，consumer 被 Kafka 踢出 group 的缺陷（`max_poll_records=1`） |
+| VLM 二審判讀事後補寫 | `69f1cf1` | 判讀結果補寫回同一筆事件，前端警示視窗就地更新 |
+| 四宮格 demo 影片牆 | `117abae` | 四台各播各的 `test_demo` 影片，串流斷線自動重連 |
+| Netdata 機器層監控 | `a71fcc7` | 記錄原生 Netdata 安裝與 Triton 指標接線的文件 |
+| 二審 cutover 到 LangGraph | `9242aa0` | 原 PR #36（已關閉）的內容——正式二審從 `ai/vlm_worker.py` 換成 `agent/`，並修掉快照全空白、多人跌倒分不清人數這兩個 cutover 後一定會壞的點 |
 
----
+領先 main 11 顆 commit、落後 main 3 顆。原本各自獨立的 5 支來源分支
+（`feat/agent-cutover`、`fix/agent-poll-records`、`feat/alert-vlm-enrichment`、
+`feat/demo-video-wall`、`feat/netdata-machine-monitoring`）內容已完整收在這裡，
+那幾支分支已刪除，不會遺失任何東西。
 
-## 目錄結構
+## 跟目前 main 的關係，有一點要注意
 
-| 目錄 | 負責什麼 |
-|---|---|
-| [`ai/`](ai/) | 邊緣端推論。Triton 跑 `yolo_pose` / `rt_detr` / `action_transformer` 三顆模型判定跌倒，事件發進 Kafka；MLOps 重訓迴路也在這。檔案索引見 [`ai/README.md`](ai/README.md) |
-| [`backend/`](backend/) | FastAPI + PostgreSQL(AWS RDS)。消費 Kafka 落 DB、SSE 推前端、簽 S3 presigned URL |
-| [`frontend/`](frontend/) | React 19 + Tailwind 4。事件中心、即時監控、通報單、歷史查詢 |
-| [`agent/`](agent/) | LangGraph 版二審（7 節點）。**目前 shadow 模式**，正式服務的仍是 `ai/vlm_worker.py` |
-| [`streaming/`](streaming/) | MediaMTX 設定與串流說明 |
-| [`scripts/`](scripts/) | 護欄檢查、環境自檢 |
-| [`gcp_vm_environment/`](gcp_vm_environment/) | 雲端 VM 的部署設定（與主 stack 是兩套架構，導入時要搬零件不要並存） |
-| [`docs/`](docs/) | 全部文件，見下 |
+落後的那 3 顆 main commit 裡包含 2026-08-10 移除 `al_curator` 主動學習節點的重構
+（PR #38）。這支分支是在那之前分岔出去的，所以還帶著 `agent/nodes/al_curator.py`
+等舊檔案。用 `git merge-tree` 模擬過真的合併進 main：**沒有文字衝突**（兩邊改到
+`agent/schemas.py`、`agent/main.py` 的地方剛好是不同段落），但**合乾淨不等於語意對**——
+真要合併前務必照專案慣例跑一次 `agent` pytest + `backend` pytest +
+`python3 scripts/check_guardrails.py`，再實際起服務打一次 API 驗證。
 
----
+## 之後真的要推進
 
-## 先讀哪一份
-
-| 你想做什麼 | 看這份 |
-|---|---|
-| **動手改任何東西之前** | [`CLAUDE.md`](CLAUDE.md) —— 硬規則（模組白名單、契約邊界、金鑰分工），機器會擋 |
-| 理解整個系統 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— 資料怎麼流、為什麼這樣設計 |
-| **知道哪裡還是壞的** | 同上第六節「現況與規劃的差距」 |
-| 把系統跑起來（Linux/一般） | [`docs/DEPLOY.md`](docs/DEPLOY.md) |
-| 把系統跑起來（macOS） | [`docs/RUN_ON_MAC.md`](docs/RUN_ON_MAC.md) |
-| 協作規矩、分支流程 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) |
-| 還有什麼沒做完 | [`docs/NEXT_STAGE.md`](docs/NEXT_STAGE.md) |
-| 某件事當初為什麼那樣做 | [`docs/CHANGELOG-STAGES.md`](docs/CHANGELOG-STAGES.md) |
-| 推論跑多快、瓶頸在哪 | [`ai/FPS_NOTES.md`](ai/FPS_NOTES.md) —— FPS 量測與提速實驗；效能對照見 [`ai/BENCHMARK_GPU_VS_CPU.md`](ai/BENCHMARK_GPU_VS_CPU.md)（有沒有 GPU）與 [`ai/BENCHMARK_TRITON_VS_LOCAL.md`](ai/BENCHMARK_TRITON_VS_LOCAL.md)（Triton 這層值不值得）|
-
-`backend/` `frontend/` `agent/` 各自的 `docs/` 有該層更細的設計文件。
+從這支對 main 開 PR（會涵蓋上面 5 項功能），不用再回頭處理已刪除的那 5 支來源分支。
 
 ---
 
-## 最快跑起來
-
-```bash
-cp .env.example .env      # 填好裡面的憑證，不填會被 docker compose 直接擋下來
-docker compose up -d      # kafka / kafka-ui / backend / frontend
-```
-
-前端 <http://localhost>、後端 <http://localhost:8000/docs>。
-
-AI 推論不在這包（要 Triton + 模型權重），照 [`docs/DEPLOY.md`](docs/DEPLOY.md) 或
-[`docs/RUN_ON_MAC.md`](docs/RUN_ON_MAC.md) 走。
-
-> **⚠️ Triton 的 HTTP 埠是 8010 不是 8000** —— 8000 被 backend 佔了。
-> 沒設 `TRITON_*_URL` 的話推論會打到 FastAPI 拿 404 然後**靜默降級**：
-> 畫面照跑、FPS 照印、零紅字，但姿態偵測全程失效。
-
----
-
-## 動工前一定要知道的三件事
-
-1. **`ai/modules/` 有白名單，而且是機器在擋。** 模組只能回傳訊號，
-   **不准自己送 Kafka** —— 曾經三個模組各自組 payload 外發，欄位對不上被後端 422
-   靜默丟棄，跑短影片測不出來。規則與理由在 [`CLAUDE.md`](CLAUDE.md) 第一節。
-
-2. **兩組 S3 金鑰刻意分開。** AI 端上傳用 `S3_RW_*`（讀寫），後端簽網址用
-   `S3_REGION`/`ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`（唯讀）。
-   **不要把讀寫金鑰塞進後端那三個名字。**
-
-3. **不要直接 push `test/main-integration`。** 開自己的分支 → PR → 在有 GPU 的機器驗過再合。
-
-送出前跑一次護欄（pre-commit 與 CI 也都會跑）：
-
-```bash
-python3 scripts/check_guardrails.py
-```
-
----
-
-## ⚠️ 這個系統還沒有生產就緒
-
-跌倒偵測在**俯視鏡頭**下的幾何判定是失效的（站著的人軀幹投影就接近水平，
-與臥倒特徵相同，調門檻無效），而正式環境正是公共區域俯視。
-MLOps 迴路目前是**半自動**，有幾支元件從未被驗證過。
-
-不要照前面幾節的樂觀描述估算成熟度 ——
-完整清單在 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) 第六節，那節是刻意寫最詳細的。
+專案完整說明請看 main 分支的 [README.md](../../blob/main/README.md) 與
+[`CLAUDE.md`](../../blob/main/CLAUDE.md)——這份是分支專屬的狀態說明，不是專案總覽。
