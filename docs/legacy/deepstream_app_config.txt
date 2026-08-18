@@ -1,0 +1,96 @@
+# =========================================================================
+# 🚀 NVIDIA DeepStream 7.0 Master Pipeline Configuration
+# AIPE03 Care Facility AI Fall Detection & Streaming Pipeline
+# =========================================================================
+
+[application]
+enable-perf-measurement=1
+perf-measurement-interval-sec=5
+
+# -------------------------------------------------------------------------
+# 1. 視訊輸入源 (Input Source - 直接讀取 IP Camera 原始 RTSP 串流)
+# 對齊老師架構：IP Camera -> DeepStream
+# -------------------------------------------------------------------------
+[source0]
+enable=1
+# 4 = RTSP 串流
+type=4
+# 預設讀取真實 IP Camera 網址 (或 MediaMTX 模擬頻道)
+uri=rtsp://localhost:8554/cam_in
+num-sources=1
+gpu-id=0
+drop-frame-interval=0
+rtsp-reconnect-interval-sec=15
+
+# -------------------------------------------------------------------------
+# 2. 多路串流轉接與記憶體管理 (Stream Muxer)
+# -------------------------------------------------------------------------
+[streammux]
+gpu-id=0
+batch-size=1
+batched-push-timeout=40000
+width=1280
+height=720
+nvbuf-memory-type=0
+
+# -------------------------------------------------------------------------
+# 3. AI 模型推理 (Primary Inference Engine via Triton Server)
+# -------------------------------------------------------------------------
+[primary-gie]
+enable=1
+gpu-id=0
+gie-unique-id=1
+nvbuf-memory-type=0
+# 使用 nvinferserver 連結 Triton Inference Server
+plugin-type=1
+config-file=config_infer_triton.txt
+
+# -------------------------------------------------------------------------
+# 4. 物件追蹤器 (NvDCF / ByteTrack Object Tracker)
+# -------------------------------------------------------------------------
+[tracker]
+enable=1
+tracker-width=640
+tracker-height=384
+gpu-id=0
+ll-lib-file=/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+ll-config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/config_tracker_NvDCF_perf.yml
+
+# -------------------------------------------------------------------------
+# 5. On-Screen Display (OSD - 骨架與跌倒紅框即時繪製)
+# -------------------------------------------------------------------------
+[osd]
+enable=1
+gpu-id=0
+border-width=3
+text-size=15
+text-color=1;1;1;1
+text-bg-color=0;0;0;0.6
+font=Serif
+
+# -------------------------------------------------------------------------
+# 6. 視訊串流輸出 (RTSP Output back to MediaMTX /cam_out)
+# -------------------------------------------------------------------------
+[sink0]
+enable=1
+# 4 = RTSP Streaming
+type=4
+# 1 = H.264
+codec=1
+enc-type=1
+sync=0
+bitrate=4000000
+profile=0
+rtsp-port=8554
+udp-port=5400
+gpu-id=0
+
+# -------------------------------------------------------------------------
+# 7. Kafka 告警訊息傳遞器 (Kafka Message Broker)
+# -------------------------------------------------------------------------
+[message-broker0]
+enable=1
+broker-proto-lib=/opt/nvidia/deepstream/deepstream/lib/libnvds_kafka_proto.so
+broker-conn-str=localhost;9092
+topic=processed-reports
+config-file=/opt/nvidia/deepstream/deepstream/samples/configs/deepstream-app/cfg_kafka.txt
