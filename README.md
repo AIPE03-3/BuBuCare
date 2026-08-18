@@ -237,50 +237,6 @@ Netdata 儀表板直接嵌入中控台，監看邊緣裝置的 CPU、GPU、記�
 
 </details>
 
-<details>
-<summary><b>文字版資料流</b>　現行實作</summary>
-
-<br>
-
-```
-攝影機 / mp4 檔
-      |
-      v
-  MediaMTX                         影像匯流層，統一收流與分流
-      |
-      +--- RTSP ---> 邊緣推論層 ai/
-      |                  |
-      |                  |  Triton 推論：yolo_pose / rt_detr / action_transformer
-      |                  |  多道防線判定 + 信心分流
-      |                  v
-      |            +-----------+
-      |            |   Kafka   |
-      |            +-----------+
-      |             |         |
-      |    高信心   |         |   低信心
-      |  processed- |         | nursing-home-
-      |  reports    |         | alerts
-      |             |         v
-      |             |    VLM 二審（LangGraph）
-      |             |         |
-      |             v         v
-      |          後端 backend/（FastAPI）
-      |                  |
-      |                  +--> PostgreSQL（事件與流程狀態）
-      |                  +--> S3（影片與快照，簽發限時網址）
-      |                  |
-      |                  v  SSE 即時推播
-      +--- WebRTC --> 前端 frontend/（React）
-                         |
-                         v
-                   人工複判結果
-                         |
-                         v
-        Label Studio -> ClearML -> S3 -> Triton 熱載切版
-```
-
-</details>
-
 ### 3.1 分層職責
 
 | 層       | 目錄                             | 職責                                                   | 部署位置            |
