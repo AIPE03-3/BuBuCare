@@ -1,0 +1,55 @@
+# ClearML server 的 macOS（Apple Silicon）差異檔 —— 疊在 docker-compose-clearml.yml 上面用。
+#
+# 為什麼要獨立一份而不是改原檔：原檔是 5060 Ti 那台（x86_64 + NVIDIA）在用的，
+# 動它等於把另一台的環境一起改掉。這裡只放「這台跟那台不一樣」的部分，其餘全部繼承。
+#
+# 起服務（**兩個 -f 的順序不能反**，後面的蓋前面的）：
+#   docker compose -p ai \
+#     -f ai/docker-compose-clearml.yml \
+#     -f ai/docker-compose-clearml.mac.yml up -d
+#
+# 停服務（資料留著）：
+#   docker compose -p ai \
+#     -f ai/docker-compose-clearml.yml \
+#     -f ai/docker-compose-clearml.mac.yml stop
+#
+# ⚠️ `-p ai` 不能省，volume 名靠它對上既有的 ai_clearml-*（理由見原檔檔頭）。
+#
+# ── 這台的 image 架構實況（2026-07-30 查 registry manifest）────────────────────
+#   clearml/server:latest      linux/amd64 **only**  → 要模擬，見下方
+#   elasticsearch:7.17.9       amd64 + arm64         → 原生跑，不必動
+#   mongo:5.0.26               amd64 + arm64         → 原生跑，不必動
+#   redis:6.2-alpine           七種架構含 arm64      → 原生跑，不必動
+#
+# 也就是說**只有 clearml/server 那三個服務需要模擬**，依賴那三個原生就好。
+# （原本擔心的 elasticsearch 沒有 arm64 是誤判，不需要照 albert 換成 8.19.9。）
+
+services:
+  # ── 以下三個是同一顆 clearml/server:latest，官方只出 amd64 ────────────────
+  # 不寫 platform 的話 Docker 會直接拒絕啟動（no matching manifest for linux/arm64）。
+  # 寫了就走 Rosetta 2 轉譯（已實測這台可用：--platform linux/amd64 跑 alpine 回 x86_64）。
+  # 代價是啟動與 API 回應都比原生慢，**這是預期的，不要當成壞掉**。
+  clearml-apiserver:
+    platform: linux/amd64
+
+  clearml-fileserver:
+    platform: linux/amd64
+
+  clearml-webserver:
+    platform: linux/amd64
+
+  # ── elasticsearch 的 heap 砍半 ────────────────────────────────────────────
+  # 原檔是 -Xms2g -Xmx2g，那是給記憶體充裕的機器用的。這台 Docker Desktop 總共只有
+  # 7.75 GB，而且跑 ClearML 時 Triton／Kafka／backend 那套通常還開著（實測佔 2.05 GB），
+  # 只剩 5.70 GB 要分給 elasticsearch + mongo + redis + 三個模擬的 clearml/server。
+  # 2g heap 會把額度吃光，換來的是 OOM kill 或整台機器開始 swap。
+  #
+  # 1g 對這裡的用途夠用：ClearML 拿 elasticsearch 存的是實驗 metric 與 log，
+  # 不是拿來當搜尋引擎打。真的不夠會在 clearml-elastic 的 log 看到 heap 相關錯誤，
+  # 那時再往上加，並考慮先停掉 nh-triton / nh-kafka-ui 讓出空間。
+  #
+  # environment 是 mapping 寫法，compose 會逐鍵合併 —— 原檔的 discovery.type 與
+  # xpack.security.enabled 都保留，只有這一鍵被蓋掉。
+  clearml-elastic:
+    environment:
+      ES_JAVA_OPTS: -Xms1g -Xmx1g

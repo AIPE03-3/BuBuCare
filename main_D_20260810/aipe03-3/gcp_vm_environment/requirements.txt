@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+kafka-python
+prometheus-client
+prometheus-fastapi-instrumentator
+httpx
+boto3
+gunicorn

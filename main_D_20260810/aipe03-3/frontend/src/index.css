@@ -1,0 +1,30 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 列印時只顯示通報單本體（.print-area），隱藏側欄、頁首與其餘按鈕。 */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    border: 0;
+    box-shadow: none;
+  }
+}

@@ -1,0 +1,27 @@
+name: "yolo_pose"
+platform: "onnxruntime_onnx"
+max_batch_size: 4
+
+input [
+  {
+    name: "images"
+    data_type: TYPE_FP32
+    # Triton adds the leading batch dimension when max_batch_size > 0.
+    dims: [ 3, -1, -1]
+  }
+]
+
+output [
+  {
+    name: "output0"
+    data_type: TYPE_FP32
+    dims: [ 56, -1]
+  }
+]
+
+instance_group [
+  {
+    kind: KIND_GPU
+    count: 1
+  }
+]

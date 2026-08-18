@@ -1,0 +1,18 @@
+# Root-level input videos and generated cache
+/input/
+
+# DeepStream local test inputs
+/aipe03-3/ai/deepstream/input/
+
+# Video files
+*.mov
+*.MOV
+
+# Native build artifacts
+*.so
+*.o
+
+# Local environment files
+.env
+.env.*
+!.env.example

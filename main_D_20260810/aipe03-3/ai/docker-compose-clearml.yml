@@ -1,0 +1,150 @@
+# ClearML server（實驗追蹤 + 模型倉庫 + 重訓佇列），MLOps 迴路的中樞。
+#
+# 移植自 origin/albert_chiang:Fall/mlops_config/clearml_server/docker-compose.yml，
+# 但**服務名／容器名／volume 名／埠都是照這台既有的那套抄回來的**（用 docker inspect
+# 從先前手動起的容器讀出來），不是照上游那份。原因：這台已經有一份跑過的 ClearML
+# 資料在 volume 裡（專案、任務、模型記錄），上游那份用 bind mount `./data/...`
+# 與不同的容器名，照抄會開出一套空的、把既有紀錄丟掉。
+#
+# ⚠️ **compose 專案名必須是 `ai`**，volume 才會對上既有的 `ai_clearml-*`。
+#    這個檔放在 `ai/` 底下，用預設的目錄名當專案名剛好就是 `ai`；在別的地方跑要自己
+#    帶 `-p ai`。下面的指令一律明寫 `-p ai`，避免有人從 repo 根目錄執行時開出新的一套。
+#
+# 起服務：
+#   docker compose -p ai -f ai/docker-compose-clearml.yml up -d
+# 停服務（資料留著）：
+#   docker compose -p ai -f ai/docker-compose-clearml.yml stop
+#
+# 起來之後：
+#   web    http://localhost:8085   （帳號見 clearml_server_config/apiserver.conf）
+#   api    http://localhost:8008
+#   files  http://localhost:8081
+# 這三個埠要與 `~/clearml.conf` 的 web_server / api_server / files_server 一致，
+# 範本見 ai/clearml.conf.example。
+#
+# ⚠️ `restart: "no"` 是刻意的：ClearML 這一整套（elasticsearch 吃 2GB heap + mongo）
+#    很重，而且只有跑重訓迴路時才需要。不要設成 always，否則每次開機都跟 Triton 搶記憶體。
+
+services:
+  clearml-elastic:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    container_name: clearml-elastic
+    restart: "no"
+    environment:
+      ES_JAVA_OPTS: -Xms2g -Xmx2g
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - clearml-elastic-data-final:/usr/share/elasticsearch/data
+    networks:
+      clearml-backend:
+        # 別名＝上游 compose 的服務名。fileserver 等元件是照那些名字互打的
+        # （例：fileserver 預設連 redis:6379），只給我們自己的服務名會 Name or
+        # service not known。同 apiserver 那條註解的理由。
+        aliases: [elasticsearch]
+
+  clearml-mongo:
+    image: mongo:5.0.26
+    container_name: clearml-mongo
+    restart: "no"
+    volumes:
+      - clearml-mongo-data-final:/data/db
+      - clearml-mongo-config:/data/configdb
+    networks:
+      clearml-backend:
+        # 別名＝上游 compose 的服務名。fileserver 等元件是照那些名字互打的
+        # （例：fileserver 預設連 redis:6379），只給我們自己的服務名會 Name or
+        # service not known。同 apiserver 那條註解的理由。
+        aliases: [mongo]
+
+  clearml-redis:
+    image: redis:6.2-alpine
+    container_name: clearml-redis
+    restart: "no"
+    volumes:
+      - clearml-redis-data:/data
+    networks:
+      clearml-backend:
+        # 別名＝上游 compose 的服務名。fileserver 等元件是照那些名字互打的
+        # （例：fileserver 預設連 redis:6379），只給我們自己的服務名會 Name or
+        # service not known。同 apiserver 那條註解的理由。
+        aliases: [redis]
+
+  clearml-apiserver:
+    image: clearml/server:latest
+    container_name: clearml-server-apiserver
+    restart: "no"
+    command: [apiserver]
+    depends_on: [clearml-elastic, clearml-mongo, clearml-redis, clearml-fileserver]
+    environment:
+      CLEARML_ELASTIC_SERVICE_HOST: clearml-elastic
+      CLEARML_ELASTIC_SERVICE_PORT: 9200
+      CLEARML_MONGODB_SERVICE_HOST: clearml-mongo
+      CLEARML_MONGODB_SERVICE_PORT: 27017
+      CLEARML_REDIS_SERVICE_HOST: clearml-redis
+      CLEARML_REDIS_SERVICE_PORT: 6379
+    volumes:
+      # apiserver.conf 開了一組 fixed_user，本機免走 web 自助註冊就能 login。
+      # ⚠️ 那個目錄含明文密碼，**不進 repo**（.gitignore 已排除），範本見 clearml.conf.example
+      #    旁邊的說明；沒有這個目錄 apiserver 照樣起得來，只是要自己在 web 上註冊帳號。
+      - ./clearml_server_config:/opt/clearml/config
+      - clearml-data-final:/mnt/fileserver
+      - clearml-logs-final:/var/log/clearml
+    ports:
+      - "8008:8008"
+    networks:
+      clearml-backend:
+        # ⚠️ 這個別名不能省。webserver 的 nginx 設定寫死 `upstream apiserver`、
+        # fileserver 預設打 `http://apiserver:8008`，兩者都是照上游 compose 的服務名
+        # 硬編的。這台先前手動起的那套沒有這個別名，所以 fileserver 一直在
+        # `ValueError: it seems *api_server* is misconfigured` 崩潰重啟、webserver 則是
+        # `[emerg] host not found in upstream "apiserver"` —— docker ps -a 看得到它們
+        # Exited 好幾天，只有 apiserver 活著。改用服務名對不上就會重蹈覆轍。
+        aliases: [apiserver]
+
+  clearml-fileserver:
+    image: clearml/server:latest
+    container_name: clearml-server-fileserver
+    restart: "no"
+    command: [fileserver]
+    environment:
+      CLEARML_SERVER_API_SERVER_HOST: clearml-server-apiserver
+      CLEARML_SERVER_API_SERVER_PORT: 8008
+    volumes:
+      - clearml-data-final:/mnt/fileserver
+      - clearml-logs-final:/var/log/clearml
+    ports:
+      - "8081:8081"
+    networks:
+      clearml-backend:
+        aliases: [fileserver]   # 同 apiserver：上游是照服務名互打的
+
+  clearml-webserver:
+    image: clearml/server:latest
+    container_name: clearml-server-webserver
+    restart: "no"
+    command: [webserver]
+    depends_on: [clearml-apiserver]
+    ports:
+      # ⚠️ 8085 不是 8080：8080 被 nh-kafka-ui 佔著
+      - "8085:80"
+    networks:
+      clearml-backend:
+        aliases: [webserver]
+
+networks:
+  clearml-backend:
+
+volumes:
+  # 這五個名字**不要改**——改了就接不上這台既有的 ai_clearml-* volume，等於資料重來
+  clearml-data-final:
+  clearml-logs-final:
+  clearml-mongo-data-final:
+  clearml-elastic-data-final:
+  # 下面兩個原本是匿名 volume，這裡給名字方便管理（內容是 redis 快取與 mongo configdb，
+  # 重建不影響已記錄的實驗與模型）
+  clearml-mongo-config:
+  clearml-redis-data:

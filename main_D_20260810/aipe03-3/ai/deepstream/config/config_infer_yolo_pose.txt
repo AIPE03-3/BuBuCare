@@ -1,0 +1,72 @@
+infer_config {
+  unique_id: 1
+  gpu_ids: [0]
+  max_batch_size: 1
+
+  backend {
+    inputs [
+      {
+        name: "images"
+	dims: [3, 640, 640]
+	data_type: TENSOR_DT_FP32
+      }
+    ]
+
+    outputs [
+      {
+        name: "output0"
+      }
+    ]
+
+    triton {
+      model_name: "yolo_pose_trt"
+      version: -1
+
+      grpc {
+        url: "nh-triton:8001"
+        # CUDA IPC registration fails across the current Docker/WSL containers
+        # (CUDA minor-version compatibility mode), so keep gRPC host buffers.
+        enable_cuda_buffer_sharing: false
+      }
+    }
+
+    output_mem_type: MEMORY_TYPE_CPU
+  }
+
+  preprocess {
+    network_format: IMAGE_FORMAT_RGB
+    tensor_order: TENSOR_ORDER_LINEAR
+    tensor_name: "images"
+    maintain_aspect_ratio: 1
+    symmetric_padding: 1
+
+    normalize {
+      scale_factor: 0.00392156862745098
+      channel_offsets: [0.0, 0.0, 0.0]
+    }
+  }
+
+  postprocess {
+    other {}
+  }
+
+  extra {
+    custom_process_funcion: "CreateInferServerCustomProcess"
+  }
+
+  custom_lib {
+    path: "/workspace/deepstream/parser/nvdsinferserver_custom_impl_yolo/libnvdstriton_custom_impl_yolo.so"
+  }
+}
+
+input_control {
+  process_mode: PROCESS_MODE_FULL_FRAME
+  # Four 30 FPS sources share one GPU. Infer every sixth frame so stale
+  # frames never build up behind Triton; the browser video remains 30 FPS.
+  interval: 0
+}
+# interval: 5
+
+output_control {
+  output_tensor_meta: false
+}

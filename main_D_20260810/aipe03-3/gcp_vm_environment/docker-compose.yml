@@ -1,0 +1,210 @@
+services:
+  netdata:
+    image: netdata/netdata:latest
+    container_name: netdata
+    hostname: gcp-vm
+    restart: unless-stopped
+
+    ports:
+      - "19999:19999"
+
+    cap_add:
+      - SYS_PTRACE
+
+    security_opt:
+      - apparmor:unconfined
+
+    environment:
+      - TZ=Asia/Taipei
+      - NETDATA_CLAIM_TOKEN=${NETDATA_CLAIM_TOKEN}
+      - NETDATA_CLAIM_URL=${NETDATA_CLAIM_URL}
+      - NETDATA_CLAIM_ROOMS=${NETDATA_CLAIM_ROOMS}
+
+    volumes:
+      # Netdata 設定（建議放專案目錄，方便修改）
+      - ./netdata-config:/etc/netdata
+
+      # Netdata 資料
+      - netdatalib:/var/lib/netdata
+      - netdatacache:/var/cache/netdata
+
+      # Host Monitoring
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/os-release:/host/etc/os-release:ro
+
+      # Docker Monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    networks:
+      - internal
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      - TZ=Asia/Taipei
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+
+    volumes:
+      - grafana-storage:/var/lib/grafana
+
+    networks:
+      - internal
+
+  kafka:
+    image: bitnamilegacy/kafka:3.7
+    container_name: kafka_kraft
+    restart: always
+    ports:
+      - "9092:9092"   # 內部連線
+      - "9094:9094"   # GCP 外部固定 IP 連線（需帳密）
+    volumes:
+      - ./kafka/data:/bitnami/kafka
+      - ./kafka/config/jmx_prometheus_javaagent.jar:/jmx-exporter/jmx_prometheus_javaagent.jar
+      - ./kafka/config/jmx_prometheus_kafka.yml:/jmx-exporter/jmx_prometheus_kafka.yml
+    environment:
+      # 🚀 新增：優化記憶體設定，防止 VM 記憶體耗盡
+      - KAFKA_HEAP_OPTS=-Xmx2g -Xms2g
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+
+      # KRaft 模式設定（免 Zookeeper）
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # 網路監聽與 GCP 固定 IP 對外宣告
+      - KAFKA_CFG_LISTENERS=INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_ADVERTISED_LISTENERS=INTERNAL://kafka:9092,EXTERNAL://${GCP_VM_IP}:9094
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
+       # 外部連線帳密驗證設定 (SASL_PLAIN): 這台 Kafka 伺服器『總共』支援哪些 SASL 驗證機制, 像飯店總部的宣布
+      - KAFKA_CFG_SASL_ENABLED_MECHANISMS=PLAIN
+      # 當 Broker 之間互聯（Inter-Broker）需要走 SASL 認證時，要用 PLAIN（帳密）機制。 << 其實不需要, 被gemini 硬加
+      - KAFKA_CFG_SASL_MECHANISM_INTER_BROKER_PROTOCOL=PLAIN
+      # Gemini 原先說要加的應該是這個: 指名 EXTERNAL 監聽器啟用 PLAIN 機制, 這個像櫃台對外公告
+      - KAFKA_CFG_LISTENER_NAME_EXTERNAL_SASL_ENABLED_MECHANISMS=PLAIN
+
+      - KAFKA_CLIENT_USERS=${KAFKA_USER}
+      - KAFKA_CLIENT_PASSWORDS=${KAFKA_PASSWORD}
+
+      # 開啟內建的 Prometheus 監控指標輸出
+      - KAFKA_CFG_METRICS_REPORTER_CLASSES=org.apache.kafka.common.metrics.JmxReporter
+      - KAFKA_OPTS=-javaagent:/jmx-exporter/jmx_prometheus_javaagent.jar=5556:/jmx-exporter/jmx_prometheus_kafka.yml
+    networks:
+      - internal
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    restart: unless-stopped
+
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}?sslmode=require"
+    ports:
+      - "9187:9187"
+
+    networks:
+      - internal
+
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: always
+
+    pid: host
+
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    ports:
+      - "127.0.0.1:9100:9100"
+    networks:
+      - internal
+
+  prometheus:
+    image: prom/prometheus:v3.13.1
+    container_name: prometheus
+    restart: always
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/data:/prometheus
+      - ./prometheus/rules:/etc/prometheus/rules
+    # 疊加預設參數，並加入您指定的 3 天資料保留參數
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=3d'
+    networks:
+      - internal
+
+  nginx:
+    image: nginx:stable-alpine3.23-slim
+    container_name: nginx
+    restart: always
+    ports:
+      - "80:80"
+    environment:
+      - NGINX_HOST=localhost
+      - NGINX_PORT=80
+    volumes:
+      - ./nginx/html:/usr/share/nginx/html
+      - ./nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - python
+    networks:
+      - internal
+
+  python:
+    image: python:3.12-slim
+    container_name: python-app
+    working_dir: /project
+    volumes:
+      - ./python:/project
+      - ./python/.uv-cache:/root/.cache/uv
+    ports:
+      - "8000:8000"
+    command: sh -c "pip install uv && tail -f /dev/null"
+    stdin_open: true
+    tty: true
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - PROMETHEUS_URL=http://prometheus:9090
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_DEFAULT_REGION
+      - AWS_RO_ACCESS
+      - AWS_RO_SECRET_ACCESS
+      - TZ=Asia/Taipei
+    depends_on:
+      - kafka
+    networks:
+      - internal
+
+volumes:
+  netdatalib:
+  netdatacache:
+  grafana-storage:
+
+networks:
+  internal:
+    driver: bridge

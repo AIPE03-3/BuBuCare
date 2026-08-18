@@ -1,0 +1,130 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+fulilian.db
+.pytest_cache/
+*.pyc
+
+# Virtual environments
+.venv
+
+# Environment variables (contains secrets)
+.env
+# 備份檔也一起擋。上面那條是**精確比對**，擋不到 `.env.bak.170502` 這種名字——
+# 2026-07-31 就是這樣讓一份 .env 完整備份（含 JWT 簽章金鑰、兩組 AWS 憑證、DB 密碼）
+# 被 `git add -A` 掃進 commit 468286f，事後只能改寫歷史。改 .env 前先備份是好習慣，
+# 但備份檔跟本尊一樣裝著全部憑證，忽略規則要一起涵蓋。
+.env.bak*
+.env.*.bak
+.env.backup*
+
+# 忽略所有官方與時序的模型權重檔（防止大檔案弄爆 GitHub）
+*.pt
+*.pth
+
+# 執行時產生的 log（ClearML agent、訓練紀錄等機器產物）
+*.log
+.clearml-logs-final/
+
+# 忽略作業系統暫存雜訊
+.DS_Store
+Thumbs.db
+
+# 個人工具檔（skill / 設定）
+.claude/
+.vscode/
+# 個人的本機覆蓋筆記（不進 repo）。
+# 注意：根目錄的 CLAUDE.md 從 2026-07-28 起**要進版控**——它裝的是 ai/modules/ 白名單
+# 這類全專案共用的硬規則，被 ignore 掉的話等於只有自己這台機器看得到，規則就沒有意義。
+# 個人筆記請寫在 CLAUDE.local.md。
+CLAUDE.local.md
+
+# 本機 Docker 版本覆蓋（只為了繞開個人環境的相容性問題，不影響 docker-compose.yml 主檔）
+docker-compose.override.yml
+
+gcp_vm_environment/.env
+
+# =========================================================================
+# 機器產物與大檔：一律不進 repo
+# 起因：這些路徑長期是 untracked，任何人跑 `git add -A` 就會全吃進來（約 1.1GB），
+# 其中 test4.mp4 有 344MB、超過 GitHub 100MB 硬上限，commit 後推不上去還得改寫歷史。
+# =========================================================================
+
+# Triton model_repository：只有 config.pbtxt / README.md 進 repo，模型版本目錄
+#（1/、2/、3/…）裡的 model.onnx 由 `python ai/export_models.py` 重建。
+# run_triton.sh 的註解本來就這樣寫，只是先前漏了對應的 ignore 規則。
+ai/triton_repo/*/[0-9]*/
+*.onnx
+
+# 影片：預設全擋，只放行既有已追蹤的四支小檔（各 1.5~2.4MB）。
+# test4.mp4 是 4.9 分鐘的 FPS 量測長片（344MB），要用請另外取得、不進版控。
+# 新增影片前先想清楚大小；要進 repo 就在這裡加一條 `!` 白名單。
+*.mp4
+!ai/test_demo/test1.mp4
+!ai/test_demo/test2.mp4
+!ai/test_demo/test3.mp4
+!frontend/public/videos/fall-demo.mp4
+
+# inference_test 觸發事件時寫入的證據快照（執行時產物）
+ai/snapshots/
+
+# inference_test 觸發事件時寫入的前後 N 秒事件片段（執行時產物，CLIP_DIR 可改）
+ai/clips/
+
+# ultralytics 訓練/驗證輸出
+runs/
+
+# 主動學習資料集（重訓用的圖與標註，機器產物）
+ai/active_learning_dataset/
+# ai/prepare_dataset.py 清洗後的訓練資料集（同樣是機器產物；跑一次就能重建）。
+# ⚠️ train/val 的切分名單 ai/dataset_splits/ 刻意**要**進版控——那是「這次的 mAP 是拿
+#    哪 18 張圖量的」的唯一證據，沒有它下一輪重訓的數字就沒得比。
+ai/detection_dataset/
+# 同上，YOLO-Pose 那條線的清洗產物（prepare_dataset.py --task pose）。
+# 切分名單 ai/dataset_splits/pose_{train,val}.txt 一樣**要**進版控，理由同上。
+ai/pose_dataset/
+# data.yaml / pose_data.yaml 的絕對路徑展開版（resolve_data_yaml() 執行時生成）
+ai/*.runtime.yaml
+
+# AcT 時序模型的訓練工作目錄（機器產物，2026-07-30 實測 207MB）。
+#   videos/        182M  200 支 mp4 原始素材
+#   labels_review/  23M  50 張 jpg 審查畫面（可從 videos 重抽）
+#   features/      2.1M  150 個 npz 特徵（可重跑特徵擷取重建）
+#   labels_draft/  200K  50 個 txt 標註
+# 擋這條的理由：這裡沒有任何一項是「不擋就會弄丟」的，但只要有人 git add . 就會把
+# 182M 的 mp4 推上去——大檔一旦進了歷史，之後要清得改寫歷史，會波及所有人的分支。
+# ⚠️ 若日後認定 labels_draft/ 的標註是人工成果、屬於「這批數字是拿什麼標的」的證據
+#    （理由同上面 ai/dataset_splits/ 那段），就在這行下面補 !ai/train/dataset/labels_draft/
+ai/train/dataset/
+
+# agent shadow 模式的執行時產物：判定記錄與壞訊息 DLQ（JSON lines，一次跑就長好幾 MB）
+ai/agent_shadow.jsonl
+ai/agent_dlq.jsonl
+
+# ⚠️ ClearML server 設定：apiserver.conf 內含明文預設密碼，不可進 repo
+ai/clearml_server_config/
+
+# 編輯/轉檔備份檔（如 config.pbtxt.onnx.bak）
+*.bak
+# Triton CPU 對照用的 model repository（由 ai/make_cpu_repo.sh 產生，內含 hardlink 的模型權重）
+ai/triton_repo_cpu/
+# GPU/CPU 效能對照的原始量測結果（報告本體 ai/BENCHMARK_GPU_VS_CPU.md 要進版控）
+ai/bench_results/
+
+# 串流：執行檔與含攝影機帳密的實際設定不進 git（範本 mediamtx.yml.example 才進）
+streaming/mediamtx.exe
+streaming/mediamtx.yml
+streaming/*.log
+streaming/*.zip
+streaming/*.crt
+streaming/*.key
+
+# submit_task.py 產生的訓練腳本副本（機器產物，原始碼是 ai/clearml_train_pipeline.py）。
+# 它是先前那份寫死 /home/rapubuntu/... 的 151 行檔的來源，不要再 commit 進來。
+ai/clearml_train_pipeline_final.py
+# model_deployment_agent.py 的下載暫存
+ai/temp_downloaded_model*

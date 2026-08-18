@@ -1,0 +1,28 @@
+global:
+  scrape_interval:     30s # 預設每 15 秒向所有服務抓取一次數據
+  evaluation_interval: 30s # 每 15 秒評估一次警報規則（純開發用不到警報，維持預設即可）
+
+# 這裡設定 Prometheus 要抓取的目標 (Jobs)
+scrape_configs:
+  # 1. 抓取 Prometheus 自身的監控數據
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 2. 關鍵：抓取 Kafka 的數據
+  - job_name: 'kafka'
+    static_configs:
+      # 這裡填寫 Kafka 容器的服務名稱與剛才設定的 5556 Port
+      # 因為都在同一個 Docker 內網，直接寫服務名稱 "kafka" 即可
+      - targets: ['kafka:5556']
+
+  # 3. 未來擴充：如果你想監控你的 Python FastAPI
+  #（FastAPI 程式需安裝 prometheus-fastapi-instrumentator 套件）
+  - job_name: "python-app"
+    static_configs:
+      - targets: ["python:8000"]
+      #這裡要寫docker 的服務名稱
+
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

@@ -1,0 +1,29 @@
+:root {
+  /* 語意色：狀態標籤、警示、趨勢色點專用，禁止挪作裝飾 */
+  --danger:  #FF5757;  --danger-bg:  #FEE2E2;  /* 危險／已升級／發送失敗。⚠ 白字對比僅約 3.1:1，未達 WCAG AA 4.5:1，見對話紀錄 */
+  --warning: #B45309;  --warning-bg: #FEF3C7;  /* 警示／待處理／逾時 */
+  /* success：2026-07 改版，品牌色（brand）與正向語意色（success）統一改黑色系，
+     不再與 brand 視覺區隔（產品決策，見對話紀錄）。success-bg 改中性淺灰，不再帶綠色調。 */
+  --success: #262626;  --success-bg: #E5E7EB;  /* 良好／已接手／已結案 */
+  --offline: #6B7280;                           /* 離線／誤報：灰字空心外框 */
+  --info:    #0369A1;                           /* 保留，用途待定 */
+  --overlay: rgba(15, 23, 23, 0.55);            /* 全螢幕警示遮罩 */
+}
+.theme-care-a {
+  --bg-base:      #FFFFFF;  /* 全站底色 */
+  --bg-surface:   #FFFFFF;  /* 卡片 */
+  --bg-surface-2: #F1F2F4;  /* 次要區塊：表頭、side panel（淺灰） */
+  --border:       #E3E9E7;
+  --text-primary:   #16211E;
+  --text-secondary: #5B6B67;
+  --text-muted:     #8FA09B;
+  /* brand／brand-dark：2026-07 改版，原為綠色，依產品決策全面改黑色系
+     （白字對比通過 WCAG AA 4.5:1）。 */
+  --brand:        #262626;  /* 主動作色：按鈕、連結、正向指標 */
+  --brand-soft:   #E5E7EB;  /* hover／選中態淡底（中性灰） */
+  --brand-dark:   #000000;  /* 純黑：Hero 卡片（監控中鏡頭）、側欄選中態 */
+  /* highlight：黑色化改版下唯一保留的品牌綠，僅供首頁「未結報事件」卡片使用，
+     其餘元件一律不得引用（那是 brand／brand-dark 的職責）。 */
+  --highlight:    #047857;
+  --notice:       #92730A;  --notice-bg: #FDF3D8; /* 僅限未讀／待辦等非緊急徽章 */
+}
