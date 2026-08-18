@@ -17,6 +17,7 @@
   <img src="https://img.shields.io/badge/Triton-Inference%20Server-76B900?logo=nvidia&logoColor=white" alt="Triton Inference Server">
   <img src="https://img.shields.io/badge/Kafka-231F20?logo=apachekafka&logoColor=white" alt="Apache Kafka">
   <img src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License MIT">
 </p>
 
 以電腦視覺自動偵測長照機構內的意外事件，即時通知護理站，並保留影像證據供人工複判，複判結果再回流成為模型的訓練資料。
@@ -838,3 +839,9 @@ ClearML 負責訓練任務的排隊、執行與記錄。它解決三個問題：
 部署程序支援回滾，新版本表現不如預期時可以退回上一版。
 
 ---
+
+---
+
+## 授權
+
+本專案採 [MIT License](LICENSE)。

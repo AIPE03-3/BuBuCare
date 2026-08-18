@@ -19,15 +19,14 @@ fulilian 是一套「YOLO 初篩 → VLM 精判 → 人工確認 → 閉環回�
 跌倒事件通報 + SSE 推播 + 人工確認流程（判定/結案）、Kafka consumer（接 AI 端 Kafka，實接完成）、
 Prometheus 指標輸出（`/metrics`，目前只有人工判定次數）。
 使用 passlib + bcrypt 做密碼雜湊，PostgreSQL（AWS RDS）儲存資料。
-事件功能的設計規格見 `backend/docs/superpowers/specs/2026-07-02-event-sse-design.md`。
+事件功能的設計規格記錄於後端的內部設計文件。
 
 ### Kafka consumer（2026-07-10 實接完成）
 
 接 AI 端 Kafka（albert 當 producer 打 topic `processed-reports`）。**方案 B**：獨立行程
 `backend/kafka_consumer.py` 讀 topic → 轉打現成 `POST /events`（**不**直呼 `handle_incoming_event`——
 獨立行程直呼會 broadcast 到自己的空 SSE pool、前端收不到）。設計規格見
-`backend/docs/superpowers/specs/2026-07-09-kafka-consumer-design.md`，TDD 實作計畫見
-`backend/docs/superpowers/plans/2026-07-09-kafka-consumer.md`（Task 1-3 全部完成，含 Step 6 端到端煙霧測試手動驗證通過）。
+後端的內部設計文件（Task 1-3 全部完成，含 Step 6 端到端煙霧測試手動驗證通過）。
 （未來多台 web 要升級成「方案 D」的事項見 `backend/docs/future-work.md` 第 6 項。）
 
 ---
@@ -130,7 +129,6 @@ uv run pytest -v
 | `backend/tests/`            | backend 測試（conftest 用 in-memory SQLite）     |
 | `backend/docs/`                   | backend 的文件（設計規格、驗收、未來強化清單）     |
 | `backend/docs/future-work.md`     | 未來強化清單（上正式環境前必讀）                 |
-| `backend/docs/superpowers/specs/` | 正式設計規格（spec），實作以這裡為準             |
 
 ---
 
