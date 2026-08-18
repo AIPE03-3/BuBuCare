@@ -7,8 +7,8 @@
 <h4 align="center">讓每一步都有系統守護</h4>
 
 <p align="center">
-  <a href="https://github.com/AIPE03-3/aipe03-3/actions/workflows/backend-tests.yml"><img src="https://github.com/AIPE03-3/aipe03-3/actions/workflows/backend-tests.yml/badge.svg" alt="backend-tests"></a>
-  <a href="https://github.com/AIPE03-3/aipe03-3/actions/workflows/guardrails.yml"><img src="https://github.com/AIPE03-3/aipe03-3/actions/workflows/guardrails.yml/badge.svg" alt="guardrails"></a>
+  <a href="https://github.com/AIPE03-3/BuBuCare/actions/workflows/backend-tests.yml"><img src="https://github.com/AIPE03-3/BuBuCare/actions/workflows/backend-tests.yml/badge.svg" alt="backend-tests"></a>
+  <a href="https://github.com/AIPE03-3/BuBuCare/actions/workflows/guardrails.yml"><img src="https://github.com/AIPE03-3/BuBuCare/actions/workflows/guardrails.yml/badge.svg" alt="guardrails"></a>
   <img src="https://img.shields.io/badge/tests-205%20passed-brightgreen" alt="tests 205 passed">
   <img src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white" alt="Python 3.12">
   <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI">
