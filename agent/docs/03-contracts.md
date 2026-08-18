@@ -5,7 +5,7 @@
 >
 > **2026-07-27 例外**：`severity` 與 `yolo_threshold` 已從 Kafka 2 輸出移除。後端在
 > 2026-07-19（commit `1bbb585`）就把這兩欄從 `detect_events` 與 `EventCreateRequest`
-> 整組拿掉了（理由見 `backend/docs/superpowers/specs/2026-07-19-event-table-redesign-design.md`：
+> 整組拿掉了（理由見後端的事件表改版設計文件：
 > 「不再需要」，嚴重度概念改用 `verdict_by` / `resolved_by` 取代）。接收端自己都沒有這兩欄，
 > 繼續送不叫相容，只是被 Pydantic（預設 `extra="ignore"`）靜默丟掉。
 > `yolo_threshold` 仍留在 **Kafka 1**（AI 內部），見 §1。

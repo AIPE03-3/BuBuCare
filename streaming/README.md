@@ -57,7 +57,7 @@
 | 用 VLC 等外部播放器 | 看得到框 | **看不到**（框不在影像裡）← 換過來的代價 |
 
 所以**這份文件裡與 `cam_out` 有關的設定，現在都不需要了**。
-細節見 [`../docs/MERGE-ALBERT-CHIANG.md`](../docs/MERGE-ALBERT-CHIANG.md)。
+細節記錄於專案內部的整合文件。
 
 ---
 
@@ -504,7 +504,7 @@ RTSP 讀取是**刻意放行**的：AI 端拿不到瀏覽器才有的短命權�
 `body.user` / `body.password`，並把所有讀取端的網址改成
 `rtsp://<帳號>:<密碼>@<host>:8554/<頻道>`。
 
-設計規格：`backend/docs/superpowers/specs/2026-07-29-stream-auth-design.md`
+設計規格記錄於後端的內部設計文件。
 
 ### 啟動順序：後端一定要先起
 
